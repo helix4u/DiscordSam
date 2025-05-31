@@ -1,10 +1,10 @@
 import asyncio
 import logging
-from typing import List, Any, Optional, Union, Tuple, cast # Added cast for type hinting
+from typing import List, Any, Optional, Union, Tuple, cast 
 import discord 
 from openai import AsyncStream # type: ignore
-import typing # Added this import for typing.cast
-from datetime import datetime # Added this import
+import typing 
+from datetime import datetime 
 
 # Assuming config is imported from config.py
 from config import config
@@ -22,7 +22,6 @@ logger = logging.getLogger(__name__)
 
 
 def get_system_prompt() -> MsgNode:
-    # This function remains the same, using MsgNode from common_models
     return MsgNode(
         role="system",
         content=(
@@ -42,7 +41,6 @@ async def _build_initial_prompt_messages(
     user_id: Optional[str] = None,
     synthesized_rag_context_str: Optional[str] = None
 ) -> List[MsgNode]:
-    # This function remains largely the same, using MsgNode from common_models
     prompt_list: List[MsgNode] = [get_system_prompt()]
 
     if config.USER_PROVIDED_CONTEXT:
@@ -82,7 +80,6 @@ async def get_context_aware_llm_stream(
     prompt_messages: List[MsgNode], 
     is_vision_request: bool
 ) -> Tuple[Optional[AsyncStream], str, List[MsgNode]]: 
-    # This function remains largely the same, using MsgNode from common_models
     if not prompt_messages:
         raise ValueError("Prompt messages cannot be empty for get_context_aware_llm_stream.")
 
@@ -145,9 +142,8 @@ async def get_context_aware_llm_stream(
 
     
     injected_text_for_user_message = (
-        f"<RAG_generated_suggested_context>\n{prompt_messages}\n</RAG_generated_suggested_context>\n\n"
         f"<model_generated_suggested_context>\n{generated_context}\n</model_generated_suggested_context>\n\n"
-        f"<user_question>\nWith all prior context (including global, RAG synthesized, and the suggested context above) in mind, Sam, please respond to the following:\n{original_question_text}\n</user_question> This response is added to the conversation memory."
+        f"<user_question>\nWith all prior context (including global, RAG synthesized from system prompts, and the suggested context above) in mind, Sam, please respond to the following:\n{original_question_text}\n</user_question> This response is added to the conversation memory."
     )
 
     if isinstance(final_user_message_node_in_copy.content, str):
@@ -203,7 +199,7 @@ async def _stream_llm_handler(
         placeholder_embed = discord.Embed(title=title, description="⏳ Generating context...", color=config.EMBED_COLOR["incomplete"])
         try:
             if is_interaction:
-                interaction = cast(discord.Interaction, interaction_or_message) # Use typing.cast
+                interaction = cast(discord.Interaction, interaction_or_message) 
                 if not interaction.response.is_done(): 
                     await interaction.response.defer(ephemeral=False)
                 current_initial_message = await interaction.followup.send(embed=placeholder_embed, wait=True)
@@ -231,9 +227,14 @@ async def _stream_llm_handler(
         )
 
         prefix_parts = []
-        if config.USER_PROVIDED_CONTEXT: 
-            display_context = config.USER_PROVIDED_CONTEXT.replace('\n', ' ').strip()
-            prefix_parts.append(f"**User-Provided Global Context:**\n> {display_context}\n\n---")
+        prefix_parts.append(f"Current Date: {datetime.now().strftime('%B %d %Y %H:%M:%S.%f')}\n")
+
+        # USER_PROVIDED_CONTEXT is sent to the LLM via _build_initial_prompt_messages
+        # but will NOT be displayed in the Discord embed prefix.
+        # if config.USER_PROVIDED_CONTEXT: 
+        #     display_context = config.USER_PROVIDED_CONTEXT.replace('\n', ' ').strip()
+        #     prefix_parts.append(f"**User-Provided Global Context:**\n> {display_context}\n\n---")
+        
         if synthesized_rag_context_for_display: 
             display_rag_context = synthesized_rag_context_for_display.replace('\n', ' ').strip()
             prefix_parts.append(f"**Synthesized Context for Query:**\n> {display_rag_context}\n\n---")
@@ -357,7 +358,7 @@ async def _stream_llm_handler(
                 await sent_messages[0].edit(embed=error_embed)
             except discord.HTTPException: pass 
         elif is_interaction: 
-            interaction = cast(discord.Interaction, interaction_or_message) # Use typing.cast
+            interaction = cast(discord.Interaction, interaction_or_message) 
             try:
                 if not interaction.response.is_done():
                     await interaction.response.send_message(embed=error_embed, ephemeral=True)
