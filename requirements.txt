@@ -1,0 +1,30 @@
+# Python requirements for DiscordSam bot and dependencies
+
+# Note: torch install should be system-specific (see comment)
+
+discord.py>=2.3.2
+python-dotenv>=1.0.0
+openai>=1.3.0
+aiohttp>=3.8.0
+pydub>=0.25.0
+
+# Whisper speech-to-text (choose one, usually openai-whisper)
+
+openai-whisper>=20231117
+
+# PyTorch - install per [https://pytorch.org/get-started/locally/](https://pytorch.org/get-started/locally/) if using GPU/CPU acceleration
+
+# You should NOT install torch here for production—use a custom install line. This is just the minimum version required.
+
+torch>=2.0.0
+
+# Vector DB for RAG
+
+chromadb>=0.4.22
+
+# Automated browser for scraping, headless tasks
+
+playwright>=1.30.0
+
+youtube-transcript-api>=0.6.0
+numpy>=1.23.0
