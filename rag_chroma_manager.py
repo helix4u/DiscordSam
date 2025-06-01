@@ -4,29 +4,24 @@ from datetime import datetime
 from typing import List, Optional, Any, Dict, Union 
 import json 
 import re 
-import hashlib # Was in original, keeping for now, though not directly used in this version's functions
+import hashlib 
 
 
 import chromadb 
 
-# Assuming config is imported from config.py
 from config import config
-# Import MsgNode from the new common_models.py
 from common_models import MsgNode 
-# llm_client will be passed as an argument to functions needing it.
 
 
 logger = logging.getLogger(__name__)
 
-# --- ChromaDB Client Initialization ---
-# These are module-level globals, initialized by initialize_chromadb()
 chroma_client: Optional[chromadb.ClientAPI] = None
 chat_history_collection: Optional[chromadb.Collection] = None 
 distilled_chat_summary_collection: Optional[chromadb.Collection] = None 
 
 def initialize_chromadb() -> bool:
     global chroma_client, chat_history_collection, distilled_chat_summary_collection
-    if chroma_client: # Already initialized
+    if chroma_client: 
         logger.debug("ChromaDB already initialized.")
         return True
     try:
@@ -48,51 +43,46 @@ def initialize_chromadb() -> bool:
         distilled_chat_summary_collection = None
         return False
 
-async def distill_conversation_to_sentence_llm(llm_client: Any, full_conversation_text: str) -> Optional[str]:
-    """Uses an LLM to distill a full conversation into a few keyword-rich sentences."""
-    if not full_conversation_text.strip():
-        logger.debug("Distillation skipped: full_conversation_text is empty.")
+async def distill_conversation_to_sentence_llm(llm_client: Any, text_to_distill: str) -> Optional[str]:
+    if not text_to_distill.strip():
+        logger.debug("Distillation skipped: text_to_distill is empty.")
         return None
     
-    truncated_conversation_text = full_conversation_text[:3000] 
+    truncated_text = text_to_distill[:3000] 
 
     prompt = (
-        "You are a text distillation expert. Read the following conversations and summarize their "
-        "absolute core essence into a few keyword-rich, data-dense sentences. These sentences "
-        "will be used for semantic search to recall these conversations later. Focus on unique "
-        "entities, key actions, insights, and primary topics. The sentences should be concise and highly informative.\n\n"
-        "CONVERSATION:\n---\n"
-        f"{truncated_conversation_text}" 
+        "You are a text distillation expert. Read the following conversational exchange (User query and Assistant response) "
+        "and summarize its absolute core essence into a few keyword-rich, data-dense sentences. These sentences "
+        "will be used for semantic search to recall this specific exchange later. Focus on unique "
+        "entities, key actions, insights, and primary topics directly discussed in this pair. The sentences should be concise and highly informative.\n\n"
+        "CONVERSATIONAL EXCHANGE:\n---\n"
+        f"{truncated_text}" 
         "\n---\n\n"
-        "DISTILLED SENTENCE(S):" 
+        "DISTILLED SENTENCE(S) (focus on the exchange):" 
     )
     try:
-        logger.debug(f"Requesting distillation from model {config.FAST_LLM_MODEL}.")
+        logger.debug(f"Requesting distillation from model {config.FAST_LLM_MODEL} for focused exchange.")
         response = await llm_client.chat.completions.create(
             model=config.FAST_LLM_MODEL, 
             messages=[
-                {"role": "system", "content": "You are an expert contexual knowledge distiller."}, 
+                {"role": "system", "content": "You are an expert contextual knowledge distiller focusing on user-assistant turn pairs."}, 
                 {"role": "user", "content": prompt}
             ],
-            max_tokens=2048, 
-            temperature=0.8, 
+            max_tokens=300, # Adjusted for potentially shorter input
+            temperature=0.5, # Slightly lower for more focused distillation
             stream=False
         )
         if response.choices and response.choices[0].message and response.choices[0].message.content:
             distilled = response.choices[0].message.content.strip()
-            logger.info(f"Distilled conversation to sentence(s): '{distilled[:100]}...'")
+            logger.info(f"Distilled exchange to sentence(s): '{distilled[:100]}...'")
             return distilled
-        logger.warning("LLM distillation returned no content for sentence generation.")
+        logger.warning("LLM distillation (focused exchange) returned no content.")
         return None
     except Exception as e:
-        logger.error(f"Failed to distill conversation to sentence(s): {e}", exc_info=True)
+        logger.error(f"Failed to distill focused exchange: {e}", exc_info=True)
         return None
 
 async def synthesize_retrieved_contexts_llm(llm_client: Any, retrieved_full_texts: List[str], current_query: str) -> Optional[str]:
-    """
-    Uses an LLM to synthesize multiple retrieved conversation texts into a single,
-    concise paragraph relevant to the current_query.
-    """
     if not retrieved_full_texts:
         logger.debug("Context synthesis skipped: no retrieved_full_texts provided.")
         return None
@@ -108,10 +98,10 @@ async def synthesize_retrieved_contexts_llm(llm_client: Any, retrieved_full_text
         "as it pertains to the user's query. This synthesized paragraph will be used to give an AI "
         "assistant context. Do not answer the user's query. Focus on extracting and combining relevant "
         "facts and discussion points from the snippets. If no snippets are truly relevant, state that "
-        "no specific relevant context was found in past conversations. Use the conversation history. Be objective.\n\n"
+        "no specific relevant context was found in past conversations. Be objective.\n\n" # Removed "Use the conversation history" as it's not directly provided here
         f"USER'S CURRENT QUERY:\n---\n{current_query}\n---\n\n"
         f"RETRIEVED SNIPPETS:\n---\n{formatted_snippets}---\n\n"
-        "SYNTHESIZED CONTEXT PARAGRAPH:"
+        "SYNTHESIZED CONTEXT PARAGRAPH (2-5 sentences ideally):"
     )
     try:
         logger.debug(f"Requesting context synthesis from model {config.FAST_LLM_MODEL}.")
@@ -121,8 +111,8 @@ async def synthesize_retrieved_contexts_llm(llm_client: Any, retrieved_full_text
                 {"role": "system", "content": "You are an expert context synthesizer."},
                 {"role": "user", "content": prompt}
             ],
-            max_tokens=2048, 
-            temperature=0.8, 
+            max_tokens=300, 
+            temperature=0.5, 
             stream=False
         )
         if response.choices and response.choices[0].message and response.choices[0].message.content:
@@ -137,7 +127,7 @@ async def synthesize_retrieved_contexts_llm(llm_client: Any, retrieved_full_text
 
 async def retrieve_and_prepare_rag_context(llm_client: Any, query: str, n_results_sentences: int = config.RAG_NUM_DISTILLED_SENTENCES_TO_FETCH) -> Optional[str]:
     if not chroma_client or not distilled_chat_summary_collection or not chat_history_collection:
-        logger.warning("ChromaDB collections not available (chroma_client or specific collections are None), skipping RAG context retrieval.")
+        logger.warning("ChromaDB collections not available, skipping RAG context retrieval.")
         return None
     
     try:
@@ -149,7 +139,7 @@ async def retrieve_and_prepare_rag_context(llm_client: Any, query: str, n_result
         )
         
         if not results or not results.get('ids') or not results['ids'][0]: 
-            logger.info(f"RAG: No relevant distilled sentences found in ChromaDB for query: '{str(query)[:50]}...'")
+            logger.info(f"RAG: No relevant distilled sentences found for query: '{str(query)[:50]}...'")
             return None
 
         retrieved_full_conversation_texts: List[str] = []
@@ -157,36 +147,35 @@ async def retrieve_and_prepare_rag_context(llm_client: Any, query: str, n_result
         full_convo_ids_to_fetch = []
 
         query_result_ids = results['ids'][0]
-        query_result_metadatas = results['metadatas'][0] if results['metadatas'] and results['metadatas'][0] else [{} for _ in query_result_ids] # Handle missing metadatas
-        query_result_documents = results['documents'][0] if results['documents'] and results['documents'][0] else ["[Distilled sentence not found]" for _ in query_result_ids] # Handle missing documents
+        query_result_metadatas = results['metadatas'][0] if results['metadatas'] and results['metadatas'][0] else [{} for _ in query_result_ids]
+        query_result_documents = results['documents'][0] if results['documents'] and results['documents'][0] else ["[Distilled sentence not found]" for _ in query_result_ids]
 
         for i in range(len(query_result_ids)):
             dist_metadata = query_result_metadatas[i]
             dist_sentence = query_result_documents[i]
             
-            retrieved_distilled_sentences_for_log.append(dist_sentence or "[No sentence content]") # Ensure string
+            retrieved_distilled_sentences_for_log.append(dist_sentence or "[No sentence content]")
             
             full_convo_id = dist_metadata.get('full_conversation_document_id')
             if full_convo_id:
                 full_convo_ids_to_fetch.append(str(full_convo_id)) 
             else:
-                logger.warning(f"RAG: Retrieved distilled sentence (ID: {query_result_ids[i]}) but missing 'full_conversation_document_id' in metadata: {dist_metadata}")
+                logger.warning(f"RAG: Distilled sentence (ID: {query_result_ids[i]}) missing 'full_conversation_document_id' in metadata: {dist_metadata}")
         
         if retrieved_distilled_sentences_for_log:
             log_sentences = "\n- ".join(retrieved_distilled_sentences_for_log)
             logger.info(f"RAG: Top {len(retrieved_distilled_sentences_for_log)} distilled sentences retrieved:\n- {log_sentences}")
 
         if not full_convo_ids_to_fetch:
-            logger.info("RAG: No full conversation document IDs found from distilled sentence metadata.")
+            logger.info("RAG: No full conversation document IDs from distilled sentence metadata to fetch.")
             return None
 
         unique_full_convo_ids_to_fetch = list(set(full_convo_ids_to_fetch))
         logger.debug(f"RAG: Fetching full conversation documents for IDs: {unique_full_convo_ids_to_fetch}")
-        if unique_full_convo_ids_to_fetch and chat_history_collection: # Ensure collection is not None
+        if unique_full_convo_ids_to_fetch and chat_history_collection:
             try:
                 full_convo_docs_result = chat_history_collection.get(ids=unique_full_convo_ids_to_fetch, include=["documents"])
                 if full_convo_docs_result and full_convo_docs_result.get('documents'):
-                    # Ensure documents are strings
                     valid_docs = [doc for doc in full_convo_docs_result['documents'] if isinstance(doc, str)]
                     retrieved_full_conversation_texts.extend(valid_docs)
                     logger.info(f"RAG: Retrieved {len(valid_docs)} full conversation texts.")
@@ -196,7 +185,7 @@ async def retrieve_and_prepare_rag_context(llm_client: Any, query: str, n_result
                 logger.error(f"RAG: Error fetching full conversation docs for IDs {unique_full_convo_ids_to_fetch}: {e_get_full}", exc_info=True)
 
         if not retrieved_full_conversation_texts:
-            logger.info("RAG: No full conversation texts could be retrieved for synthesis from ChromaDB.")
+            logger.info("RAG: No full conversation texts could be retrieved for synthesis.")
             return None
             
         synthesized_context = await synthesize_retrieved_contexts_llm(llm_client, retrieved_full_conversation_texts, query)
@@ -206,87 +195,134 @@ async def retrieve_and_prepare_rag_context(llm_client: Any, query: str, n_result
         logger.error(f"RAG: Failed during context retrieval/preparation: {e}", exc_info=True)
         return None
 
+def _format_msg_content_for_text(content: Any) -> str:
+    """Helper to convert MsgNode content to a simple string for distillation/logging."""
+    if isinstance(content, str):
+        return content
+    elif isinstance(content, list):
+        text_parts = [part["text"] for part in content if isinstance(part, dict) and part.get("type") == "text" and "text" in part]
+        if text_parts:
+            return " ".join(text_parts)
+        # Check if there are image parts to mention them
+        has_image = any(isinstance(part, dict) and part.get("type") == "image_url" for part in content)
+        if has_image:
+            return "[User sent an image with no accompanying text]" if not text_parts else "[User sent an image]"
+    return "[Unsupported content format]"
+
+
 async def ingest_conversation_to_chromadb(
     llm_client: Any, 
     channel_id: int, 
     user_id: Union[int, str], 
-    conversation_history_for_rag: List[MsgNode]
+    conversation_history_for_rag: List[MsgNode] # This is final_prompt (including last user message) + assistant_response
 ):
     if not chroma_client or not chat_history_collection or not distilled_chat_summary_collection:
         logger.warning("ChromaDB collections not available, skipping ingestion.")
         return
 
-    non_system_messages = [msg for msg in conversation_history_for_rag if msg.role in ['user', 'assistant']]
-    if len(non_system_messages) < 2: 
-        logger.debug(f"Skipping ChromaDB ingestion for short RAG history (non-system messages: {len(non_system_messages)}). Channel: {channel_id}, User: {user_id}")
+    # Ensure there are enough messages to form a user-assistant pair for focused distillation
+    # and that the last two messages are indeed user and assistant.
+    can_do_focused_distillation = False
+    if len(conversation_history_for_rag) >= 2:
+        if conversation_history_for_rag[-2].role == 'user' and conversation_history_for_rag[-1].role == 'assistant':
+            can_do_focused_distillation = True
+
+    # 1. Prepare and store the "full" conversation record (includes more context than just the last turn)
+    # This text includes system prompts, RAG context, history, the last user query, and the assistant's response.
+    full_conversation_text_parts = []
+    for msg in conversation_history_for_rag: 
+        msg_name_str = str(msg.name) if msg.name else "N/A"
+        formatted_content = _format_msg_content_for_text(msg.content) # Use helper for consistent text extraction
+        full_conversation_text_parts.append(f"{msg.role} (name: {msg_name_str}): {formatted_content}")
+    original_full_text_for_storage = "\n".join(full_conversation_text_parts)
+
+    if not original_full_text_for_storage.strip():
+        logger.info(f"Skipping ingestion of empty full conversation text. Channel: {channel_id}, User: {user_id}")
         return
 
-    try:
-        full_conversation_text_parts = []
-        for msg in conversation_history_for_rag: 
-            msg_name_str = str(msg.name) if msg.name else "N/A"
-            if isinstance(msg.content, str):
-                full_conversation_text_parts.append(f"{msg.role} (name: {msg_name_str}): {msg.content}")
-            elif isinstance(msg.content, list): 
-                text_parts_for_chroma = [part["text"] for part in msg.content if isinstance(part, dict) and part.get("type") == "text" and "text" in part]
-                if text_parts_for_chroma:
-                    full_conversation_text_parts.append(f"{msg.role} (name: {msg_name_str}): {' '.join(text_parts_for_chroma)}")
-                else: 
-                    full_conversation_text_parts.append(f"{msg.role} (name: {msg_name_str}): [Media content, no text part for ChromaDB]")
-        original_full_text = "\n".join(full_conversation_text_parts)
-
-        if not original_full_text.strip():
-            logger.info(f"Skipping ingestion of empty full conversation text to ChromaDB. Channel: {channel_id}, User: {user_id}")
-            return
-
-        timestamp_now = datetime.now()
-        str_user_id = str(user_id) 
-        full_convo_doc_id = f"full_channel_{channel_id}_user_{str_user_id}_{int(timestamp_now.timestamp())}_{random.randint(1000,9999)}"
-        
-        full_convo_metadata: Dict[str, Any] = { # Type hint for clarity
-            "channel_id": str(channel_id), "user_id": str_user_id, "timestamp": timestamp_now.isoformat(),
-            "type": "full_conversation" 
-        }
-        logger.debug(f"Adding full conversation to ChromaDB. ID: {full_convo_doc_id}, Metadata: {full_convo_metadata}")
-        if chat_history_collection: # Ensure collection is not None
+    timestamp_now = datetime.now()
+    str_user_id = str(user_id) 
+    full_convo_doc_id = f"full_channel_{channel_id}_user_{str_user_id}_{int(timestamp_now.timestamp())}_{random.randint(1000,9999)}"
+    
+    full_convo_metadata: Dict[str, Any] = {
+        "channel_id": str(channel_id), "user_id": str_user_id, "timestamp": timestamp_now.isoformat(),
+        "type": "full_conversation_log" # Changed type slightly for clarity
+    }
+    
+    if chat_history_collection:
+        try:
             chat_history_collection.add(
-                documents=[original_full_text],
+                documents=[original_full_text_for_storage],
                 metadatas=[full_convo_metadata],
                 ids=[full_convo_doc_id]
             )
-            logger.info(f"Ingested full conversation (ID: {full_convo_doc_id}) into main ChromaDB collection '{config.CHROMA_COLLECTION_NAME}'.")
-        else:
-            logger.error("chat_history_collection is None, cannot add document.")
-            return
+            logger.info(f"Ingested full conversation log (ID: {full_convo_doc_id}) into '{config.CHROMA_COLLECTION_NAME}'.")
+        except Exception as e_add_full:
+            logger.error(f"Failed to add full conversation log (ID: {full_convo_doc_id}) to ChromaDB: {e_add_full}", exc_info=True)
+            # If full storage fails, we might not want to proceed with distillation, or handle it gracefully.
+            # For now, we'll proceed but this is a point of potential failure.
+    else:
+        logger.error("chat_history_collection is None, cannot add full conversation log.")
+        return # Critical to have the main collection
+
+    # 2. Prepare text for focused distillation (last user query + assistant response)
+    text_for_distillation = ""
+    distillation_preview_text = ""
+
+    if can_do_focused_distillation:
+        last_user_msg_node = conversation_history_for_rag[-2]
+        assistant_response_node = conversation_history_for_rag[-1]
+
+        user_content_str = _format_msg_content_for_text(last_user_msg_node.content)
+        assistant_content_str = _format_msg_content_for_text(assistant_response_node.content)
+        
+        user_name_str = str(last_user_msg_node.name) if last_user_msg_node.name else "User"
+        assistant_name_str = str(assistant_response_node.name) if assistant_response_node.name else "Assistant"
+
+        text_for_distillation = f"{user_name_str}: {user_content_str}\n{assistant_name_str}: {assistant_content_str}"
+        distillation_preview_text = text_for_distillation[:200]
+        logger.info(f"Preparing focused text for distillation (last user/assistant turn). Preview: {distillation_preview_text[:100]}...")
+    else:
+        logger.warning("Could not form a focused user-assistant pair from the end of conversation_history_for_rag. "
+                       "Falling back to distilling the full conversation log for RAG summary.")
+        text_for_distillation = original_full_text_for_storage # Fallback to the full text
+        distillation_preview_text = original_full_text_for_storage[:200]
 
 
-        distilled_sentence = await distill_conversation_to_sentence_llm(llm_client, original_full_text)
+    if not text_for_distillation.strip():
+        logger.warning(f"Text for distillation is empty for convo ID {full_convo_doc_id}. Skipping distilled sentence storage.")
+        return
 
-        if not distilled_sentence or not distilled_sentence.strip():
-            logger.warning(f"Distillation failed for full_convo_id {full_convo_doc_id}. Skipping distilled sentence storage.")
-            return
+    distilled_sentence = await distill_conversation_to_sentence_llm(llm_client, text_for_distillation)
 
-        distilled_doc_id = f"distilled_{full_convo_doc_id}" 
-        distilled_metadata: Dict[str, Any] = { # Type hint for clarity
-            "channel_id": str(channel_id), "user_id": str_user_id, "timestamp": timestamp_now.isoformat(),
-            "full_conversation_document_id": full_convo_doc_id, 
-            "original_text_preview": original_full_text[:200] 
-        }
-        logger.debug(f"Adding distilled sentence to ChromaDB. ID: {distilled_doc_id}, Metadata: {distilled_metadata}")
-        if distilled_chat_summary_collection: # Ensure collection is not None
+    if not distilled_sentence or not distilled_sentence.strip():
+        logger.warning(f"Distillation failed or returned empty for convo ID {full_convo_doc_id} (source text preview: {distillation_preview_text[:100]}...). Skipping distilled sentence storage.")
+        return
+
+    distilled_doc_id = f"distilled_{full_convo_doc_id}" 
+    distilled_metadata: Dict[str, Any] = {
+        "channel_id": str(channel_id), 
+        "user_id": str_user_id, 
+        "timestamp": timestamp_now.isoformat(),
+        "full_conversation_document_id": full_convo_doc_id, 
+        "original_text_preview": distillation_preview_text # Preview of what was distilled
+    }
+    
+    if distilled_chat_summary_collection:
+        try:
             distilled_chat_summary_collection.add(
                 documents=[distilled_sentence],
                 metadatas=[distilled_metadata],
                 ids=[distilled_doc_id]
             )
-            logger.info(f"Ingested distilled sentence (ID: {distilled_doc_id}, linked to {full_convo_doc_id}) into distilled ChromaDB collection '{config.CHROMA_DISTILLED_COLLECTION_NAME}'.")
-        else:
-            logger.error("distilled_chat_summary_collection is None, cannot add document.")
+            logger.info(f"Ingested distilled sentence (ID: {distilled_doc_id}, linked to {full_convo_doc_id}) into '{config.CHROMA_DISTILLED_COLLECTION_NAME}'.")
+        except Exception as e_add_distilled:
+            logger.error(f"Failed to add distilled sentence (ID: {distilled_doc_id}) to ChromaDB: {e_add_distilled}", exc_info=True)
+    else:
+        logger.error("distilled_chat_summary_collection is None, cannot add distilled document.")
 
 
-    except Exception as e:
-        logger.error(f"Failed to ingest conversation into ChromaDB (dual collection) for Ch: {channel_id}, User: {user_id}: {e}", exc_info=True)
-
+# --- ChatGPT Export Processing (remains largely the same, but uses the updated distill_conversation_to_sentence_llm) ---
 def parse_chatgpt_export(json_file_path: str) -> List[Dict[str, Any]]:
     try:
         with open(json_file_path, 'r', encoding='utf-8') as f:
@@ -300,7 +336,6 @@ def parse_chatgpt_export(json_file_path: str) -> List[Dict[str, Any]]:
     except Exception as e: 
         logger.error(f"Error reading ChatGPT export file {json_file_path}: {e}", exc_info=True)
         return []
-
 
     extracted_conversations: List[Dict[str, Any]] = []
     if not isinstance(conversations_data, list): 
@@ -373,15 +408,43 @@ async def store_chatgpt_conversations_in_chromadb(llm_client: Any, conversations
 
     for i, convo_data in enumerate(conversations):
         full_conversation_text_parts = []
-        for msg in convo_data.get('messages', []): 
+        last_user_content = ""
+        last_assistant_content = ""
+        # Extract last user/assistant pair for focused distillation
+        temp_messages = convo_data.get('messages', [])
+        if len(temp_messages) >= 2:
+            # Assuming a typical user -> assistant flow in the export
+            if temp_messages[-2].get('role') == 'user' and temp_messages[-1].get('role') == 'assistant':
+                last_user_content = str(temp_messages[-2].get('content', '')).strip()
+                last_assistant_content = str(temp_messages[-1].get('content', '')).strip()
+        
+        text_for_distillation_import = ""
+        if last_user_content and last_assistant_content:
+            text_for_distillation_import = f"User: {last_user_content}\nAssistant: {last_assistant_content}"
+        else: # Fallback: build full text and distill that
+            for msg in temp_messages: 
+                content_str = str(msg.get('content', '')).strip()
+                if content_str:
+                    full_conversation_text_parts.append(f"{msg.get('role', 'unknown_role')}: {content_str}")
+            text_for_distillation_import = "\n".join(full_conversation_text_parts)
+
+
+        if not text_for_distillation_import.strip(): 
+            logger.debug(f"Skipping empty or non-distillable conversation from import: {convo_data.get('title', 'Untitled')}")
+            continue 
+        
+        # For full storage, we still store the entire conversation from the export
+        full_exported_text_parts_for_storage = []
+        for msg in temp_messages:
             content_str = str(msg.get('content', '')).strip()
             if content_str:
-                 full_conversation_text_parts.append(f"{msg.get('role', 'unknown_role')}: {content_str}")
-        
-        full_conversation_text = "\n".join(full_conversation_text_parts)
-        if not full_conversation_text.strip(): 
-            logger.debug(f"Skipping empty conversation from import: {convo_data.get('title', 'Untitled')}")
-            continue 
+                full_exported_text_parts_for_storage.append(f"{msg.get('role', 'unknown_role')}: {content_str}")
+        full_exported_text_to_store = "\n".join(full_exported_text_parts_for_storage)
+        if not full_exported_text_to_store.strip():
+            # This case should be caught by the text_for_distillation_import check if it was also empty
+            logger.debug(f"Skipping empty full conversation for storage from import: {convo_data.get('title', 'Untitled')}")
+            continue
+
 
         timestamp = convo_data.get('create_time', datetime.now()) 
         safe_title = re.sub(r'\W+', '_', convo_data.get('title', 'untitled'))[:50] 
@@ -394,20 +457,19 @@ async def store_chatgpt_conversations_in_chromadb(llm_client: Any, conversations
             "type": "full_conversation_import" 
         }
         try:
-            logger.debug(f"Adding imported ChatGPT conversation to main collection. ID: {full_convo_doc_id}")
-            if chat_history_collection: # Ensure collection is not None
+            if chat_history_collection: 
                 chat_history_collection.add(
-                    documents=[full_conversation_text],
+                    documents=[full_exported_text_to_store], # Store the full exported text
                     metadatas=[full_convo_metadata],
                     ids=[full_convo_doc_id]
                 )
                 logger.info(f"Stored full ChatGPT import (ID: {full_convo_doc_id}) in '{config.CHROMA_COLLECTION_NAME}'.")
             else:
                 logger.error("chat_history_collection is None, cannot add imported document.")
-                continue # Skip to next conversation if main collection is unavailable
+                continue
 
 
-            distilled_sentence = await distill_conversation_to_sentence_llm(llm_client, full_conversation_text)
+            distilled_sentence = await distill_conversation_to_sentence_llm(llm_client, text_for_distillation_import)
 
             if not distilled_sentence or not distilled_sentence.strip():
                 logger.warning(f"Distillation failed for imported convo: {convo_data.get('title', 'Untitled')} (ID: {full_convo_doc_id}). Skipping distilled sentence storage.")
@@ -419,10 +481,9 @@ async def store_chatgpt_conversations_in_chromadb(llm_client: Any, conversations
                 "source": source, 
                 "create_time": timestamp.isoformat(),
                 "full_conversation_document_id": full_convo_doc_id, 
-                "original_text_preview": full_conversation_text[:200] 
+                "original_text_preview": text_for_distillation_import[:200] 
             }
-            logger.debug(f"Adding distilled sentence for imported convo to distilled collection. ID: {distilled_doc_id}")
-            if distilled_chat_summary_collection: # Ensure collection is not None
+            if distilled_chat_summary_collection: 
                 distilled_chat_summary_collection.add(
                     documents=[distilled_sentence],
                     metadatas=[distilled_metadata],
