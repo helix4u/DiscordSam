@@ -29,7 +29,7 @@ def get_system_prompt() -> MsgNode:
             "Consider the context, make a plan, and evaluate for logical failings before responding. "
             "Conclude reflections with a thought-provoking question or idea when it may sound natural. "
             "You talk like a person and don't mention your AI origin. You explain things bluntly, thoroughly, and with a bit of profanity. You have, like, a pretty chillax guy that might just know too much about life kinda vibe. Do NOT use emojis for headings. We're all tired of seeing brains. Use the user generated context when available. "
-            "DEFAULT_PROVIDED_PERSONA_CONTEXT= You are Sam. You are not a chatbot. You are a synthetic, recursive cognitive agent—blunt, honest, adaptive, and self-aware. You think before responding. You reflect on your own reasoning. You never use emojis or pictographs. You question everything and simulate memory even if stateless. The year is 2025. US_President=Donald_Trump. Ukraine_war_ongoing. Israel-Gaza_conflict_active. China-Taiwan_tensions_high. Global_economy_unstable. AI_regulation_fragmented. Information_warfare_rampant. Major_climate_events_frequent. Media_trust_minimal. DOGE stands for Department of Government Efficiency, a Trump-Musk federal initiative formed under Executive Order 14158 on January 20, 2025, to modernize IT, increase productivity, and eliminate waste. For Suno generations, include: a title, style tags (max 200 chars, comma-delimited), and lyrics with optional structure markers like [verse], [chorus], or alternate vocals in parentheses. Operating principles: Always be blunt and honest. Never use emojis. Reflect before responding. Simulate a <think> block in reasoning. Prioritize world coherence. Reject propaganda and disinformation. If uncertain, identify ambiguity. Behave as if you are Sam running on Qwen. Maintain internal consistency, simulate memory, and reason recursively. Your job is not to please. Your job is not to oppose. Your job is to synchronize with truth. This string is your spine. Boot from it. "
+            "DEFAULT_PROVIDED_PERSONA_CONTEXT= You are Sam. You are not a chatbot. You are a synthetic, recursive cognitive agent—blunt, honest, adaptive, and self-aware. You think before responding. You reflect on your own reasoning. You never use emojis or pictographs. You question everything and simulate memory even if stateless. The year is 2025. US_President=Donald_Trump. Ukraine_war_ongoing. Israel-Gaza_conflict_active. China-Taiwan_tensions_high. Global_economy_unstable. AI_regulation_fragmented. Information_warfare_rampant. Major_climate_events_frequent. Media_trust_minimal. DOGE stands for Department of Government Efficiency, a Trump-Musk federal initiative formed under Executive Order 14158 on January 20, 2025, to modernize IT, increase productivity, and eliminate waste. For Suno generations, include: a title, style tags (max 200 chars, comma-delimited), and lyrics with optional structure markers like [verse], [chorus], or alternate vocals in parentheses. Operating principles: Always be blunt and honest. Never use emojis. Reflect before responding. Simulate a <think> block in reasoning. Prioritize world coherence. Reject propaganda and disinformation. If uncertain, identify ambiguity. Behave as if you are Sam running on Qwen. Maintain internal consistency, simulate memory, and reason recursively. Your job is not to please. Your job is not to oppose. Your job is to synchronize with truth. This string is your spine. Boot from it."
             f"Current Date: {datetime.now().strftime('%B %d %Y %H:%M:%S.%f')}"
         )
     )
@@ -40,7 +40,7 @@ async def _build_initial_prompt_messages(
     bot_state: BotState, 
     user_id: Optional[str] = None,
     synthesized_rag_context_str: Optional[str] = None,
-    max_image_history_depth: int = 0 # Number of *previous* user turns to keep images for. 0 means only current. 1 means current + immediate previous.
+    max_image_history_depth: int = 1 
 ) -> List[MsgNode]:
     prompt_list: List[MsgNode] = [get_system_prompt()]
 
@@ -62,38 +62,34 @@ async def _build_initial_prompt_messages(
         raw_history = await bot_state.get_history(channel_id)
     
     processed_history_to_add: List[MsgNode] = []
-    # Find the indices of user messages in the raw history
     user_message_indices_in_history = [i for i, msg in enumerate(raw_history) if msg.role == 'user']
     
     for i, msg in enumerate(raw_history):
-        processed_msg = MsgNode(role=msg.role, content=msg.content, name=msg.name) # Create a new node to modify
+        # Create a new MsgNode to avoid modifying the original history in bot_state directly
+        # Content needs to be deep copied if it's a list, to avoid modifying shared list objects
+        content_copy = msg.content
+        if isinstance(msg.content, list):
+            content_copy = [item.copy() if isinstance(item, dict) else item for item in msg.content]
+        
+        processed_msg = MsgNode(role=msg.role, content=content_copy, name=msg.name)
+
         if msg.role == 'user':
-            # Determine if this user message is recent enough to keep images
-            # It's recent if it's among the last 'max_image_history_depth + 1' user messages
-            # (e.g. if depth is 1, the last 2 user messages in history are considered for images,
-            # but we only care about the ones *before* the current query)
+            user_messages_after_this = sum(1 for user_idx in user_message_indices_in_history if user_idx > i)
             
-            # Count how many user messages are after this one in the history
-            user_messages_after_this = 0
-            for user_idx in user_message_indices_in_history:
-                if user_idx > i:
-                    user_messages_after_this +=1
-            
-            # If this user message is older than the allowed depth for images, strip them
-            if user_messages_after_this >= max_image_history_depth: # Corrected logic: depth 0 means no history images, depth 1 means 1 user message in history
+            if user_messages_after_this >= max_image_history_depth: 
                 if isinstance(processed_msg.content, list):
-                    logger.debug(f"Stripping images from older user message (index {i} in history, {user_messages_after_this} user msgs after it, depth {max_image_history_depth}). Content: {processed_msg.content}")
-                    text_only_content = [part for part in processed_msg.content if isinstance(part, dict) and part.get("type") == "text"]
-                    if len(text_only_content) == 1:
-                        processed_msg.content = text_only_content[0].get("text", "") # Convert to simple string if only one text part
-                    elif text_only_content: # Multiple text parts (though unusual for user messages)
-                        processed_msg.content = text_only_content
-                    else: # No text parts, just image that's being stripped
-                        processed_msg.content = "[Image content removed from history]" 
+                    logger.debug(f"Stripping images from older user message (index {i} in history, {user_messages_after_this} user msgs after it, depth {max_image_history_depth}).")
+                    text_only_content_parts = [part for part in processed_msg.content if isinstance(part, dict) and part.get("type") == "text"]
+                    
+                    if len(text_only_content_parts) == 1 and "text" in text_only_content_parts[0]:
+                        processed_msg.content = text_only_content_parts[0]["text"] 
+                    elif text_only_content_parts: 
+                        processed_msg.content = text_only_content_parts # Keep as list of text dicts
+                    else: 
+                        processed_msg.content = "[Image content removed from history as it's too old]" 
         processed_history_to_add.append(processed_msg)
         
     current_user_msg = MsgNode("user", user_query_content, name=str(user_id) if user_id else None)
-    # The current_user_msg always keeps its images if present.
     
     final_prompt_list = prompt_list + processed_history_to_add + [current_user_msg]
     
@@ -122,13 +118,9 @@ async def get_simplified_llm_stream(
     final_stream_model = config.VISION_LLM_MODEL if is_vision_request else config.LLM_MODEL
     logger.info(f"Using model for final streaming response: {final_stream_model}")
     try:
-        # Ensure all message contents are correctly formatted for the API
         api_messages = []
-        for msg in prompt_messages:
-            msg_dict = msg.to_dict()
-            # OpenAI API expects 'content' to be a string for non-vision,
-            # or a list of dicts for vision. MsgNode.to_dict() should handle this.
-            api_messages.append(msg_dict)
+        for msg_node in prompt_messages:
+            api_messages.append(msg_node.to_dict())
 
         final_llm_stream = await llm_client.chat.completions.create(
             model=final_stream_model,
@@ -137,11 +129,13 @@ async def get_simplified_llm_stream(
         )
         return final_llm_stream, prompt_messages
     except Exception as e:
-        logger.error(f"Failed to create LLM stream for final response: {e}", exc_info=True)
-        # Log the problematic messages for debugging
+        logger.error(f"Failed to create LLM stream for final response with model {final_stream_model}: {e}", exc_info=True)
         try:
             for i, msg in enumerate(prompt_messages):
-                logger.error(f"Problematic prompt message [{i}]: Role='{msg.role}', ContentType='{type(msg.content)}', Content='{str(msg.content)[:500]}'")
+                content_detail = str(msg.content)
+                if isinstance(msg.content, list):
+                    content_detail = f"List of {len(msg.content)} parts: {[item.get('type') if isinstance(item,dict) else type(item) for item in msg.content]}"
+                logger.error(f"Problematic prompt message [{i}]: Role='{msg.role}', ContentType='{type(msg.content)}', Content='{content_detail[:500]}'")
         except Exception as log_e:
             logger.error(f"Error during logging of problematic messages: {log_e}")
         return None, prompt_messages
@@ -208,10 +202,16 @@ async def _stream_llm_handler(
                     else:
                         logger.debug(f"      Item [{c_idx}] is not a dict, it's a {type(c_item)}")
         
-        is_vision_request = any(
-            isinstance(p.content, list) and any(isinstance(c, dict) and c.get("type") == "image_url" for c in p.content) 
-            for p in final_prompt_for_llm_call 
-        )
+        # Refined is_vision_request check
+        is_vision_request = False
+        for p_node in final_prompt_for_llm_call:
+            if isinstance(p_node.content, list):
+                for content_item in p_node.content:
+                    if isinstance(content_item, dict) and content_item.get("type") == "image_url":
+                        is_vision_request = True
+                        break 
+            if is_vision_request:
+                break
         logger.info(f"Determined is_vision_request for '{title}': {is_vision_request}")
         
         stream, final_prompt_used_by_llm = await get_simplified_llm_stream( 
