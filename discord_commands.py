@@ -5,11 +5,11 @@ from discord.ext import commands # For bot type hint
 import os 
 import base64 
 import random 
-from typing import Any, Optional, List, Union, Tuple # Added Optional and Any
-from datetime import datetime # For remindme command, gettweets
+from typing import Any, Optional, List, Union, Tuple, Dict # Added Dict
+from datetime import datetime 
 
 # Bot services and utilities
-from config import config
+from config import config # Assuming NEWS_MAX_LINKS_TO_PROCESS will be added here
 from state import BotState
 # common_models contains MsgNode
 from common_models import MsgNode
@@ -21,7 +21,10 @@ from llm_handling import (
 from rag_chroma_manager import (
     retrieve_and_prepare_rag_context, 
     parse_chatgpt_export,
-    store_chatgpt_conversations_in_chromadb
+    store_chatgpt_conversations_in_chromadb,
+    # We might need a specific function here later for news summaries,
+    # but for now, we'll log the intent to store.
+    # ingest_news_article_summary # Placeholder for future
 )
 from web_utils import (
     scrape_website, 
@@ -44,16 +47,185 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
     llm_client_instance = llm_client_in
     bot_state_instance = bot_state_in
 
-    # Ensure instances are set before defining commands that use them
     if not bot_instance or not llm_client_instance or not bot_state_instance:
         logger.critical("Bot, LLM client, or BotState not properly initialized in setup_commands. Commands may fail.")
-        return # Prevent commands from being registered if setup is faulty
+        return 
+
+    @bot_instance.tree.command(name="news", description="Generates a news briefing on a given topic.")
+    @app_commands.describe(
+        topic="The news topic you want a briefing on.",
+        max_articles="Max number of articles to process for the briefing (1-10)."
+    )
+    async def news_slash_command(interaction: discord.Interaction, topic: str, max_articles: app_commands.Range[int, 1, 10] = config.NEWS_MAX_LINKS_TO_PROCESS):
+        if not llm_client_instance or not bot_state_instance or not bot_instance or not bot_instance.user:
+            logger.error("/news command: Bot components not ready.")
+            await interaction.response.send_message("Bot components not ready. Cannot generate news.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=False)
+        initial_embed = discord.Embed(
+            title=f"News Briefing: {topic}",
+            description=f"Gathering news articles for '{topic}'...",
+            color=config.EMBED_COLOR["incomplete"]
+        )
+        await interaction.edit_original_response(embed=initial_embed)
+
+        try:
+            logger.info(f"/news command for '{topic}' by {interaction.user.name}, max_articles={max_articles}")
+            search_results = await query_searx(topic)
+
+            if not search_results:
+                error_embed = discord.Embed(
+                    title=f"News Briefing: {topic}",
+                    description=f"Sorry, I couldn't find any initial search results for '{topic}'.",
+                    color=config.EMBED_COLOR["error"]
+                )
+                await interaction.edit_original_response(embed=error_embed)
+                return
+
+            num_to_process = min(len(search_results), max_articles)
+            article_summaries_for_briefing: List[str] = []
+            processed_urls = set()
+
+            for i in range(num_to_process):
+                result = search_results[i]
+                article_url = result.get('url')
+                article_title = result.get('title', 'Untitled Article')
+
+                if not article_url or article_url in processed_urls:
+                    logger.info(f"Skipping duplicate or invalid URL: {article_url}")
+                    continue
+                processed_urls.add(article_url)
+
+                update_embed = discord.Embed(
+                    title=f"News Briefing: {topic}",
+                    description=f"Processing article {i+1}/{num_to_process}: Scraping '{article_title}'...",
+                    color=config.EMBED_COLOR["incomplete"]
+                )
+                await interaction.edit_original_response(embed=update_embed)
+                
+                scraped_content = await scrape_website(article_url)
+
+                if not scraped_content or "Failed to scrape" in scraped_content or "Scraping timed out" in scraped_content:
+                    logger.warning(f"Failed to scrape '{article_title}' from {article_url}. Reason: {scraped_content}")
+                    article_summaries_for_briefing.append(f"Source: {article_title} ({article_url})\nSummary: [Could not retrieve content for summarization]\n\n")
+                    continue
+                
+                update_embed.description = f"Processing article {i+1}/{num_to_process}: Summarizing '{article_title}'..."
+                await interaction.edit_original_response(embed=update_embed)
+
+                summarization_prompt = (
+                    f"You are an expert news summarizer. Please read the following article content, "
+                    f"which was found when searching for the topic '{topic}'. Extract the key factual "
+                    f"news points and provide a concise summary (2-4 sentences) relevant to this topic. "
+                    f"Focus on who, what, when, where, and why if applicable. Avoid opinions or speculation not present in the text.\n\n"
+                    f"Article Title: {article_title}\n"
+                    f"Article Content:\n{scraped_content[:config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT*2]}" # Allow more content for summarizer
+                )
+                
+                try:
+                    summary_response = await llm_client_instance.chat.completions.create(
+                        model=config.FAST_LLM_MODEL,
+                        messages=[{"role": "user", "content": summarization_prompt}],
+                        max_tokens=250, # Adjust as needed for summary length
+                        temperature=0.3, # Lower temperature for factual summarization
+                        stream=False
+                    )
+                    if summary_response.choices and summary_response.choices[0].message and summary_response.choices[0].message.content:
+                        article_summary = summary_response.choices[0].message.content.strip()
+                        logger.info(f"Summarized '{article_title}': {article_summary[:100]}...")
+                        article_summaries_for_briefing.append(f"Source: {article_title} ({article_url})\nSummary: {article_summary}\n\n")
+                        
+                        # Placeholder for storing individual summary to ChromaDB
+                        # await ingest_news_article_summary(
+                        #     topic=topic, url=article_url, title=article_title, summary=article_summary
+                        # )
+                        logger.info(f"TODO: Store news summary for '{article_title}' in ChromaDB.")
+                    else:
+                        logger.warning(f"LLM summarization returned no content for '{article_title}'.")
+                        article_summaries_for_briefing.append(f"Source: {article_title} ({article_url})\nSummary: [AI summarization failed or returned no content]\n\n")
+                except Exception as e_summ:
+                    logger.error(f"Error during LLM summarization for '{article_title}': {e_summ}", exc_info=True)
+                    article_summaries_for_briefing.append(f"Source: {article_title} ({article_url})\nSummary: [Error during AI summarization]\n\n")
+
+            if not article_summaries_for_briefing:
+                error_embed = discord.Embed(
+                    title=f"News Briefing: {topic}",
+                    description=f"Could not process any articles to generate a briefing for '{topic}'.",
+                    color=config.EMBED_COLOR["error"]
+                )
+                await interaction.edit_original_response(embed=error_embed)
+                return
+
+            update_embed.description = "All articles processed. Generating final news briefing..."
+            await interaction.edit_original_response(embed=update_embed)
+
+            combined_summaries_text = "".join(article_summaries_for_briefing)
+            
+            final_briefing_prompt_content = (
+                f"You are Sam, a news anchor delivering a concise and objective briefing. "
+                f"The following are summaries of news articles related to the topic: '{topic}'. "
+                f"Synthesize this information into a coherent news report. Start with a clear headline for the briefing. "
+                f"Present the key developments and information from the summaries. Maintain a neutral and informative tone. "
+                f"Do not add external information or opinions not present in the provided summaries.\n\n"
+                f"Topic: {topic}\n\n"
+                f"Collected Article Summaries:\n{combined_summaries_text}"
+            )
+
+            user_msg_node_for_briefing = MsgNode("user", final_briefing_prompt_content, name=str(interaction.user.id))
+            
+            # RAG context for the briefing generation itself (e.g., past briefings on similar topics)
+            rag_query_for_briefing = f"news briefing about {topic}"
+            synthesized_rag_context_for_briefing = await retrieve_and_prepare_rag_context(llm_client_instance, rag_query_for_briefing)
+
+            prompt_nodes_for_briefing = await _build_initial_prompt_messages(
+                user_query_content=final_briefing_prompt_content,
+                channel_id=interaction.channel_id,
+                bot_state=bot_state_instance,
+                user_id=str(interaction.user.id),
+                synthesized_rag_context_str=synthesized_rag_context_for_briefing,
+                max_image_history_depth=0 # No images involved in this final text synthesis
+            )
+
+            # The stream_llm_response_to_interaction will handle the original response editing for the final briefing
+            await stream_llm_response_to_interaction(
+                interaction=interaction,
+                llm_client=llm_client_instance,
+                bot_state=bot_state_instance,
+                user_msg_node=user_msg_node_for_briefing, # This node is for history/RAG of the briefing request
+                prompt_messages=prompt_nodes_for_briefing,
+                title=f"News Briefing: {topic}",
+                # force_new_followup_flow=False, # We want to edit the original deferred message
+                synthesized_rag_context_for_display=synthesized_rag_context_for_briefing, # RAG for the briefing itself
+                bot_user_id=bot_instance.user.id
+            )
+            # The full_response_content (the briefing) could also be stored for future RAG.
+            # logger.info(f"TODO: Store final news briefing for '{topic}' in ChromaDB.")
+
+        except Exception as e:
+            logger.error(f"Error in /news command for topic '{topic}': {e}", exc_info=True)
+            error_embed = discord.Embed(
+                title=f"News Briefing: {topic}",
+                description=f"An unexpected error occurred while generating your news briefing: {str(e)[:1000]}",
+                color=config.EMBED_COLOR["error"]
+            )
+            try: # Try to edit, if not, send followup
+                if interaction.response.is_done(): # Should be done due to defer
+                     await interaction.edit_original_response(embed=error_embed)
+                else: # Should not happen if deferred
+                    await interaction.response.send_message(embed=error_embed, ephemeral=True)
+            except discord.HTTPException: # Fallback if edit fails
+                await interaction.followup.send(embed=error_embed, ephemeral=True)
+
+
+    # ... (other existing commands like ingest_chatgpt_export, remindme, roast, search, pol, gettweets, ap, clearhistory) ...
+    # Ensure they also use llm_client_instance, bot_state_instance, and bot_instance correctly.
+    # The following is a copy of your existing commands, ensure they are updated if needed.
 
     @bot_instance.tree.command(name="ingest_chatgpt_export", description="Ingests a conversations.json file from a ChatGPT export.")
     @app_commands.describe(file_path="The full local path to your conversations.json file.")
     @app_commands.checks.has_permissions(manage_messages=False) 
     async def ingest_chatgpt_export_command(interaction: discord.Interaction, file_path: str):
-        # Ensure llm_client_instance is available
         if not llm_client_instance:
             logger.error("ingest_chatgpt_export_command: llm_client_instance is None.")
             await interaction.response.send_message("LLM client not available. Cannot process.", ephemeral=True)
@@ -124,7 +296,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             return
         
         logger.info(f"Roast command initiated by {interaction.user.name} for URL: {url}.")
-        if interaction.channel_id is None: # Should be redundant due to how slash commands work, but good check
+        if interaction.channel_id is None: 
             await interaction.response.send_message("Error: This command must be used in a channel.", ephemeral=True)
             return
         
@@ -154,7 +326,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 interaction, llm_client_instance, bot_state_instance, user_msg_node, prompt_nodes, 
                 title=f"Comedy Roast of {url}",
                 synthesized_rag_context_for_display=synthesized_rag_context,
-                bot_user_id=bot_instance.user.id # Pass bot's user ID
+                bot_user_id=bot_instance.user.id 
             )
         except Exception as e:
             logger.error(f"Error in roast_slash_command for URL '{url}': {e}", exc_info=True)
@@ -215,7 +387,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 title=f"Summary for Search: {query}", 
                 force_new_followup_flow=True, 
                 synthesized_rag_context_for_display=synthesized_rag_context,
-                bot_user_id=bot_instance.user.id # Pass bot's user ID
+                bot_user_id=bot_instance.user.id 
             )
         except Exception as e:
             logger.error(f"Error in search_slash_command for query '{query}': {e}", exc_info=True)
@@ -270,7 +442,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 interaction, llm_client_instance, bot_state_instance, user_msg_node, final_prompt_nodes, 
                 title="Sarcastic Political Commentary", 
                 synthesized_rag_context_for_display=synthesized_rag_context,
-                bot_user_id=bot_instance.user.id # Pass bot's user ID
+                bot_user_id=bot_instance.user.id 
             )
         except Exception as e:
             logger.error(f"Error in pol_slash_command for statement '{statement[:50]}...': {e}", exc_info=True)
@@ -355,7 +527,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 title=f"Tweet Summary for @{clean_username}",
                 force_new_followup_flow=True, 
                 synthesized_rag_context_for_display=synthesized_rag_context,
-                bot_user_id=bot_instance.user.id # Pass bot's user ID
+                bot_user_id=bot_instance.user.id 
             )
         except Exception as e:
             logger.error(f"Error in gettweets_slash_command for @{username}: {e}", exc_info=True)
@@ -414,7 +586,8 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 channel_id=interaction.channel_id, 
                 bot_state=bot_state_instance,
                 user_id=str(interaction.user.id),
-                synthesized_rag_context_str=synthesized_rag_context
+                synthesized_rag_context_str=synthesized_rag_context,
+                max_image_history_depth=0 # For AP command, only current image matters
             )
             
             insert_idx = 0
@@ -427,7 +600,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 interaction, llm_client_instance, bot_state_instance, user_msg_node, final_prompt_nodes, 
                 title=f"AP Photo Description ft. {chosen_celebrity}", 
                 synthesized_rag_context_for_display=synthesized_rag_context,
-                bot_user_id=bot_instance.user.id # Pass bot's user ID
+                bot_user_id=bot_instance.user.id 
             )
         except Exception as e:
             logger.error(f"Error in ap_slash_command for image '{image.filename}': {e}", exc_info=True)
