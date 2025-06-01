@@ -216,7 +216,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
 
     @bot_instance.tree.command(name="ingest_chatgpt_export", description="Ingests a conversations.json file from a ChatGPT export.")
     @app_commands.describe(file_path="The full local path to your conversations.json file.")
-    @app_commands.checks.has_permissions(manage_messages=False) 
+    @app_commands.checks.has_permissions(manage_messages=True) 
     async def ingest_chatgpt_export_command(interaction: discord.Interaction, file_path: str):
         if not llm_client_instance:
             logger.error("ingest_chatgpt_export_command: llm_client_instance is None.")
