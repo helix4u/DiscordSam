@@ -74,8 +74,8 @@ async def distill_conversation_to_sentence_llm(llm_client: Any, full_conversatio
                 {"role": "system", "content": "You are an expert contexual knowledge distiller."}, 
                 {"role": "user", "content": prompt}
             ],
-            max_tokens=900, 
-            temperature=0.6, 
+            max_tokens=2048, 
+            temperature=0.8, 
             stream=False
         )
         if response.choices and response.choices[0].message and response.choices[0].message.content:
@@ -111,7 +111,7 @@ async def synthesize_retrieved_contexts_llm(llm_client: Any, retrieved_full_text
         "no specific relevant context was found in past conversations. Use the conversation history. Be objective.\n\n"
         f"USER'S CURRENT QUERY:\n---\n{current_query}\n---\n\n"
         f"RETRIEVED SNIPPETS:\n---\n{formatted_snippets}---\n\n"
-        "SYNTHESIZED CONTEXT PARAGRAPH (2-5 sentences ideally):"
+        "SYNTHESIZED CONTEXT PARAGRAPH:"
     )
     try:
         logger.debug(f"Requesting context synthesis from model {config.FAST_LLM_MODEL}.")
@@ -121,8 +121,8 @@ async def synthesize_retrieved_contexts_llm(llm_client: Any, retrieved_full_text
                 {"role": "system", "content": "You are an expert context synthesizer."},
                 {"role": "user", "content": prompt}
             ],
-            max_tokens=300, 
-            temperature=0.5, 
+            max_tokens=2048, 
+            temperature=0.8, 
             stream=False
         )
         if response.choices and response.choices[0].message and response.choices[0].message.content:
