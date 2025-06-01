@@ -39,13 +39,15 @@ async def _build_initial_prompt_messages(
     channel_id: Optional[int], 
     bot_state: BotState, 
     user_id: Optional[str] = None,
-    synthesized_rag_context_str: Optional[str] = None
+    synthesized_rag_context_str: Optional[str] = None # This is the output of synthesize_retrieved_contexts_llm
 ) -> List[MsgNode]:
     prompt_list: List[MsgNode] = [get_system_prompt()]
 
+    # USER_PROVIDED_CONTEXT from .env is added here for the LLM
     if config.USER_PROVIDED_CONTEXT:
         prompt_list.append(MsgNode(role="system", content=f"User-Set Global Context:\n{config.USER_PROVIDED_CONTEXT}"))
 
+    # Synthesized RAG context (from synthesize_retrieved_contexts_llm) is added here for the LLM
     if synthesized_rag_context_str:
         context_text_for_prompt = (
             "The following is a synthesized summary of potentially relevant past conversations, "
@@ -75,120 +77,56 @@ async def _build_initial_prompt_messages(
     return initial_system_msgs + trimmed_conversational_msgs
 
 
-async def get_context_aware_llm_stream(
+async def get_simplified_llm_stream( # Renamed for clarity, as it's no longer "context-aware" in the same way
     llm_client: Any, 
-    prompt_messages: List[MsgNode], 
+    prompt_messages: List[MsgNode], # These messages already contain all necessary context (system, RAG, history, user query)
     is_vision_request: bool
-) -> Tuple[Optional[AsyncStream], str, List[MsgNode]]: 
+) -> Tuple[Optional[AsyncStream], List[MsgNode]]: 
+    # This function now directly creates the main response stream
+    # It no longer generates an intermediate "model-generated suggested context"
+
     if not prompt_messages:
-        raise ValueError("Prompt messages cannot be empty for get_context_aware_llm_stream.")
+        raise ValueError("Prompt messages cannot be empty for get_simplified_llm_stream.")
 
-    last_user_message_node = next((msg for msg in reversed(prompt_messages) if msg.role == 'user'), None)
-    if not last_user_message_node:
-        logger.error("No user message found in prompt_messages for get_context_aware_llm_stream.")
-        raise ValueError("No user message found in the prompt history for context generation.")
-
-    logger.info("Step 1: Generating suggested context (model-generated)...")
-    context_generation_system_prompt = MsgNode(
-        role="system",
-        content=(
-            "You are a context analysis expert. Your task is to read the user's question or statement "
-            "and generate a concise 'suggested context' for viewing it. This context should clarify "
-            "underlying assumptions, define key terms, or establish a frame of reference that will "
-            "lead to the most insightful and helpful response. Do not answer the user's question. "
-            "Only provide a single, short paragraph for the suggested context."
-            "Restate the user current query with any additional context needed and the context history." 
-        )
-    )
-    context_generation_llm_input_dicts = [context_generation_system_prompt.to_dict(), last_user_message_node.to_dict()]
-
+    logger.info("Streaming final response using provided prompt_messages.")
     
-    generated_context = "Context generation failed or was not applicable." 
-    try:
-        context_response = await llm_client.chat.completions.create(
-            model=config.VISION_LLM_MODEL if is_vision_request else config.FAST_LLM_MODEL, 
-            messages=context_generation_llm_input_dicts, 
-            max_tokens=300, stream=False, temperature=0.4,
-        )
-        if context_response.choices and context_response.choices[0].message.content:
-            generated_context = context_response.choices[0].message.content.strip()
-            logger.info(f"Successfully generated model context: {generated_context[:150]}...")
-        else:
-            logger.warning("Model-generated context step returned no content.")
-    except Exception as e:
-        logger.error(f"Could not generate model-suggested context: {e}", exc_info=True)
-
-    logger.info("Step 2: Streaming final response with injected model-generated context.")
-    final_prompt_messages_for_stream = [
-        MsgNode(m.role, m.content.copy() if isinstance(m.content, list) else m.content, m.name) 
-        for m in prompt_messages
-    ]
-    
-    final_user_message_node_in_copy = next((msg for msg in reversed(final_prompt_messages_for_stream) if msg.role == 'user'), None)
-
-    if not final_user_message_node_in_copy:
-        logger.error("Critical error: final_user_message_node_in_copy is None after copying prompt_messages.")
-        return None, generated_context, prompt_messages 
-
-    original_question_text = ""
-    if isinstance(final_user_message_node_in_copy.content, str):
-        original_question_text = final_user_message_node_in_copy.content
-    elif isinstance(final_user_message_node_in_copy.content, list):
-        text_part_content_list = [
-            part['text'] for part in final_user_message_node_in_copy.content 
-            if isinstance(part, dict) and part.get('type') == 'text' and 'text' in part
-        ]
-        original_question_text = text_part_content_list[0] if text_part_content_list else ""
-
-    
-    injected_text_for_user_message = (
-        f"<model_generated_suggested_context>\n{generated_context}\n</model_generated_suggested_context>\n\n"
-        f"<user_question>\nWith all prior context (including global, RAG synthesized from system prompts, and the suggested context above) in mind, Sam, please respond to the following:\n{original_question_text}\n</user_question> This response is added to the conversation memory."
-    )
-
-    if isinstance(final_user_message_node_in_copy.content, str):
-        final_user_message_node_in_copy.content = injected_text_for_user_message
-    elif isinstance(final_user_message_node_in_copy.content, list):
-        text_part_found_and_updated = False
-        for part_idx, part in enumerate(final_user_message_node_in_copy.content):
-            if isinstance(part, dict) and part.get('type') == 'text': 
-                final_user_message_node_in_copy.content[part_idx] = {"type": "text", "text": injected_text_for_user_message}
-                text_part_found_and_updated = True
-                break
-        if not text_part_found_and_updated:
-            final_user_message_node_in_copy.content.insert(0, {"type": "text", "text": injected_text_for_user_message})
+    # The prompt_messages already include system persona, user global context (if any), 
+    # synthesized RAG context (if any), chat history, and the current user query.
+    # No further modification to the user query is done here.
 
     final_stream_model = config.VISION_LLM_MODEL if is_vision_request else config.LLM_MODEL
     logger.info(f"Using model for final streaming response: {final_stream_model}")
     try:
         final_llm_stream = await llm_client.chat.completions.create(
             model=final_stream_model,
-            messages=[msg.to_dict() for msg in final_prompt_messages_for_stream], 
+            messages=[msg.to_dict() for msg in prompt_messages], 
             max_tokens=config.MAX_COMPLETION_TOKENS, stream=True, temperature=0.7, 
         )
-        return final_llm_stream, generated_context, final_prompt_messages_for_stream
+        # Return the stream and the prompt_messages that were used (unchanged in this function)
+        return final_llm_stream, prompt_messages
     except Exception as e:
         logger.error(f"Failed to create LLM stream for final response: {e}", exc_info=True)
-        return None, generated_context, final_prompt_messages_for_stream
+        return None, prompt_messages # Return the original prompt_messages even on failure
 
 async def _stream_llm_handler(
     interaction_or_message: Union[discord.Interaction, discord.Message], 
     llm_client: Any, 
-    prompt_messages: List[MsgNode], 
+    prompt_messages: List[MsgNode], # These are the fully prepared messages for the LLM
     title: str,
     initial_message_to_edit: Optional[discord.Message] = None,
-    synthesized_rag_context_for_display: Optional[str] = None,
+    synthesized_rag_context_for_display: Optional[str] = None, # This is for display only
     bot_user_id: Optional[int] = None 
 ) -> Tuple[str, List[MsgNode]]: 
     sent_messages: List[discord.Message] = []
     full_response_content = ""
-    final_prompt_for_rag = prompt_messages 
+    # final_prompt_for_rag will be the prompt_messages used for the LLM call
+    # In the new flow, prompt_messages passed to get_simplified_llm_stream IS the final prompt.
     
     is_interaction = isinstance(interaction_or_message, discord.Interaction)
     
     if not isinstance(interaction_or_message.channel, discord.abc.Messageable):
         logger.error(f"_stream_llm_handler: Channel for {type(interaction_or_message)} ID {interaction_or_message.id} is not Messageable.")
-        return "", final_prompt_for_rag
+        return "", prompt_messages # Return original prompt_messages
     channel: discord.abc.Messageable = interaction_or_message.channel
 
 
@@ -196,7 +134,7 @@ async def _stream_llm_handler(
     if initial_message_to_edit:
         current_initial_message = initial_message_to_edit
     else: 
-        placeholder_embed = discord.Embed(title=title, description="⏳ Generating context...", color=config.EMBED_COLOR["incomplete"])
+        placeholder_embed = discord.Embed(title=title, description="⏳ Thinking...", color=config.EMBED_COLOR["incomplete"]) # Changed from "Generating context"
         try:
             if is_interaction:
                 interaction = cast(discord.Interaction, interaction_or_message) 
@@ -205,44 +143,51 @@ async def _stream_llm_handler(
                 current_initial_message = await interaction.followup.send(embed=placeholder_embed, wait=True)
             else: 
                 logger.error("_stream_llm_handler: initial_message_to_edit is None for non-interaction type where it's expected.")
-                return "", final_prompt_for_rag
+                return "", prompt_messages
         except discord.HTTPException as e:
             logger.error(f"Failed to send initial followup/defer for stream '{title}': {e}")
-            return "", final_prompt_for_rag
+            return "", prompt_messages
     
     if current_initial_message:
         sent_messages.append(current_initial_message)
     else: 
         logger.error(f"Failed to establish an initial message for streaming title '{title}'.")
-        return "", final_prompt_for_rag
+        return "", prompt_messages
 
     response_prefix = "" 
+    final_prompt_for_llm_call = prompt_messages # This is what will be sent to the LLM
+
     try:
         is_vision_request = any(
             isinstance(p.content, list) and any(isinstance(c, dict) and c.get("type") == "image_url" for c in p.content) 
-            for p in prompt_messages
+            for p in final_prompt_for_llm_call # Check based on the final prompt
         )
-        stream, model_generated_context_for_display, final_prompt_for_rag = await get_context_aware_llm_stream(
-            llm_client, prompt_messages, is_vision_request
+        
+        # Call the simplified stream function
+        stream, final_prompt_used_by_llm = await get_simplified_llm_stream( # Renamed function
+            llm_client, final_prompt_for_llm_call, is_vision_request
         )
+        # final_prompt_for_rag should be what was actually sent to the LLM for the main response
+        final_prompt_for_rag = final_prompt_used_by_llm
 
+
+        # --- Construct the display prefix ---
         prefix_parts = []
         prefix_parts.append(f"Current Date: {datetime.now().strftime('%B %d %Y %H:%M:%S.%f')}\n")
 
-        # USER_PROVIDED_CONTEXT is sent to the LLM via _build_initial_prompt_messages
-        # but will NOT be displayed in the Discord embed prefix.
-        # if config.USER_PROVIDED_CONTEXT: 
-        #     display_context = config.USER_PROVIDED_CONTEXT.replace('\n', ' ').strip()
-        #     prefix_parts.append(f"**User-Provided Global Context:**\n> {display_context}\n\n---")
+        # USER_PROVIDED_CONTEXT is NOT displayed here, as per user request.
+        # It IS included in final_prompt_for_llm_call via _build_initial_prompt_messages.
         
-        if synthesized_rag_context_for_display: 
+        if synthesized_rag_context_for_display: # This is the output of synthesize_retrieved_contexts_llm
             display_rag_context = synthesized_rag_context_for_display.replace('\n', ' ').strip()
             prefix_parts.append(f"**Synthesized Context for Query:**\n> {display_rag_context}\n\n---")
         
-        display_model_context = model_generated_context_for_display.replace('\n', ' ').strip()
-        prefix_parts.append(f"**Model-Generated Suggested Context:**\n> {display_model_context}\n\n---") 
+        # The "Model-Generated Suggested Context" is no longer created or displayed.
+        
         prefix_parts.append("**Response:**\n") 
         response_prefix = "\n".join(prefix_parts)
+        # --- End display prefix construction ---
+
 
         if stream is None: 
             error_text = response_prefix + "Failed to get response from LLM."
@@ -255,11 +200,14 @@ async def _stream_llm_handler(
         accumulated_delta_for_update = "" 
 
         if current_initial_message: 
-            initial_context_embed = discord.Embed(title=title, description=response_prefix + "⏳ Thinking...", color=config.EMBED_COLOR["incomplete"])
+            # The placeholder embed already says "Thinking..." or "Generating context..."
+            # We can update it with the more detailed prefix if desired, or leave it.
+            # For now, let's update it to show the available context before the stream starts.
+            initial_display_embed = discord.Embed(title=title, description=response_prefix + "⏳ Streaming response...", color=config.EMBED_COLOR["incomplete"])
             try:
-                await current_initial_message.edit(embed=initial_context_embed)
+                await current_initial_message.edit(embed=initial_display_embed)
             except discord.HTTPException as e:
-                logger.warning(f"Failed to edit initial message with context for '{title}': {e}")
+                logger.warning(f"Failed to edit initial message with context prefix for '{title}': {e}")
 
         async for chunk_data in stream:
             delta_content = ""
@@ -293,7 +241,7 @@ async def _stream_llm_handler(
                                 new_msg = await channel.send(embed=embed)
                                 sent_messages.append(new_msg)
                             else: 
-                                logger.error(f"Cannot send overflow chunk {i+1} for '{title}': channel is None (should be Messageable).")
+                                logger.error(f"Cannot send overflow chunk {i+1} for '{title}': channel is None.")
                                 break 
                     except discord.HTTPException as e_edit_send:
                         logger.warning(f"Failed edit/send embed part {i+1} (stream) for '{title}': {e_edit_send}")
@@ -340,13 +288,12 @@ async def _stream_llm_handler(
                 logger.warning(f"Sending new message for final chunk {i+1} of '{title}' as it wasn't in sent_messages.")
                 sent_messages.append(await channel.send(embed=embed))
             else: 
-                logger.error(f"Cannot send final color overflow chunk {i+1} for '{title}': channel is None (should be Messageable).")
+                logger.error(f"Cannot send final color overflow chunk {i+1} for '{title}': channel is None.")
                 break
         
         if not full_response_content.strip() and sent_messages: 
-            empty_response_text = response_prefix + \
-                ("\nSam didn't provide a response." if model_generated_context_for_display != "Context generation failed or was not applicable." 
-                 else "\nSam had an issue and couldn't respond.")
+            # If there's a prefix but no actual response content
+            empty_response_text = response_prefix + "\nSam didn't provide a response to the query."
             await sent_messages[0].edit(embed=discord.Embed(title=title, description=empty_response_text, color=config.EMBED_COLOR["error"]))
 
     except Exception as e:
@@ -374,10 +321,10 @@ async def stream_llm_response_to_interaction(
     llm_client: Any,
     bot_state: BotState,
     user_msg_node: MsgNode, 
-    prompt_messages: List[MsgNode], 
+    prompt_messages: List[MsgNode], # These are fully built prompts including RAG, system, history, query
     title: str = "Sam's Response", 
     force_new_followup_flow: bool = False,
-    synthesized_rag_context_for_display: Optional[str] = None,
+    synthesized_rag_context_for_display: Optional[str] = None, # This is the RAG summary for display
     bot_user_id: Optional[int] = None 
 ):
     initial_msg_for_handler: Optional[discord.Message] = None
@@ -390,11 +337,13 @@ async def stream_llm_response_to_interaction(
             is_placeholder = False
             if initial_msg_for_handler and initial_msg_for_handler.embeds: 
                 current_embed = initial_msg_for_handler.embeds[0]
-                if current_embed.title == title and current_embed.description and "⏳ Generating context..." in current_embed.description:
+                # Check for a generic thinking/loading message
+                if current_embed.title == title and current_embed.description and ("⏳" in current_embed.description or "Thinking..." in current_embed.description or "Generating context..." in current_embed.description):
                     is_placeholder = True
             
             if not is_placeholder and initial_msg_for_handler: 
-                await initial_msg_for_handler.edit(embed=discord.Embed(title=title, description="⏳ Generating context...", color=config.EMBED_COLOR["incomplete"]))
+                # If it's not our placeholder, make it one.
+                await initial_msg_for_handler.edit(embed=discord.Embed(title=title, description="⏳ Thinking...", color=config.EMBED_COLOR["incomplete"]))
         except discord.HTTPException as e:
             logger.error(f"Error deferring or getting original_response for interaction '{title}': {e}")
             force_new_followup_flow = True
@@ -413,14 +362,15 @@ async def stream_llm_response_to_interaction(
              except discord.HTTPException: pass
         return
 
-
+    # prompt_messages are already fully constructed by the command handler calling this function,
+    # including the output of _build_initial_prompt_messages (which contains RAG context etc.)
     full_response_content, final_prompt_for_rag = await _stream_llm_handler(
         interaction_or_message=interaction, 
         llm_client=llm_client,
-        prompt_messages=prompt_messages, 
+        prompt_messages=prompt_messages, # Pass the fully built prompt
         title=title,
         initial_message_to_edit=initial_msg_for_handler, 
-        synthesized_rag_context_for_display=synthesized_rag_context_for_display,
+        synthesized_rag_context_for_display=synthesized_rag_context_for_display, # For display only
         bot_user_id=bot_user_id
     )
 
@@ -434,6 +384,7 @@ async def stream_llm_response_to_interaction(
         assistant_response_node = MsgNode(role="assistant", content=full_response_content, name=str(bot_user_id) if bot_user_id else None)
         await bot_state.append_history(channel_id, assistant_response_node, config.MAX_MESSAGE_HISTORY)
         
+        # final_prompt_for_rag now correctly refers to the messages sent to the main LLM
         chroma_ingest_history_with_response = list(final_prompt_for_rag) 
         chroma_ingest_history_with_response.append(assistant_response_node) 
         await ingest_conversation_to_chromadb(llm_client, channel_id, interaction.user.id, chroma_ingest_history_with_response) 
@@ -452,12 +403,12 @@ async def stream_llm_response_to_message(
     llm_client: Any,
     bot_state: BotState,
     user_msg_node: MsgNode, 
-    prompt_messages: List[MsgNode], 
+    prompt_messages: List[MsgNode], # These are fully built prompts
     title: str = "Sam's Response", 
-    synthesized_rag_context_for_display: Optional[str] = None,
+    synthesized_rag_context_for_display: Optional[str] = None, # For display only
     bot_user_id: Optional[int] = None 
 ):
-    initial_embed = discord.Embed(title=title, description="⏳ Generating context...", color=config.EMBED_COLOR["incomplete"])
+    initial_embed = discord.Embed(title=title, description="⏳ Thinking...", color=config.EMBED_COLOR["incomplete"]) # Changed from "Generating context"
     reply_message: Optional[discord.Message] = None
     
     if not isinstance(target_message.channel, discord.abc.Messageable):
@@ -473,10 +424,10 @@ async def stream_llm_response_to_message(
     full_response_content, final_prompt_for_rag = await _stream_llm_handler(
         interaction_or_message=target_message, 
         llm_client=llm_client,
-        prompt_messages=prompt_messages, 
+        prompt_messages=prompt_messages, # Pass the fully built prompt
         title=title,
         initial_message_to_edit=reply_message, 
-        synthesized_rag_context_for_display=synthesized_rag_context_for_display,
+        synthesized_rag_context_for_display=synthesized_rag_context_for_display, # For display only
         bot_user_id=bot_user_id
     )
 
