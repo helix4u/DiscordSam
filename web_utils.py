@@ -5,7 +5,7 @@ import re
 import json 
 from typing import List, Optional, Dict, Any
 import random 
-import hashlib # Added import for hashlib
+import hashlib 
 
 import aiohttp
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError # type: ignore
@@ -151,16 +151,22 @@ async def scrape_website(url: str) -> Optional[str]:
                 context_manager = context 
                 page = await context_manager.new_page()
                 
-                await page.goto(url, wait_until='domcontentloaded', timeout=25000) 
+                # Changed wait_until to 'networkidle' and added a small sleep for JS rendering
+                logger.info(f"Navigating to {url} and waiting for network idle...")
+                await page.goto(url, wait_until='networkidle', timeout=35000) # Increased timeout slightly
+                logger.info(f"Navigation to {url} complete. Waiting for potential JS rendering...")
+                await asyncio.sleep(2) # Give 2 seconds for JS to potentially finish rendering after network idle
                 
                 content_selectors = ["article", "main", "div[role='main']", "body"] 
                 content = ""
                 for selector in content_selectors:
                     try:
                         element = page.locator(selector).first 
-                        if await element.count() > 0 and await element.is_visible(timeout=1000): 
+                        if await element.count() > 0 and await element.is_visible(timeout=2000): # Shorter timeout for visibility check
+                            logger.debug(f"Attempting to get text from selector: '{selector}'")
                             content = await element.inner_text(timeout=5000) 
                             if content and len(content.strip()) > 200: 
+                                logger.info(f"Found substantial content with selector '{selector}'.")
                                 break 
                         else:
                             logger.debug(f"Selector '{selector}' not found or not visible on {url}")
@@ -170,6 +176,7 @@ async def scrape_website(url: str) -> Optional[str]:
                         logger.warning(f"Error processing selector '{selector}' on {url}: {e_sel}")
                 
                 if (not content or len(content.strip()) < 100) and page.url != "about:blank":
+                    logger.info(f"Primary selectors yielded little content for {url}. Falling back to document.body.innerText.")
                     try:
                         body_content = await page.evaluate('document.body ? document.body.innerText : ""')
                         if body_content:
@@ -185,7 +192,7 @@ async def scrape_website(url: str) -> Optional[str]:
                         content = content[:config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT] + "..." 
                     return content if content else None
                 else:
-                    logger.warning(f"No substantial content extracted from {url} after trying all selectors.")
+                    logger.warning(f"No substantial content extracted from {url} after trying all selectors and body.innerText fallback.")
                     return None
 
     except PlaywrightTimeoutError:
@@ -264,6 +271,8 @@ async def scrape_latest_tweets(username_queried: str, limit: int = 10) -> List[D
                         if clicked_count > 0:
                             logger.info(f"Clicked {clicked_count} 'Show more' elements on Twitter page.");
                             await asyncio.sleep(1.5 + random.uniform(0.3, 0.9)) 
+                    except PlaywrightTimeoutError: # More specific error for JS execution timeout
+                        logger.warning(f"Timeout during JS 'Show More' execution for @{username_queried}.")
                     except Exception as e_sm:
                         logger.warning(f"JavaScript 'Show More' execution error: {e_sm}")
 
@@ -271,6 +280,8 @@ async def scrape_latest_tweets(username_queried: str, limit: int = 10) -> List[D
                     newly_added_count = 0
                     try:
                         extracted_this_round = await page.evaluate(JS_EXTRACT_TWEETS_TWITTER)
+                    except PlaywrightTimeoutError: # More specific error for JS execution timeout
+                        logger.warning(f"Timeout during JS tweet extraction for @{username_queried}.")
                     except Exception as e_js:
                         logger.error(f"JavaScript tweet extraction (JS_EXTRACT_TWEETS_TWITTER) error: {e_js}")
 
@@ -294,8 +305,13 @@ async def scrape_latest_tweets(username_queried: str, limit: int = 10) -> List[D
                         logger.info("No new unique tweets found in several scroll attempts. Stopping.")
                         break
                     
-                    await page.evaluate("window.scrollBy(0, window.innerHeight * 1.5);")
-                    await asyncio.sleep(random.uniform(3.0, 5.0)) 
+                    # Scroll down to load more tweets
+                    try:
+                        await page.evaluate("window.scrollBy(0, window.innerHeight * 1.5);")
+                        await asyncio.sleep(random.uniform(3.0, 5.0)) 
+                    except PlaywrightTimeoutError:
+                        logger.warning(f"Timeout during page scroll for @{username_queried}. Assuming end of content or page issue.")
+                        break # Stop scrolling if it times out
         
     except PlaywrightTimeoutError as e:
         logger.warning(f"Playwright overall timeout during tweet scraping for @{username_queried}: {e}")
@@ -342,8 +358,7 @@ async def query_searx(query: str) -> List[Dict[str, Any]]:
 
 async def fetch_youtube_transcript(url: str) -> Optional[str]:
     try:
-        # Updated regex to include more googleusercontent variations like /1/, /2/, /3/ etc.
-        video_id_match = re.search(r'(?:v=|\/|embed\/|shorts\/|youtu\.be\/|googleusercontent\.com\/youtube\.com\/(?:[0-8]\/)?)([0-9A-Za-z_-]{11})', url)
+        video_id_match = re.search(r'(?:v=|\/|embed\/|shorts\/|youtu\.be\/|googleusercontent\.com\/youtube\.com\/(?:[0-8]\/)?)([0-9A-Za-z_-]{11})', url) 
         
         if not video_id_match:
             logger.warning(f"No YouTube video ID found in URL: {url}")
