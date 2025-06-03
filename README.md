@@ -127,6 +127,7 @@ MAX_IMAGE_BYTES_FOR_PROMPT="4194304" # Max size of image data for vision prompts
 MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT="8000" # Max length of scraped text to include in prompts
 STREAM_EDIT_THROTTLE_SECONDS="0.1" # How frequently to edit messages when streaming LLM responses
 EDITS_PER_SECOND="5" # Target edits per second for streaming (inverse of throttle)
+# Embed colors are hex integers (e.g., 0xEDA439 or #EDA439)
 EMBED_COLOR_INCOMPLETE="0xEDA439" # Embed color for in-progress messages
 EMBED_COLOR_COMPLETE="0x4CAF50" # Embed color for completed messages
 EMBED_COLOR_ERROR="0xF44336" # Embed color for error messages
