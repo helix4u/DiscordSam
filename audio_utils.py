@@ -134,7 +134,6 @@ async def send_tts_audio( # Ensure this function is defined at the module level
         await _send_audio_segment(destination, text_to_speak, "full", is_thought=False, base_filename=base_filename)
 
 def transcribe_audio_file(file_path: str) -> Optional[str]:
-    global WHISPER_MODEL
     if not os.path.exists(file_path):
         logger.error(f"Audio file not found for transcription: {file_path}")
         return None

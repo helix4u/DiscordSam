@@ -222,8 +222,11 @@ async def scrape_latest_tweets(username_queried: str, limit: int = 10) -> List[D
     user_data_dir = os.path.join(os.getcwd(), ".pw-profile")
     profile_dir_usable = True
     if not os.path.exists(user_data_dir):
-        try: os.makedirs(user_data_dir, exist_ok=True)
-        except OSError: profile_dir_usable = False; logger.error(f"Could not create .pw-profile. Using non-persistent context for tweet scraping.")
+        try:
+            os.makedirs(user_data_dir, exist_ok=True)
+        except OSError:
+            profile_dir_usable = False
+            logger.error("Could not create .pw-profile. Using non-persistent context for tweet scraping.")
 
     context_manager: Optional[Any] = None
     browser_instance_st: Optional[Any] = None
