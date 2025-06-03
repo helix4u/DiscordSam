@@ -270,7 +270,11 @@ def setup_events_and_tasks(bot: commands.Bot, llm_client_in: Any, bot_state_in: 
                 
                 if content_piece:
                     scraped_content_accumulator.append(content_piece)
-                await asyncio.sleep(0.2) 
+                else:
+                    notice = f"\n\nCould not retrieve content from {url}"
+                    scraped_content_accumulator.append(notice)
+                    logger.info(f"Appended notice for failed content retrieval: {url}")
+                await asyncio.sleep(0.2)
         
         final_user_message_text_for_llm = user_message_text_for_processing 
         if scraped_content_accumulator:
