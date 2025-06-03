@@ -70,6 +70,9 @@ class Config:
         
         self.NEWS_MAX_LINKS_TO_PROCESS = int(os.getenv("NEWS_MAX_LINKS_TO_PROCESS", 5))
 
+        self.HEADLESS_PLAYWRIGHT = os.getenv("HEADLESS_PLAYWRIGHT", "true").lower() == "true"
+        self.PLAYWRIGHT_MAX_CONCURRENCY = int(os.getenv("PLAYWRIGHT_MAX_CONCURRENCY", 2))
+
 
 # Global config instance
 config = Config()

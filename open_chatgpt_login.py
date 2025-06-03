@@ -3,10 +3,11 @@ import os
 from typing import Optional
 
 from playwright.async_api import BrowserContext, async_playwright
+from config import config
 
 async def open_chatgpt_login():
     """
-    Launches a non-headless browser using a persistent context,
+    Launches a browser using a persistent context,
     navigates to the ChatGPT login page, and waits for the user to close it.
     This helps save the login session in the .pw-profile directory.
     """
@@ -35,7 +36,7 @@ async def open_chatgpt_login():
             # Using launch_persistent_context to save login state
             browser_context = await p.chromium.launch_persistent_context(
                 user_data_dir,
-                headless=False,  # Makes the browser visible
+                headless=config.HEADLESS_PLAYWRIGHT,
                 args=[
                     "--disable-blink-features=AutomationControlled",
                     # "--no-sandbox", # Uncomment if you run into sandbox issues, common in some environments
