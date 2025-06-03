@@ -77,6 +77,30 @@ DiscordSam is an advanced, context-aware Discord bot designed to provide intelli
 1.  **Create a `.env` file** in the root directory of the project. You can copy `example.env` to `.env` to get started.
 2.  **Fill in your specific configurations.** See the section below for details on all environment variables.
 
+### Key Environment Variables
+
+Some of the most important settings you can tweak via the `.env` file are listed below. Refer to `config.py` and `example.env` for defaults and additional options.
+
+* `DISCORD_BOT_TOKEN` – token for your Discord bot.
+* `LOCAL_SERVER_URL` – base URL of the OpenAI-compatible LLM server.
+* `LLM` – default language model name.
+* `FAST_LLM_MODEL` – model used for quick responses.
+* `VISION_LLM_MODEL` – model used for image analysis.
+* `MAX_IMAGES_PER_MESSAGE` – number of images the bot will process per message.
+* `MAX_MESSAGE_HISTORY` – how many messages are kept in short-term history.
+* `MAX_COMPLETION_TOKENS` – limit on tokens when generating a reply.
+* `TTS_API_URL` and `TTS_VOICE` – endpoint and voice for text-to-speech.
+* `TTS_ENABLED_DEFAULT` – whether TTS is enabled by default.
+* `SEARX_URL` – URL of your SearXNG instance for `/search`.
+* `SEARX_PREFERENCES` – optional JSON string with engine preferences.
+* `CHROMA_DB_PATH` – location of the ChromaDB database directory.
+* `CHROMA_COLLECTION_NAME` – name of the collection for chat history.
+* `CHROMA_DISTILLED_COLLECTION_NAME` – name of the distilled summary collection.
+* `USER_PROVIDED_CONTEXT` – additional context prepended to every prompt.
+* `RAG_NUM_DISTILLED_SENTENCES_TO_FETCH` – how many distilled sentences to include from history.
+* `MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT` – limit for scraped text added to prompts.
+* `NEWS_MAX_LINKS_TO_PROCESS` – number of news links to read with `/gettweets`.
+
 ---
 
 ## 6. Installation
@@ -151,4 +175,3 @@ Found a bug? Have a feature request? Want to contribute?
 *   If you'd like to contribute code, please **fork the repository** and submit a **pull request** with your changes.
 
 We welcome contributions to improve and expand DiscordSam!
-```
