@@ -1,6 +1,8 @@
 import asyncio
 import os
-from playwright.async_api import async_playwright, PlaywrightContextManager # type: ignore
+from typing import Optional
+
+from playwright.async_api import BrowserContext, async_playwright
 
 async def open_chatgpt_login():
     """
@@ -28,7 +30,7 @@ async def open_chatgpt_login():
         return
 
     async with async_playwright() as p:
-        browser_context: PlaywrightContextManager.BrowserContext = None # type: ignore
+        browser_context: Optional[BrowserContext] = None
         try:
             # Using launch_persistent_context to save login state
             browser_context = await p.chromium.launch_persistent_context(
