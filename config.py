@@ -31,8 +31,30 @@ class Config:
         # Users should set complex preferences via the environment variable.
         self.SEARX_PREFERENCES = os.getenv("SEARX_PREFERENCES", "")
 
-        self.EMBED_COLOR = {"incomplete": discord.Color.orange(), "complete": discord.Color.green(), "error": discord.Color.red()}
-        self.EMBED_MAX_LENGTH = 4096
+        def _parse_color(env_var: str, default: int) -> int:
+            value = os.getenv(env_var)
+            if value:
+                value = value.strip()
+                if value.startswith("#"):
+                    value = value[1:]
+                if value.lower().startswith("0x"):
+                    value = value[2:]
+                try:
+                    return int(value, 16)
+                except ValueError:
+                    pass
+            return default
+
+        self.EMBED_COLOR = {
+            "incomplete": _parse_color(
+                "EMBED_COLOR_INCOMPLETE", discord.Color.orange().value
+            ),
+            "complete": _parse_color(
+                "EMBED_COLOR_COMPLETE", discord.Color.green().value
+            ),
+            "error": _parse_color("EMBED_COLOR_ERROR", discord.Color.red().value),
+        }
+        self.EMBED_MAX_LENGTH = int(os.getenv("EMBED_MAX_LENGTH", 4096))
         self.EDITS_PER_SECOND = 1.3
         self.STREAM_EDIT_THROTTLE_SECONDS = float(os.getenv("STREAM_EDIT_THROTTLE_SECONDS", 0.1))
 
