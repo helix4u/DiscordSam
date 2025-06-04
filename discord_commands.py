@@ -18,9 +18,10 @@ from llm_handling import (
     stream_llm_response_to_interaction 
 )
 from rag_chroma_manager import (
-    retrieve_and_prepare_rag_context, 
+    retrieve_and_prepare_rag_context,
     parse_chatgpt_export,
     store_chatgpt_conversations_in_chromadb,
+    store_news_summary,
 )
 from web_utils import (
     scrape_website, 
@@ -50,9 +51,8 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
     @bot_instance.tree.command(name="news", description="Generates a news briefing on a given topic.")
     @app_commands.describe(
         topic="The news topic you want a briefing on."
-        # max_articles parameter removed
     )
-    async def news_slash_command(interaction: discord.Interaction, topic: str): # max_articles parameter removed
+    async def news_slash_command(interaction: discord.Interaction, topic: str): 
         if not llm_client_instance or not bot_state_instance or not bot_instance or not bot_instance.user:
             logger.error("/news command: Bot components not ready.")
             await interaction.response.send_message("Bot components not ready. Cannot generate news.", ephemeral=True)
@@ -64,17 +64,17 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
         search_topic = f"news {topic}"
         
         initial_embed = discord.Embed(
-            title=f"News Briefing: {topic}", # Display original topic
+            title=f"News Briefing: {topic}",
             description=f"Gathering news articles for '{search_topic}'...",
             color=config.EMBED_COLOR["incomplete"]
         )
         await interaction.edit_original_response(embed=initial_embed)
 
         try:
-            max_articles_to_process = config.NEWS_MAX_LINKS_TO_PROCESS # Use config value
+            max_articles_to_process = config.NEWS_MAX_LINKS_TO_PROCESS
             logger.info(f"/news command for topic '{topic}' (searching for '{search_topic}') by {interaction.user.name}, max_articles={max_articles_to_process}")
             
-            search_results = await query_searx(search_topic) # Use modified search_topic
+            search_results = await query_searx(search_topic)
 
             if not search_results:
                 error_embed = discord.Embed(
@@ -118,7 +118,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
 
                 summarization_prompt = (
                     f"You are an expert news summarizer. Please read the following article content, "
-                    f"which was found when searching for the topic '{search_topic}'. Extract the key factual " # Use search_topic here too
+                    f"which was found when searching for the topic '{search_topic}'. Extract the key factual"
                     f"news points and provide a concise summary (2-4 sentences) relevant to this topic. "
                     f"Focus on who, what, when, where, and why if applicable. Avoid opinions or speculation not present in the text.\n\n"
                     f"Article Title: {article_title}\n"
@@ -138,7 +138,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                         logger.info(f"Summarized '{article_title}': {article_summary[:100]}...")
                         article_summaries_for_briefing.append(f"Source: {article_title} ({article_url})\nSummary: {article_summary}\n\n")
                         
-                        logger.info(f"TODO: Store news summary for '{article_title}' (topic: '{topic}') in ChromaDB.")
+                        store_news_summary(topic=topic, url=article_url, summary_text=article_summary)
                     else:
                         logger.warning(f"LLM summarization returned no content for '{article_title}'.")
                         article_summaries_for_briefing.append(f"Source: {article_title} ({article_url})\nSummary: [AI summarization failed or returned no content]\n\n")
@@ -162,7 +162,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             
             final_briefing_prompt_content = (
                 f"You are Sam, a news anchor delivering a concise and objective briefing. "
-                f"The following are summaries of news articles related to the topic: '{topic}'. " # Original topic for the briefing title
+                f"The following are summaries of news articles related to the topic: '{topic}'. "
                 f"Synthesize this information into a coherent news report. Start with a clear headline for the briefing. "
                 f"Present the key developments and information from the summaries. Maintain a neutral and informative tone. "
                 f"Do not add external information or opinions not present in the provided summaries.\n\n"
@@ -211,8 +211,6 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 await interaction.followup.send(embed=error_embed, ephemeral=True)
 
 
-    # ... (other existing commands like ingest_chatgpt_export, remindme, roast, search, pol, gettweets, ap, clearhistory) ...
-    # (Make sure to keep the rest of your commands here)
 
     @bot_instance.tree.command(name="ingest_chatgpt_export", description="Ingests a conversations.json file from a ChatGPT export.")
     @app_commands.describe(file_path="The full local path to your conversations.json file.")

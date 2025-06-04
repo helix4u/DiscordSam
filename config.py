@@ -64,6 +64,7 @@ class Config:
         self.CHROMA_DB_PATH = os.getenv("CHROMA_DB_PATH", "./chroma_data")
         self.CHROMA_COLLECTION_NAME = os.getenv("CHROMA_COLLECTION_NAME", "long_term_memory")
         self.CHROMA_DISTILLED_COLLECTION_NAME = os.getenv("CHROMA_DISTILLED_COLLECTION_NAME", "distilled_chat_summaries")
+        self.CHROMA_NEWS_SUMMARY_COLLECTION_NAME = os.getenv("CHROMA_NEWS_SUMMARY_COLLECTION_NAME", "news_summaries")
         
         self.USER_PROVIDED_CONTEXT = os.getenv("USER_PROVIDED_CONTEXT", "")
 
