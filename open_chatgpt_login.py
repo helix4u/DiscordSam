@@ -1,8 +1,8 @@
 import asyncio
 import os
+from typing import Optional
 
-from playwright.async_api import async_playwright
-# Import configuration; bot token isn't required for this utility script
+from playwright.async_api import BrowserContext, async_playwright
 from config import config
 
 async def open_chatgpt_login():
@@ -31,50 +31,45 @@ async def open_chatgpt_login():
         return
 
     async with async_playwright() as p:
+        browser_context: Optional[BrowserContext] = None
         try:
             # Using launch_persistent_context to save login state
-            async with p.chromium.launch_persistent_context(
+            browser_context = await p.chromium.launch_persistent_context(
                 user_data_dir,
-                headless=False,
+                headless=config.HEADLESS_PLAYWRIGHT,
                 args=[
                     "--disable-blink-features=AutomationControlled",
                     # "--no-sandbox", # Uncomment if you run into sandbox issues, common in some environments
                     # "--disable-dev-shm-usage" # Can help in resource-constrained environments
                 ],
                 slow_mo=100  # Slows down Playwright operations to make it easier to see
-            ) as browser_context:
-                page = await browser_context.new_page()
-                
-                print("Navigating to ChatGPT (chat.openai.com)...")
-                # Navigate to the main chat page, which will redirect to login if not authenticated
-                await page.goto("https://chat.openai.com/", wait_until="networkidle", timeout=120000)
-                
-                print("\n-------------------------------------------------------------------------")
-                print("Browser is open. Please log in to ChatGPT in this window if prompted.")
-                print("Once you have logged in and the main chat interface has loaded,")
-                print("you can close the browser window.")
-                print("Your login session should be saved in the '.pw-profile' directory.")
-                print("-------------------------------------------------------------------------")
-                
-                # Keep the script running until the browser context is closed by the user
-                await browser_context.wait_for_event("close")
-                print("Browser closed by user. Session (if login was successful) should be saved.")
+            )
+            
+            page = await browser_context.new_page()
+            
+            print("Navigating to ChatGPT (chat.openai.com)...")
+            # Navigate to the main chat page, which will redirect to login if not authenticated
+            await page.goto("https://chat.openai.com/", wait_until="networkidle", timeout=120000)
+            
+            print("\n-------------------------------------------------------------------------")
+            print("Browser is open. Please log in to ChatGPT in this window if prompted.")
+            print("Once you have logged in and the main chat interface has loaded,")
+            print("you can close the browser window.")
+            print("Your login session should be saved in the '.pw-profile' directory.")
+            print("-------------------------------------------------------------------------")
+            
+            # Keep the script running until the browser context is closed by the user
+            await browser_context.wait_for_event("close")
+            print("Browser closed by user. Session (if login was successful) should be saved.")
 
         except Exception as e:
             print(f"An error occurred: {e}")
         finally:
-            # After context exit, verify no lingering Chromium processes
-            proc = await asyncio.create_subprocess_shell(
-                "pgrep -f chromium || true",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, _ = await proc.communicate()
-            if stdout.strip():
-                print("Warning: Chromium processes may still be running:")
-                print(stdout.decode().strip())
-            else:
-                print("No lingering Chromium processes detected.")
+            if browser_context:
+                try:
+                    await browser_context.close()
+                except Exception as e_close:
+                    print(f"Error closing browser context: {e_close}")
 
 
 if __name__ == "__main__":
