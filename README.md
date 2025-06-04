@@ -161,7 +161,29 @@ For more granular control, you can pass query-time settings with the
 
 ---
 
-## 8. Running the Bot
+## 8. Running Kokoro-FastAPI with Docker
+
+The project can use [Kokoro-FastAPI](https://github.com/remsky/Kokoro-FastAPI)
+as a local TTS service. A quick way to get it running is via Docker:
+
+```bash
+git clone https://github.com/remsky/Kokoro-FastAPI.git
+cd Kokoro-FastAPI
+docker compose up -d
+```
+
+Kokoro-FastAPI reads its settings from environment variables (see
+`api/src/core/config.py` in that repository). You can create a `.env` file or
+edit `config.yaml` as needed to adjust the default voice, port, or GPU/CPU
+settings.
+
+Once the container is running, point DiscordSam to it by setting the
+`TTS_API_URL` value in your `.env` file. The default URL is
+`http://localhost:8880/v1/audio/speech`.
+
+---
+
+## 9. Running the Bot
 
 1.  **Ensure your local servers are running:**
     *   Your LLM server (e.g., LM Studio) must be active and accessible at the `LOCAL_SERVER_URL`.
@@ -178,7 +200,7 @@ For more granular control, you can pass query-time settings with the
 
 ---
 
-## 9. Potential Future Directions
+## 10. Potential Future Directions
 
 DiscordSam is a project with significant potential for growth. Here are some ideas for future enhancements (see `PROJECT_OVERVIEW.md` for more details):
 
@@ -193,7 +215,7 @@ DiscordSam is a project with significant potential for growth. Here are some ide
 
 ---
 
-## 10. Support / Issues / Contributing
+## 11. Support / Issues / Contributing
 
 Found a bug? Have a feature request? Want to contribute?
 
