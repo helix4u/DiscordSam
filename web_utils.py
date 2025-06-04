@@ -4,6 +4,7 @@ import os
 import re
 import json 
 from typing import List, Optional, Dict, Any
+from bs4 import BeautifulSoup
 import random 
 import hashlib 
 
@@ -112,6 +113,33 @@ JS_EXTRACT_TWEETS_TWITTER = """
 }
 """
 
+async def _scrape_with_bs(url: str) -> Optional[str]:
+    """Fallback scraping using aiohttp and BeautifulSoup with a Googlebot user agent."""
+    logger.info(f"Attempting BeautifulSoup fallback for {url}")
+    headers = {
+        "User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"
+    }
+    try:
+        async with aiohttp.ClientSession(headers=headers) as session:
+            async with session.get(url, timeout=20) as resp:
+                resp.raise_for_status()
+                html = await resp.text()
+        soup = BeautifulSoup(html, "html.parser")
+        for tag in soup(["script", "style", "noscript"]):
+            tag.decompose()
+        text = soup.get_text(separator=" ")
+        text = re.sub(r"\s+", " ", text).strip()
+        if text:
+            if len(text) > config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT:
+                logger.info(
+                    f"BS4 scraped content from {url} truncated from {len(text)} to {config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT} characters."
+                )
+                text = text[: config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT] + "..."
+            return text
+    except Exception as e:
+        logger.warning(f"BeautifulSoup fallback failed for {url}: {e}")
+    return None
+
 async def scrape_website(url: str) -> Optional[str]:
     logger.info(f"Attempting to scrape website: {url}")
     user_data_dir = os.path.join(os.getcwd(), ".pw-profile") 
@@ -156,6 +184,19 @@ async def scrape_website(url: str) -> Optional[str]:
                 await page.goto(url, wait_until='networkidle', timeout=35000) # Increased timeout slightly
                 logger.info(f"Navigation to {url} complete. Waiting for potential JS rendering...")
                 await asyncio.sleep(2) # Give 2 seconds for JS to potentially finish rendering after network idle
+
+                if config.SCRAPE_SCROLL_ATTEMPTS > 0:
+                    logger.info(
+                        f"Scrolling page up to {config.SCRAPE_SCROLL_ATTEMPTS} times to load dynamic content."
+                    )
+                    last_height = await page.evaluate("document.body.scrollHeight")
+                    for _ in range(config.SCRAPE_SCROLL_ATTEMPTS):
+                        await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                        await asyncio.sleep(1.5)
+                        new_height = await page.evaluate("document.body.scrollHeight")
+                        if new_height == last_height:
+                            break
+                        last_height = new_height
                 
                 content_selectors = ["article", "main", "div[role='main']", "body"] 
                 content = ""
@@ -186,13 +227,23 @@ async def scrape_website(url: str) -> Optional[str]:
                 
                 if content:
                     content = content.strip()
-                    content = re.sub(r'\s\s+', ' ', content) 
+                    content = re.sub(r"\s\s+", " ", content)
                     if len(content) > config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT:
-                        logger.info(f"Scraped content from {url} was truncated from {len(content)} to {config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT} characters.")
-                        content = content[:config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT] + "..." 
+                        logger.info(
+                            f"Scraped content from {url} was truncated from {len(content)} to {config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT} characters."
+                        )
+                        content = (
+                            content[: config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT] + "..."
+                        )
                     return content if content else None
                 else:
-                    logger.warning(f"No substantial content extracted from {url} after trying all selectors and body.innerText fallback.")
+                    logger.warning(
+                        f"No substantial content extracted from {url} after trying all selectors and body.innerText fallback."
+                    )
+                    bs_content = await _scrape_with_bs(url)
+                    if bs_content:
+                        logger.info("BeautifulSoup fallback succeeded.")
+                        return bs_content
                     return None
 
     except PlaywrightTimeoutError:
