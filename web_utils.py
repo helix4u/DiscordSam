@@ -179,11 +179,13 @@ async def scrape_website(url: str) -> Optional[str]:
                 context_manager = context 
                 page = await context_manager.new_page()
                 
-                # Changed wait_until to 'networkidle' and added a small sleep for JS rendering
-                logger.info(f"Navigating to {url} and waiting for network idle...")
-                await page.goto(url, wait_until='networkidle', timeout=35000) # Increased timeout slightly
-                logger.info(f"Navigation to {url} complete. Waiting for potential JS rendering...")
-                await asyncio.sleep(2) # Give 2 seconds for JS to potentially finish rendering after network idle
+                # Wait only until DOM content loads to avoid hanging on pages that never go network idle
+                logger.info(f"Navigating to {url} and waiting for DOM content to load...")
+                await page.goto(url, wait_until='domcontentloaded', timeout=35000)
+                logger.info(
+                    f"Navigation to {url} complete. Allowing time for additional JS rendering..."
+                )
+                await asyncio.sleep(2)  # Give 2 seconds for JS to potentially finish rendering after load
 
                 if config.SCRAPE_SCROLL_ATTEMPTS > 0:
                     logger.info(
