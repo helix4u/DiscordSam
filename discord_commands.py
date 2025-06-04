@@ -353,11 +353,20 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 snippets.append(f"{i+1}. **{title}** (<{url_link}>)\n   {snippet_text}...")
             
             formatted_results = "\n\n".join(snippets)
-            await interaction.followup.send(embed=discord.Embed(
-                title=f"Top Search Results for: {query}", 
-                description=formatted_results[:config.EMBED_MAX_LENGTH], 
-                color=config.EMBED_COLOR["incomplete"] 
-            ))
+            result_chunks = chunk_text(formatted_results, config.EMBED_MAX_LENGTH)
+            for i, chunk in enumerate(result_chunks):
+                embed_title = (
+                    f"Top Search Results for: {query}"
+                    if i == 0
+                    else f"Top Search Results for: {query} (cont.)"
+                )
+                await interaction.followup.send(
+                    embed=discord.Embed(
+                        title=embed_title,
+                        description=chunk,
+                        color=config.EMBED_COLOR["incomplete"],
+                    )
+                )
 
             user_query_content_for_summary = f"Please analyze and concisely summarize the key information from these search results regarding the original query '{query}'. Focus on the most relevant points and synthesize them into a coherent overview. Do not just list the snippets. Provide a helpful summary.\n\nSearch Results:\n{formatted_results[:config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT]}" 
             user_msg_node = MsgNode("user", user_query_content_for_summary, name=str(interaction.user.id))
