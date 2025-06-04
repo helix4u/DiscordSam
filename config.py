@@ -119,6 +119,7 @@ class Config:
 
         self.HEADLESS_PLAYWRIGHT = _get_bool("HEADLESS_PLAYWRIGHT", True)
         self.PLAYWRIGHT_MAX_CONCURRENCY = _get_int("PLAYWRIGHT_MAX_CONCURRENCY", 2)
+        self.SCRAPE_SCROLL_ATTEMPTS = _get_int("SCRAPE_SCROLL_ATTEMPTS", 3)
 
 
 # Global config instance

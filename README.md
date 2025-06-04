@@ -11,7 +11,7 @@ DiscordSam is an advanced, context-aware Discord bot designed to provide intelli
 *   **Intelligent Conversations:** Powered by local LLMs (e.g., LM Studio, Ollama compatible), allowing for nuanced and context-aware dialogue.
 *   **Long-Term Memory (RAG):** Utilizes ChromaDB to store and retrieve conversation history, enabling the bot to recall past interactions and provide more informed responses. Conversations are "distilled" into keyword-rich sentences for efficient semantic search.
 *   **Web Capabilities:**
-    *   Scrape website content and YouTube transcripts.
+    *   Scrape website content and YouTube transcripts. If Playwright yields little text, the bot falls back to a simple BeautifulSoup request with a Googlebot user agent.
     *   Perform web searches (optionally via a local SearXNG instance) and summarize results.
     *   Fetch and summarize recent tweets from X/Twitter users.
 *   **Multimedia Interaction:**
@@ -41,6 +41,7 @@ DiscordSam is an advanced, context-aware Discord bot designed to provide intelli
 *   **OpenAI API (compatible):** Standard interface for interacting with local Large Language Models.
 *   **ChromaDB:** An open-source vector database used for implementing Retrieval Augmented Generation (RAG) for long-term memory.
 *   **Playwright:** A library for browser automation, used here for web scraping capabilities.
+*   **BeautifulSoup:** Lightweight HTML parsing for fallback scraping when Playwright results are sparse.
 *   **Whisper (OpenAI):** A state-of-the-art speech-to-text model for audio transcription.
 *   **Asyncio:** Python's framework for asynchronous programming, crucial for a responsive Discord bot.
 *   **Supporting LLM Servers (Examples):** LM Studio, Ollama (these run the actual language models).
@@ -103,6 +104,7 @@ Some of the most important settings you can tweak via the `.env` file are listed
 * `RAG_NUM_DISTILLED_SENTENCES_TO_FETCH` – how many distilled sentences to include from history.
 * `MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT` – limit for scraped text added to prompts.
 * `NEWS_MAX_LINKS_TO_PROCESS` – number of news links to read with `/gettweets`.
+* `SCRAPE_SCROLL_ATTEMPTS` – how many times to scroll when scraping a webpage to load dynamic content.
 
 ---
 
