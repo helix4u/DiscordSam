@@ -15,11 +15,12 @@ from common_models import MsgNode
 logger = logging.getLogger(__name__)
 
 chroma_client: Optional[chromadb.ClientAPI] = None
-chat_history_collection: Optional[chromadb.Collection] = None 
-distilled_chat_summary_collection: Optional[chromadb.Collection] = None 
+chat_history_collection: Optional[chromadb.Collection] = None
+distilled_chat_summary_collection: Optional[chromadb.Collection] = None
+news_summary_collection: Optional[chromadb.Collection] = None
 
 def initialize_chromadb() -> bool:
-    global chroma_client, chat_history_collection, distilled_chat_summary_collection
+    global chroma_client, chat_history_collection, distilled_chat_summary_collection, news_summary_collection
     if chroma_client: 
         logger.debug("ChromaDB already initialized.")
         return True
@@ -29,17 +30,25 @@ def initialize_chromadb() -> bool:
         
         logger.info(f"Getting or creating ChromaDB collection: {config.CHROMA_COLLECTION_NAME}")
         chat_history_collection = chroma_client.get_or_create_collection(name=config.CHROMA_COLLECTION_NAME)
-        
+
         logger.info(f"Getting or creating ChromaDB collection: {config.CHROMA_DISTILLED_COLLECTION_NAME}")
         distilled_chat_summary_collection = chroma_client.get_or_create_collection(name=config.CHROMA_DISTILLED_COLLECTION_NAME)
-        
-        logger.info(f"ChromaDB initialized successfully. Main Collection: '{config.CHROMA_COLLECTION_NAME}', Distilled Collection: '{config.CHROMA_DISTILLED_COLLECTION_NAME}'")
+
+        logger.info(f"Getting or creating ChromaDB collection: {config.CHROMA_NEWS_SUMMARY_COLLECTION_NAME}")
+        news_summary_collection = chroma_client.get_or_create_collection(name=config.CHROMA_NEWS_SUMMARY_COLLECTION_NAME)
+
+        logger.info(
+            f"ChromaDB initialized successfully. Main Collection: '{config.CHROMA_COLLECTION_NAME}', "
+            f"Distilled Collection: '{config.CHROMA_DISTILLED_COLLECTION_NAME}', "
+            f"News Collection: '{config.CHROMA_NEWS_SUMMARY_COLLECTION_NAME}'"
+        )
         return True
     except Exception as e:
         logger.critical(f"Failed to initialize ChromaDB collections: {e}", exc_info=True)
-        chroma_client = None 
+        chroma_client = None
         chat_history_collection = None
         distilled_chat_summary_collection = None
+        news_summary_collection = None
         return False
 
 async def distill_conversation_to_sentence_llm(llm_client: Any, text_to_distill: str) -> Optional[str]:
@@ -500,7 +509,36 @@ async def store_chatgpt_conversations_in_chromadb(llm_client: Any, conversations
         logger.info(f"Successfully processed and stored {added_count} imported conversations with distillations into ChromaDB.")
     elif conversations: 
         logger.info("Processed ChatGPT export, but no conversations were successfully stored with distillation.")
-    else: 
+    else:
         logger.info("No conversations found in the provided ChatGPT export to process.")
-        
+
     return added_count
+
+
+def store_news_summary(topic: str, url: str, summary_text: str, timestamp: Optional[datetime] = None) -> bool:
+    """Store a summarized news article in the dedicated ChromaDB collection."""
+    if not chroma_client or not news_summary_collection:
+        logger.warning("ChromaDB news summary collection not available, skipping storage.")
+        return False
+
+    timestamp = timestamp or datetime.now()
+    doc_id = f"news_{int(timestamp.timestamp())}_{random.randint(1000,9999)}"
+    metadata = {
+        "topic": topic,
+        "url": url,
+        "timestamp": timestamp.isoformat(),
+    }
+
+    try:
+        news_summary_collection.add(
+            documents=[summary_text],
+            metadatas=[metadata],
+            ids=[doc_id],
+        )
+        logger.info(
+            f"Stored news summary (ID: {doc_id}) for topic '{topic}' and url '{url}' in '{config.CHROMA_NEWS_SUMMARY_COLLECTION_NAME}'."
+        )
+        return True
+    except Exception as e:
+        logger.error(f"Failed to store news summary for {url}: {e}", exc_info=True)
+        return False

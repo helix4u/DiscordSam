@@ -18,9 +18,10 @@ from llm_handling import (
     stream_llm_response_to_interaction 
 )
 from rag_chroma_manager import (
-    retrieve_and_prepare_rag_context, 
+    retrieve_and_prepare_rag_context,
     parse_chatgpt_export,
     store_chatgpt_conversations_in_chromadb,
+    store_news_summary,
 )
 from web_utils import (
     scrape_website, 
@@ -138,7 +139,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                         logger.info(f"Summarized '{article_title}': {article_summary[:100]}...")
                         article_summaries_for_briefing.append(f"Source: {article_title} ({article_url})\nSummary: {article_summary}\n\n")
                         
-                        logger.info(f"TODO: Store news summary for '{article_title}' (topic: '{topic}') in ChromaDB.")
+                        store_news_summary(topic=topic, url=article_url, summary_text=article_summary)
                     else:
                         logger.warning(f"LLM summarization returned no content for '{article_title}'.")
                         article_summaries_for_briefing.append(f"Source: {article_title} ({article_url})\nSummary: [AI summarization failed or returned no content]\n\n")
