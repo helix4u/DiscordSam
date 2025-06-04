@@ -140,7 +140,28 @@ Some of the most important settings you can tweak via the `.env` file are listed
 
 ---
 
-## 7. Running the Bot
+## 7. Installing SearXNG via Docker
+
+If you want to use the `/search` command, you need a local SearXNG instance. The
+official project provides a convenient Docker setup:
+
+```bash
+git clone https://github.com/searxng/searxng-docker.git
+cd searxng-docker
+cp .env.example .env  # enable JSON engine config
+docker compose up -d
+```
+
+Once SearXNG is running, edit `searxng/settings.yml` in the clone to pick the
+search engines you prefer and set `result_format: json` to enable JSON output.
+Point the bot to your instance by setting `SEARX_URL` in `.env`.
+
+For more granular control, you can pass query-time settings with the
+`SEARX_PREFERENCES` environment variable as referenced in `web_utils.py`.
+
+---
+
+## 8. Running the Bot
 
 1.  **Ensure your local servers are running:**
     *   Your LLM server (e.g., LM Studio) must be active and accessible at the `LOCAL_SERVER_URL`.
@@ -157,7 +178,7 @@ Some of the most important settings you can tweak via the `.env` file are listed
 
 ---
 
-## 8. Potential Future Directions
+## 9. Potential Future Directions
 
 DiscordSam is a project with significant potential for growth. Here are some ideas for future enhancements (see `PROJECT_OVERVIEW.md` for more details):
 
@@ -172,7 +193,7 @@ DiscordSam is a project with significant potential for growth. Here are some ide
 
 ---
 
-## 9. Support / Issues / Contributing
+## 10. Support / Issues / Contributing
 
 Found a bug? Have a feature request? Want to contribute?
 
