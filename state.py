@@ -1,7 +1,7 @@
 import asyncio
 from collections import defaultdict
 from datetime import datetime
-from typing import List, Tuple, Any, Optional
+from typing import List, Tuple, Any
 
 class BotState:
     """An async-safe container for the bot's shared, mutable state."""

@@ -1,5 +1,4 @@
 import logging
-import asyncio # Though not directly used here, often useful in main files
 
 import discord
 from discord.ext import commands
