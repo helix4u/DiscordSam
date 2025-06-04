@@ -39,7 +39,10 @@ bot = commands.Bot(command_prefix=commands.when_mentioned_or("!"), intents=inten
 # --- Client Initializations ---
 # LLM Client (OpenAI compatible)
 # This client will be passed to or imported by modules that need it.
-llm_client = AsyncOpenAI(base_url=config.LOCAL_SERVER_URL, api_key="lm-studio") # api_key can be anything for local LLMs usually
+llm_client = AsyncOpenAI(
+    base_url=config.LOCAL_SERVER_URL,
+    api_key=config.LLM_API_KEY or "lm-studio",
+)  # api_key can be anything for local LLMs usually
 
 # Bot State Manager
 bot_state = BotState()

@@ -1,5 +1,5 @@
 import logging
-import random
+from uuid import uuid4
 from datetime import datetime
 from typing import List, Optional, Any, Dict, Union
 import json
@@ -250,7 +250,7 @@ async def ingest_conversation_to_chromadb(
 
     timestamp_now = datetime.now()
     str_user_id = str(user_id) 
-    full_convo_doc_id = f"full_channel_{channel_id}_user_{str_user_id}_{int(timestamp_now.timestamp())}_{random.randint(1000,9999)}"
+    full_convo_doc_id = f"full_channel_{channel_id}_user_{str_user_id}_{int(timestamp_now.timestamp())}_{uuid4().hex}"
     
     full_convo_metadata: Dict[str, Any] = {
         "channel_id": str(channel_id), "user_id": str_user_id, "timestamp": timestamp_now.isoformat(),
@@ -456,7 +456,7 @@ async def store_chatgpt_conversations_in_chromadb(llm_client: Any, conversations
 
         timestamp = convo_data.get('create_time', datetime.now()) 
         safe_title = re.sub(r'\W+', '_', convo_data.get('title', 'untitled'))[:50] 
-        full_convo_doc_id = f"{source}_full_{safe_title}_{i}_{int(timestamp.timestamp())}_{random.randint(1000,9999)}"
+        full_convo_doc_id = f"{source}_full_{safe_title}_{i}_{int(timestamp.timestamp())}_{uuid4().hex}"
         
         full_convo_metadata: Dict[str, Any] = {  
             "title": convo_data.get('title', 'Untitled'), 
