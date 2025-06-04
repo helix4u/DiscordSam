@@ -5,7 +5,7 @@ from discord.ext import commands # For bot type hint
 import os 
 import base64 
 import random 
-from typing import Any, Optional, List, Union, Tuple, Dict 
+from typing import Any, Optional, List
 from datetime import datetime 
 
 # Bot services and utilities

@@ -1,10 +1,9 @@
 import logging
 import random
 from datetime import datetime
-from typing import List, Optional, Any, Dict, Union 
-import json 
-import re 
-import hashlib 
+from typing import List, Optional, Any, Dict, Union
+import json
+import re
 
 
 import chromadb 

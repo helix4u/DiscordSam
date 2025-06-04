@@ -1,6 +1,6 @@
 # common_models.py
 import logging
-from typing import Any, Optional, List
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 

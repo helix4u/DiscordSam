@@ -1,10 +1,9 @@
 import asyncio
 import logging
-from typing import List, Any, Optional, Union, Tuple, cast 
-import discord 
+from typing import List, Any, Optional, Union, Tuple, cast
+import discord
 from openai import AsyncStream # type: ignore
-import typing 
-from datetime import datetime 
+from datetime import datetime
 
 # Assuming config is imported from config.py
 from config import config
