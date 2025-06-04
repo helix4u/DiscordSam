@@ -96,6 +96,7 @@ Some of the most important settings you can tweak via the `.env` file are listed
 * `CHROMA_DB_PATH` – location of the ChromaDB database directory.
 * `CHROMA_COLLECTION_NAME` – name of the collection for chat history.
 * `CHROMA_DISTILLED_COLLECTION_NAME` – name of the distilled summary collection.
+* `CHROMA_NEWS_SUMMARY_COLLECTION_NAME` – collection used to store summarized news articles.
 * `USER_PROVIDED_CONTEXT` – additional context prepended to every prompt.
 * `RAG_NUM_DISTILLED_SENTENCES_TO_FETCH` – how many distilled sentences to include from history.
 * `MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT` – limit for scraped text added to prompts.
