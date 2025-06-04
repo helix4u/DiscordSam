@@ -1,11 +1,54 @@
 import os
+import logging
 import discord
 from dotenv import load_dotenv
+
+logger = logging.getLogger(__name__)
 
 class Config:
     """Configuration class for the bot."""
     def __init__(self):
         load_dotenv()
+
+        def _get_int(env_var: str, default: int) -> int:
+            value = os.getenv(env_var, str(default))
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                logger.warning("Invalid value for %s=%s; using %s", env_var, value, default)
+                return default
+
+        def _get_float(env_var: str, default: float) -> float:
+            value = os.getenv(env_var, str(default))
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                logger.warning("Invalid value for %s=%s; using %s", env_var, value, default)
+                return default
+
+        def _get_bool(env_var: str, default: bool) -> bool:
+            value = os.getenv(env_var)
+            if value is None:
+                return default
+            lowered = value.lower()
+            if lowered in ("true", "1", "yes"):
+                return True
+            if lowered in ("false", "0", "no"):
+                return False
+            logger.warning("Invalid value for %s=%s; using %s", env_var, value, default)
+            return default
+
+        def _parse_int_list(env_var: str) -> list[int]:
+            parts = os.getenv(env_var, "").split(",")
+            values: list[int] = []
+            for part in parts:
+                if not part:
+                    continue
+                try:
+                    values.append(int(part))
+                except ValueError:
+                    logger.warning("Invalid integer '%s' in %s; skipping", part, env_var)
+            return values
         self.DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
         # Token validation moved to ``require_bot_token`` so that modules which
         # don't need the bot token (e.g. ``open_chatgpt_login.py``) can import
@@ -18,16 +61,16 @@ class Config:
         self.LLM_API_KEY = os.getenv("LLM_API_KEY", "")
         self.SYSTEM_PROMPT_FILE = os.getenv("SYSTEM_PROMPT_FILE", "system_prompt.md")
 
-        self.ALLOWED_CHANNEL_IDS = [int(i) for i in os.getenv("ALLOWED_CHANNEL_IDS", "").split(",") if i]
-        self.ALLOWED_ROLE_IDS = [int(i) for i in os.getenv("ALLOWED_ROLE_IDS", "").split(",") if i]
+        self.ALLOWED_CHANNEL_IDS = _parse_int_list("ALLOWED_CHANNEL_IDS")
+        self.ALLOWED_ROLE_IDS = _parse_int_list("ALLOWED_ROLE_IDS")
         
-        self.MAX_IMAGES_PER_MESSAGE = int(os.getenv("MAX_IMAGES_PER_MESSAGE", 1))
-        self.MAX_MESSAGE_HISTORY = int(os.getenv("MAX_MESSAGE_HISTORY", 10))
-        self.MAX_COMPLETION_TOKENS = int(os.getenv("MAX_COMPLETION_TOKENS", 2048))
+        self.MAX_IMAGES_PER_MESSAGE = _get_int("MAX_IMAGES_PER_MESSAGE", 1)
+        self.MAX_MESSAGE_HISTORY = _get_int("MAX_MESSAGE_HISTORY", 10)
+        self.MAX_COMPLETION_TOKENS = _get_int("MAX_COMPLETION_TOKENS", 2048)
         
         self.TTS_API_URL = os.getenv("TTS_API_URL", "http://localhost:8880/v1/audio/speech")
         self.TTS_VOICE = os.getenv("TTS_VOICE", "af_sky+af+af_nicole")
-        self.TTS_ENABLED_DEFAULT = os.getenv("TTS_ENABLED_DEFAULT", "true").lower() == "true"
+        self.TTS_ENABLED_DEFAULT = _get_bool("TTS_ENABLED_DEFAULT", True)
 
         self.SEARX_URL = os.getenv("SEARX_URL", "http://192.168.1.3:9092/search")
         # Changed default for SEARX_PREFERENCES to an empty string.
@@ -45,7 +88,7 @@ class Config:
                 try:
                     return int(value, 16)
                 except ValueError:
-                    pass
+                    logger.warning("Invalid color value for %s=%s; using default", env_var, value)
             return default
 
         self.EMBED_COLOR = {
@@ -57,9 +100,9 @@ class Config:
             ),
             "error": _parse_color("EMBED_COLOR_ERROR", discord.Color.red().value),
         }
-        self.EMBED_MAX_LENGTH = int(os.getenv("EMBED_MAX_LENGTH", 4096))
+        self.EMBED_MAX_LENGTH = _get_int("EMBED_MAX_LENGTH", 4096)
         self.EDITS_PER_SECOND = 1.3
-        self.STREAM_EDIT_THROTTLE_SECONDS = float(os.getenv("STREAM_EDIT_THROTTLE_SECONDS", 0.1))
+        self.STREAM_EDIT_THROTTLE_SECONDS = _get_float("STREAM_EDIT_THROTTLE_SECONDS", 0.1)
 
         self.CHROMA_DB_PATH = os.getenv("CHROMA_DB_PATH", "./chroma_data")
         self.CHROMA_COLLECTION_NAME = os.getenv("CHROMA_COLLECTION_NAME", "long_term_memory")
@@ -68,14 +111,14 @@ class Config:
         
         self.USER_PROVIDED_CONTEXT = os.getenv("USER_PROVIDED_CONTEXT", "")
 
-        self.MAX_IMAGE_BYTES_FOR_PROMPT = int(os.getenv("MAX_IMAGE_BYTES_FOR_PROMPT", 4 * 1024 * 1024))
-        self.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT = int(os.getenv("MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT", 8000))
-        self.RAG_NUM_DISTILLED_SENTENCES_TO_FETCH = int(os.getenv("RAG_NUM_DISTILLED_SENTENCES_TO_FETCH", 3))
+        self.MAX_IMAGE_BYTES_FOR_PROMPT = _get_int("MAX_IMAGE_BYTES_FOR_PROMPT", 4 * 1024 * 1024)
+        self.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT = _get_int("MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT", 8000)
+        self.RAG_NUM_DISTILLED_SENTENCES_TO_FETCH = _get_int("RAG_NUM_DISTILLED_SENTENCES_TO_FETCH", 3)
         
-        self.NEWS_MAX_LINKS_TO_PROCESS = int(os.getenv("NEWS_MAX_LINKS_TO_PROCESS", 5))
+        self.NEWS_MAX_LINKS_TO_PROCESS = _get_int("NEWS_MAX_LINKS_TO_PROCESS", 5)
 
-        self.HEADLESS_PLAYWRIGHT = os.getenv("HEADLESS_PLAYWRIGHT", "true").lower() == "true"
-        self.PLAYWRIGHT_MAX_CONCURRENCY = int(os.getenv("PLAYWRIGHT_MAX_CONCURRENCY", 2))
+        self.HEADLESS_PLAYWRIGHT = _get_bool("HEADLESS_PLAYWRIGHT", True)
+        self.PLAYWRIGHT_MAX_CONCURRENCY = _get_int("PLAYWRIGHT_MAX_CONCURRENCY", 2)
 
 
 # Global config instance

@@ -79,7 +79,7 @@ DiscordSam is an advanced, context-aware Discord bot designed to provide intelli
 
 ### Key Environment Variables
 
-Some of the most important settings you can tweak via the `.env` file are listed below. Refer to `config.py` and `example.env` for defaults and additional options.
+Some of the most important settings you can tweak via the `.env` file are listed below. Refer to `config.py` and `example.env` for defaults and additional options. Numeric values must be valid integers (or floats where noted) and booleans should be expressed as `true` or `false` (case-insensitive).
 
 * `DISCORD_BOT_TOKEN` – token for your Discord bot.
 * `LOCAL_SERVER_URL` – base URL of the OpenAI-compatible LLM server.
