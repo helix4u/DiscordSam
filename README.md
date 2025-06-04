@@ -85,6 +85,8 @@ Some of the most important settings you can tweak via the `.env` file are listed
 * `LOCAL_SERVER_URL` – base URL of the OpenAI-compatible LLM server.
 * `LLM` – default language model name.
 * `FAST_LLM_MODEL` – model used for quick responses.
+* `LLM_API_KEY` – API key used with your LLM server.
+* `SYSTEM_PROMPT_FILE` – path to a text/markdown file containing the system prompt.
 * `VISION_LLM_MODEL` – model used for image analysis.
 * `MAX_IMAGES_PER_MESSAGE` – number of images the bot will process per message.
 * `MAX_MESSAGE_HISTORY` – how many messages are kept in short-term history.

@@ -14,7 +14,9 @@ class Config:
         self.LOCAL_SERVER_URL = os.getenv("LOCAL_SERVER_URL", "http://localhost:1234/v1")
         self.LLM_MODEL = os.getenv("LLM", "local-model")
         self.VISION_LLM_MODEL = os.getenv("VISION_LLM_MODEL", "llava")
-        self.FAST_LLM_MODEL = os.getenv("FAST_LLM_MODEL", self.LLM_MODEL) 
+        self.FAST_LLM_MODEL = os.getenv("FAST_LLM_MODEL", self.LLM_MODEL)
+        self.LLM_API_KEY = os.getenv("LLM_API_KEY", "")
+        self.SYSTEM_PROMPT_FILE = os.getenv("SYSTEM_PROMPT_FILE", "system_prompt.md")
 
         self.ALLOWED_CHANNEL_IDS = [int(i) for i in os.getenv("ALLOWED_CHANNEL_IDS", "").split(",") if i]
         self.ALLOWED_ROLE_IDS = [int(i) for i in os.getenv("ALLOWED_ROLE_IDS", "").split(",") if i]
