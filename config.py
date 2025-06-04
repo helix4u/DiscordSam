@@ -7,8 +7,9 @@ class Config:
     def __init__(self):
         load_dotenv()
         self.DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
-        if not self.DISCORD_BOT_TOKEN:
-            raise ValueError("DISCORD_BOT_TOKEN environment variable is missing")
+        # Token validation moved to ``require_bot_token`` so that modules which
+        # don't need the bot token (e.g. ``open_chatgpt_login.py``) can import
+        # the configuration without raising an exception.
 
         self.LOCAL_SERVER_URL = os.getenv("LOCAL_SERVER_URL", "http://localhost:1234/v1")
         self.LLM_MODEL = os.getenv("LLM", "local-model")
@@ -76,3 +77,10 @@ class Config:
 
 # Global config instance
 config = Config()
+
+
+def require_bot_token() -> str:
+    """Return the Discord bot token or raise if it's missing."""
+    if not config.DISCORD_BOT_TOKEN:
+        raise ValueError("DISCORD_BOT_TOKEN environment variable is missing")
+    return config.DISCORD_BOT_TOKEN

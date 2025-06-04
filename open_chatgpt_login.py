@@ -3,6 +3,7 @@ import os
 from typing import Optional
 
 from playwright.async_api import BrowserContext, async_playwright
+# Import configuration; bot token isn't required for this utility script
 from config import config
 
 async def open_chatgpt_login():

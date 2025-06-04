@@ -6,7 +6,7 @@ from discord.ext import commands
 from openai import AsyncOpenAI # Using the direct import
 
 # Import configurations and state
-from config import config # Imports the global 'config' instance
+from config import config, require_bot_token  # ``require_bot_token`` enforces that the bot token is set
 from state import BotState # Assuming state.py is in the same directory
 
 # Import utility and manager modules
@@ -48,9 +48,13 @@ bot_state = BotState()
 # --- Main Execution Block ---
 if __name__ == "__main__":
     # Validate essential configurations before trying to run
-    if not config.DISCORD_BOT_TOKEN:
-        logger.critical("DISCORD_BOT_TOKEN is not set in the environment or .env file. Bot cannot start.")
-        exit(1) # Exit if token is missing
+    try:
+        bot_token = require_bot_token()
+    except ValueError:
+        logger.critical(
+            "DISCORD_BOT_TOKEN is not set in the environment or .env file. Bot cannot start."
+        )
+        exit(1)
 
     # Initialize ChromaDB
     # This function now resides in rag_chroma_manager and sets up global chroma clients there
@@ -77,7 +81,7 @@ if __name__ == "__main__":
     try:
         logger.info("Starting Discord bot...")
         # log_handler=None prevents discord.py from setting up its own root logger if we've already configured one.
-        bot.run(config.DISCORD_BOT_TOKEN, log_handler=None) 
+        bot.run(bot_token, log_handler=None)
     except discord.LoginFailure:
         logger.critical("Failed to log in to Discord. Check the DISCORD_BOT_TOKEN.")
     except Exception as e:
