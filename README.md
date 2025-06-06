@@ -108,19 +108,6 @@ Some of the most important settings you can tweak via the `.env` file are listed
 
 ---
 
-### Obtaining a Discord Bot Token
-
-1. Visit the [Discord Developer Portal](https://discord.com/developers/applications) and on the **Applications** page click **New Application**.
-2. After adding the application, open the **Bot** section in the left sidebar and give it messege content intent.
-3. Under the bot settings click **Reset Token** (or **Copy Token**) to reveal your token.
-4. Add the token to your `.env` file as:
-   ```bash
-   DISCORD_BOT_TOKEN=your_token_here
-   ```
-   Keep this value private—anyone with the token can control your bot.
- 
----
-
 ## 6. Installation
 
 1.  **Clone the repository:**
@@ -153,50 +140,7 @@ Some of the most important settings you can tweak via the `.env` file are listed
 
 ---
 
-## 7. Installing SearXNG via Docker
-
-If you want to use the `/search` command, you need a local SearXNG instance. The
-official project provides a convenient Docker setup:
-
-```bash
-git clone https://github.com/searxng/searxng-docker.git
-cd searxng-docker
-cp .env.example .env  # enable JSON engine config
-docker compose up -d
-```
-
-Once SearXNG is running, edit `searxng/settings.yml` in the clone to pick the
-search engines you prefer and set `result_format: json` to enable JSON output.
-Point the bot to your instance by setting `SEARX_URL` in `.env`.
-
-For more granular control, you can pass query-time settings with the
-`SEARX_PREFERENCES` environment variable as referenced in `web_utils.py`.
-
----
-
-## 8. Running Kokoro-FastAPI with Docker
-
-The project can use [Kokoro-FastAPI](https://github.com/remsky/Kokoro-FastAPI)
-as a local TTS service. A quick way to get it running is via Docker:
-
-```bash
-git clone https://github.com/remsky/Kokoro-FastAPI.git
-cd Kokoro-FastAPI
-docker compose up -d
-```
-
-Kokoro-FastAPI reads its settings from environment variables (see
-`api/src/core/config.py` in that repository). You can create a `.env` file or
-edit `config.yaml` as needed to adjust the default voice, port, or GPU/CPU
-settings.
-
-Once the container is running, point DiscordSam to it by setting the
-`TTS_API_URL` value in your `.env` file. The default URL is
-`http://localhost:8880/v1/audio/speech`.
-
----
-
-## 9. Running the Bot
+## 7. Running the Bot
 
 1.  **Ensure your local servers are running:**
     *   Your LLM server (e.g., LM Studio) must be active and accessible at the `LOCAL_SERVER_URL`.
@@ -213,7 +157,7 @@ Once the container is running, point DiscordSam to it by setting the
 
 ---
 
-## 10. Potential Future Directions
+## 8. Potential Future Directions
 
 DiscordSam is a project with significant potential for growth. Here are some ideas for future enhancements (see `PROJECT_OVERVIEW.md` for more details):
 
@@ -228,7 +172,7 @@ DiscordSam is a project with significant potential for growth. Here are some ide
 
 ---
 
-## 11. Support / Issues / Contributing
+## 9. Support / Issues / Contributing
 
 Found a bug? Have a feature request? Want to contribute?
 
