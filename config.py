@@ -114,6 +114,10 @@ class Config:
         self.MAX_IMAGE_BYTES_FOR_PROMPT = _get_int("MAX_IMAGE_BYTES_FOR_PROMPT", 4 * 1024 * 1024)
         self.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT = _get_int("MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT", 8000)
         self.RAG_NUM_DISTILLED_SENTENCES_TO_FETCH = _get_int("RAG_NUM_DISTILLED_SENTENCES_TO_FETCH", 3)
+
+        # Pruning settings for old chat history
+        self.PRUNE_DAYS = _get_int("PRUNE_DAYS", 30)
+        self.PRUNE_BATCH_SIZE = _get_int("PRUNE_BATCH_SIZE", 50)
         
         self.NEWS_MAX_LINKS_TO_PROCESS = _get_int("NEWS_MAX_LINKS_TO_PROCESS", 5)
 
