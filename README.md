@@ -119,7 +119,7 @@ Some of the most important settings you can tweak via the `.env` file are listed
    ```
    Keep this value private—anyone with the token can control your bot.
  
---
+---
 
 ## 6. Installation
 
