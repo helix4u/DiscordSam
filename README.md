@@ -108,6 +108,19 @@ Some of the most important settings you can tweak via the `.env` file are listed
 
 ---
 
+### Obtaining a Discord Bot Token
+
+1. Visit the [Discord Developer Portal](https://discord.com/developers/applications) and on the **Applications** page click **New Application**.
+2. After adding the application, open the **Bot** section in the left sidebar and give it messege content intent.
+3. Under the bot settings click **Reset Token** (or **Copy Token**) to reveal your token.
+4. Add the token to your `.env` file as:
+   ```bash
+   DISCORD_BOT_TOKEN=your_token_here
+   ```
+   Keep this value private—anyone with the token can control your bot.
+ 
+--
+
 ## 6. Installation
 
 1.  **Clone the repository:**
