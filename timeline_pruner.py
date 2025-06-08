@@ -143,7 +143,7 @@ async def prune_and_summarize(prune_days: int = PRUNE_DAYS):
         texts = [i["document"] for i in items]
         start = items[0]["timestamp"]
         end = items[-1]["timestamp"]
-        query = f"Summarize chat history from {start.date()} to {end.date()} as a narrative"
+        query = f"Summarize the included chat history that took place from {start.date()} to {end.date()} as a keyword dense narrative focusing on content, date, novel learnings, etc. Do not state anything about the reference the word snippet, conversation, retrieved, etc. This is for a RAG db. Keep it clean."
         summary = await rcm.synthesize_retrieved_contexts_llm(llm_client, texts, query)
         if summary:
             ids = [i["id"] for i in items]
