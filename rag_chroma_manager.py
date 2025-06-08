@@ -19,9 +19,10 @@ chroma_client: Optional[chromadb.ClientAPI] = None
 chat_history_collection: Optional[chromadb.Collection] = None
 distilled_chat_summary_collection: Optional[chromadb.Collection] = None
 news_summary_collection: Optional[chromadb.Collection] = None
+timeline_summary_collection: Optional[chromadb.Collection] = None
 
 def initialize_chromadb() -> bool:
-    global chroma_client, chat_history_collection, distilled_chat_summary_collection, news_summary_collection
+    global chroma_client, chat_history_collection, distilled_chat_summary_collection, news_summary_collection, timeline_summary_collection
     if chroma_client: 
         logger.debug("ChromaDB already initialized.")
         return True
@@ -38,10 +39,14 @@ def initialize_chromadb() -> bool:
         logger.info(f"Getting or creating ChromaDB collection: {config.CHROMA_NEWS_SUMMARY_COLLECTION_NAME}")
         news_summary_collection = chroma_client.get_or_create_collection(name=config.CHROMA_NEWS_SUMMARY_COLLECTION_NAME)
 
+        logger.info(f"Getting or creating ChromaDB collection: {config.CHROMA_TIMELINE_SUMMARY_COLLECTION_NAME}")
+        timeline_summary_collection = chroma_client.get_or_create_collection(name=config.CHROMA_TIMELINE_SUMMARY_COLLECTION_NAME)
+
         logger.info(
             f"ChromaDB initialized successfully. Main Collection: '{config.CHROMA_COLLECTION_NAME}', "
             f"Distilled Collection: '{config.CHROMA_DISTILLED_COLLECTION_NAME}', "
-            f"News Collection: '{config.CHROMA_NEWS_SUMMARY_COLLECTION_NAME}'"
+            f"News Collection: '{config.CHROMA_NEWS_SUMMARY_COLLECTION_NAME}', "
+            f"Timeline Collection: '{config.CHROMA_TIMELINE_SUMMARY_COLLECTION_NAME}'"
         )
         return True
     except Exception as e:
@@ -50,6 +55,7 @@ def initialize_chromadb() -> bool:
         chat_history_collection = None
         distilled_chat_summary_collection = None
         news_summary_collection = None
+        timeline_summary_collection = None
         return False
 
 async def distill_conversation_to_sentence_llm(llm_client: Any, text_to_distill: str) -> Optional[str]:
@@ -144,7 +150,7 @@ async def retrieve_and_prepare_rag_context(llm_client: Any, query: str, n_result
         results = distilled_chat_summary_collection.query(
             query_texts=[query] if isinstance(query, str) else query, # type: ignore
             n_results=n_results_sentences,
-            include=["metadatas", "documents"] 
+            include=["metadatas", "documents"]
         )
         
         if not results or not results.get('ids') or not results['ids'][0]: 
@@ -193,10 +199,31 @@ async def retrieve_and_prepare_rag_context(llm_client: Any, query: str, n_result
             except Exception as e_get_full:
                 logger.error(f"RAG: Error fetching full conversation docs for IDs {unique_full_convo_ids_to_fetch}: {e_get_full}", exc_info=True)
 
+        # Query other collections directly for additional context
+        n_results_collections = config.RAG_NUM_COLLECTION_DOCS_TO_FETCH
+        additional_collections = [
+            ("chat_history", chat_history_collection),
+            ("timeline", timeline_summary_collection),
+            ("news", news_summary_collection),
+        ]
+
+        for name, collection in additional_collections:
+            if not collection:
+                continue
+            try:
+                logger.debug(
+                    f"RAG: Querying {name} collection for query: '{query[:50]}...' (n_results={n_results_collections})"
+                )
+                res = collection.query(query_texts=[query], n_results=n_results_collections, include=["documents"])
+                docs = res.get("documents", [[]])[0] if res and res.get("documents") else []
+                retrieved_full_conversation_texts.extend([d for d in docs if isinstance(d, str)])
+            except Exception as e_other:
+                logger.error(f"RAG: Error querying {name} collection: {e_other}", exc_info=True)
+
         if not retrieved_full_conversation_texts:
-            logger.info("RAG: No full conversation texts could be retrieved for synthesis.")
+            logger.info("RAG: No context texts retrieved for synthesis.")
             return None
-            
+
         synthesized_context = await synthesize_retrieved_contexts_llm(llm_client, retrieved_full_conversation_texts, query)
         return synthesized_context
 
