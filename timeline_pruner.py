@@ -10,6 +10,8 @@ from config import config
 from rag_chroma_manager import (
     initialize_chromadb,
     chat_history_collection,
+    distilled_chat_summary_collection,
+    news_summary_collection,
     timeline_summary_collection,
     synthesize_retrieved_contexts_llm,
 )
@@ -75,6 +77,62 @@ def _store_timeline_summary(start: datetime, end: datetime, summary: str, source
         logger.error(f"Failed to store timeline summary: {e}")
 
 
+def _get_collection_timestamps(collection) -> List[datetime]:
+    """Retrieve timestamp metadata from all documents in a collection."""
+    total = collection.count()
+    limit = 100
+    timestamps: List[datetime] = []
+    for offset in range(0, total, limit):
+        res = collection.get(limit=limit, offset=offset, include=["metadatas"])
+        metas = res.get("metadatas", [])
+        for meta in metas:
+            ts_str = (meta or {}).get("timestamp") or (meta or {}).get("create_time")
+            if not ts_str:
+                continue
+            try:
+                ts = datetime.fromisoformat(ts_str)
+            except Exception:
+                continue
+            timestamps.append(ts)
+    return timestamps
+
+
+def print_collection_metrics() -> None:
+    """Log metrics about each ChromaDB collection."""
+    if not initialize_chromadb():
+        logger.error("ChromaDB initialization failed")
+        return
+
+    collections = [
+        ("chat_history_collection", chat_history_collection),
+        ("distilled_chat_summary_collection", distilled_chat_summary_collection),
+        ("news_summary_collection", news_summary_collection),
+        ("timeline_summary_collection", timeline_summary_collection),
+    ]
+
+    for name, coll in collections:
+        if not coll:
+            logger.info(f"Collection '{name}' unavailable")
+            continue
+
+        count = coll.count()
+        timestamps = _get_collection_timestamps(coll)
+
+        if timestamps:
+            earliest = min(timestamps)
+            latest = max(timestamps)
+            grouped = defaultdict(int)
+            for ts in timestamps:
+                grouped[ts.strftime("%Y-%m")] += 1
+            group_str = ", ".join(f"{m}: {c}" for m, c in sorted(grouped.items()))
+            logger.info(
+                f"Collection '{name}' has {count} docs. Oldest: {earliest.date()}, latest: {latest.date()}"
+            )
+            logger.info(f"    Counts by month: {group_str}")
+        else:
+            logger.info(f"Collection '{name}' has {count} docs (no timestamp metadata found)")
+
+
 async def prune_and_summarize(prune_days: int = PRUNE_DAYS):
     if not initialize_chromadb():
         logger.error("ChromaDB initialization failed")
@@ -115,6 +173,10 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Summarize and prune old chat history")
     parser.add_argument("--days", type=int, default=PRUNE_DAYS, help="Prune items older than this many days")
+    parser.add_argument("--stats", action="store_true", help="Print metrics about ChromaDB collections and exit")
     args = parser.parse_args()
 
-    asyncio.run(prune_and_summarize(args.days))
+    if args.stats:
+        print_collection_metrics()
+    else:
+        asyncio.run(prune_and_summarize(args.days))
