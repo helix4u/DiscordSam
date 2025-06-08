@@ -27,7 +27,7 @@ def _fetch_old_documents(prune_days: int) -> List[Dict[str, Any]]:
     old_docs: List[Dict[str, Any]] = []
 
     for offset in range(0, total, limit):
-        res = rcm.chat_history_collection.get(limit=limit, offset=offset, include=["documents", "metadatas", "ids"])
+        res = rcm.chat_history_collection.get(limit=limit, offset=offset, include=["documents", "metadatas"])
         ids = res.get("ids", [])
         docs = res.get("documents", [])
         metas = res.get("metadatas", [])
