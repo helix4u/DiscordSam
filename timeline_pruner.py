@@ -7,14 +7,7 @@ from typing import Any, Dict, List
 from openai import AsyncOpenAI
 
 from config import config
-from rag_chroma_manager import (
-    initialize_chromadb,
-    chat_history_collection,
-    distilled_chat_summary_collection,
-    news_summary_collection,
-    timeline_summary_collection,
-    synthesize_retrieved_contexts_llm,
-)
+import rag_chroma_manager as rcm
 
 logger = logging.getLogger(__name__)
 
@@ -22,19 +15,19 @@ PRUNE_DAYS = getattr(config, "TIMELINE_PRUNE_DAYS", 30)
 
 
 def _fetch_old_documents(prune_days: int) -> List[Dict[str, Any]]:
-    if not chat_history_collection:
+    if not rcm.chat_history_collection:
         logger.warning("Chat history collection unavailable")
         return []
 
     cutoff = datetime.now() - timedelta(days=prune_days)
     cutoff_iso = cutoff.isoformat()
 
-    total = chat_history_collection.count()
+    total = rcm.chat_history_collection.count()
     limit = 100
     old_docs: List[Dict[str, Any]] = []
 
     for offset in range(0, total, limit):
-        res = chat_history_collection.get(limit=limit, offset=offset, include=["documents", "metadatas", "ids"])
+        res = rcm.chat_history_collection.get(limit=limit, offset=offset, include=["documents", "metadatas", "ids"])
         ids = res.get("ids", [])
         docs = res.get("documents", [])
         metas = res.get("metadatas", [])
@@ -59,7 +52,7 @@ def _group_by_day(docs: List[Dict[str, Any]]):
 
 
 def _store_timeline_summary(start: datetime, end: datetime, summary: str, source_ids: List[str]):
-    if not timeline_summary_collection:
+    if not rcm.timeline_summary_collection:
         logger.warning("Timeline summary collection unavailable")
         return
     from uuid import uuid4
@@ -71,7 +64,7 @@ def _store_timeline_summary(start: datetime, end: datetime, summary: str, source
         "source_ids": source_ids,
     }
     try:
-        timeline_summary_collection.add(documents=[summary], metadatas=[metadata], ids=[doc_id])
+        rcm.timeline_summary_collection.add(documents=[summary], metadatas=[metadata], ids=[doc_id])
         logger.info(f"Stored timeline summary {doc_id} spanning {metadata['start']} to {metadata['end']}")
     except Exception as e:
         logger.error(f"Failed to store timeline summary: {e}")
@@ -98,16 +91,11 @@ def _get_collection_timestamps(collection) -> List[datetime]:
 
 
 def print_collection_metrics() -> None:
-    """Log metrics about each ChromaDB collection."""
-    if not initialize_chromadb():
+    if not rcm.initialize_chromadb():
         logger.error("ChromaDB initialization failed")
         return
 
     collections = [
-        ("chat_history_collection", chat_history_collection),
-        ("distilled_chat_summary_collection", distilled_chat_summary_collection),
-        ("news_summary_collection", news_summary_collection),
-        ("timeline_summary_collection", timeline_summary_collection),
     ]
 
     for name, coll in collections:
@@ -134,7 +122,7 @@ def print_collection_metrics() -> None:
 
 
 async def prune_and_summarize(prune_days: int = PRUNE_DAYS):
-    if not initialize_chromadb():
+    if not rcm.initialize_chromadb():
         logger.error("ChromaDB initialization failed")
         return
 
@@ -152,11 +140,11 @@ async def prune_and_summarize(prune_days: int = PRUNE_DAYS):
         start = items[0]["timestamp"]
         end = items[-1]["timestamp"]
         query = f"Summarize chat history from {start.date()} to {end.date()} as a narrative"
-        summary = await synthesize_retrieved_contexts_llm(llm_client, texts, query)
+        summary = await rcm.synthesize_retrieved_contexts_llm(llm_client, texts, query)
         if summary:
             ids = [i["id"] for i in items]
             _store_timeline_summary(start, end, summary, ids)
-            chat_history_collection.delete(ids=ids)
+            rcm.chat_history_collection.delete(ids=ids)
             logger.info(f"Pruned {len(ids)} documents from {day}")
         else:
             logger.warning(f"No summary generated for {day}; skipping deletion")

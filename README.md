@@ -33,6 +33,27 @@ DiscordSam is an advanced, context-aware Discord bot designed to provide intelli
 *   **Modular Codebase:** Refactored into multiple Python files for better organization, maintainability, and scalability.
 *   **Collection Metrics:** Run `timeline_pruner.py --stats` to view counts and age distribution of stored documents.
 
+*   **Collection Metrics:** Run `timeline_pruner.py --stats` to view counts and age distribution of stored documents.
+
+## Timeline Pruner & Metrics
+
+The `timeline_pruner.py` tool helps manage the size of your ChromaDB collections.
+Run it periodically to remove older items while preserving useful summaries.
+
+```bash
+python timeline_pruner.py --days 30
+```
+
+The above command prunes documents older than 30 days and stores a single summary for each day.
+
+To inspect your database without pruning, use the `--stats` flag:
+
+```bash
+python timeline_pruner.py --stats
+```
+
+This prints a count of documents for each collection along with how many entries were created in each month, e.g. `2024-05: 1200`.
+
 ---
 
 ## 3. Key Technologies Used
