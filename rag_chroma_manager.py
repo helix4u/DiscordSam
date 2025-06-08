@@ -7,7 +7,8 @@ import re
 import random
 
 
-import chromadb 
+import chromadb
+from chromadb import errors as chroma_errors
 
 from config import config
 from common_models import MsgNode 
@@ -189,15 +190,35 @@ async def retrieve_and_prepare_rag_context(llm_client: Any, query: str, n_result
         logger.debug(f"RAG: Fetching full conversation documents for IDs: {unique_full_convo_ids_to_fetch}")
         if unique_full_convo_ids_to_fetch and chat_history_collection:
             try:
-                full_convo_docs_result = chat_history_collection.get(ids=unique_full_convo_ids_to_fetch, include=["documents"])
-                if full_convo_docs_result and full_convo_docs_result.get('documents'):
-                    valid_docs = [doc for doc in full_convo_docs_result['documents'] if isinstance(doc, str)]
+                full_convo_docs_result = chat_history_collection.get(
+                    ids=unique_full_convo_ids_to_fetch, include=["documents"]
+                )
+                if full_convo_docs_result and full_convo_docs_result.get("documents"):
+                    valid_docs = [
+                        doc
+                        for doc in full_convo_docs_result["documents"]
+                        if isinstance(doc, str)
+                    ]
                     retrieved_full_conversation_texts.extend(valid_docs)
-                    logger.info(f"RAG: Retrieved {len(valid_docs)} full conversation texts.")
+                    logger.info(
+                        f"RAG: Retrieved {len(valid_docs)} full conversation texts."
+                    )
                 else:
-                    logger.warning(f"RAG: Could not retrieve some/all full conversation documents for IDs: {unique_full_convo_ids_to_fetch}. Result: {full_convo_docs_result}")
+                    logger.warning(
+                        "RAG: Could not retrieve some/all full conversation documents for "
+                        f"IDs: {unique_full_convo_ids_to_fetch}. Result: {full_convo_docs_result}"
+                    )
+            except chroma_errors.InternalError as internal_err:
+                logger.warning(
+                    "RAG: ChromaDB internal error during conversation fetch: "
+                    f"{internal_err}. Reinitializing collection and skipping IDs {unique_full_convo_ids_to_fetch}."
+                )
+                initialize_chromadb()
             except Exception as e_get_full:
-                logger.error(f"RAG: Error fetching full conversation docs for IDs {unique_full_convo_ids_to_fetch}: {e_get_full}", exc_info=True)
+                logger.error(
+                    f"RAG: Error fetching full conversation docs for IDs {unique_full_convo_ids_to_fetch}: {e_get_full}",
+                    exc_info=True,
+                )
 
         # Query other collections directly for additional context
         n_results_collections = config.RAG_NUM_COLLECTION_DOCS_TO_FETCH
