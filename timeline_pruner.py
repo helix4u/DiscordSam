@@ -56,12 +56,16 @@ def _store_timeline_summary(start: datetime, end: datetime, summary: str, source
         logger.warning("Timeline summary collection unavailable")
         return
     from uuid import uuid4
+    import json
 
     doc_id = f"timeline_{int(start.timestamp())}_{int(end.timestamp())}_{uuid4().hex}"
+    # Serialize source_ids so the metadata values are primitive types for ChromaDB.
+    # To deserialize later, use json.loads(serialized_ids).
+    serialized_ids = json.dumps(source_ids)
     metadata = {
         "start": start.isoformat(),
         "end": end.isoformat(),
-        "source_ids": source_ids,
+        "source_ids": serialized_ids,
     }
     try:
         rcm.timeline_summary_collection.add(documents=[summary], metadatas=[metadata], ids=[doc_id])
