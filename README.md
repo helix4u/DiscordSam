@@ -31,6 +31,7 @@ DiscordSam is an advanced, context-aware Discord bot designed to provide intelli
     *   `/ingest_chatgpt_export`: Import conversations from a ChatGPT export file into the bot's long-term memory (ChromaDB).
 *   **High Configurability:** Most settings are managed via a `.env` file, allowing for easy customization of LLM endpoints, API keys, and bot behavior.
 *   **Modular Codebase:** Refactored into multiple Python files for better organization, maintainability, and scalability.
+*   **Collection Metrics:** Run `timeline_pruner.py --stats` to view counts and age distribution of stored documents.
 
 *   **Collection Metrics:** Run `timeline_pruner.py --stats` to view counts and age distribution of stored documents.
 

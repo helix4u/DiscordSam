@@ -7,7 +7,18 @@ from typing import Any, Dict, List
 from openai import AsyncOpenAI
 
 from config import config
+
 import rag_chroma_manager as rcm
+
+from rag_chroma_manager import (
+    initialize_chromadb,
+    chat_history_collection,
+    distilled_chat_summary_collection,
+    news_summary_collection,
+    timeline_summary_collection,
+    synthesize_retrieved_contexts_llm,
+)
+
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +104,7 @@ def _get_collection_timestamps(collection) -> List[datetime]:
 def print_collection_metrics() -> None:
     """Log metrics about each ChromaDB collection."""
     if not rcm.initialize_chromadb():
+    if not initialize_chromadb():
         logger.error("ChromaDB initialization failed")
         return
 
