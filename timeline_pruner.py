@@ -91,16 +91,11 @@ def _get_collection_timestamps(collection) -> List[datetime]:
 
 
 def print_collection_metrics() -> None:
-    """Log metrics about each ChromaDB collection."""
     if not rcm.initialize_chromadb():
         logger.error("ChromaDB initialization failed")
         return
 
     collections = [
-        ("chat_history_collection", rcm.chat_history_collection),
-        ("distilled_chat_summary_collection", rcm.distilled_chat_summary_collection),
-        ("news_summary_collection", rcm.news_summary_collection),
-        ("timeline_summary_collection", rcm.timeline_summary_collection),
     ]
 
     for name, coll in collections:
