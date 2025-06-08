@@ -100,10 +100,6 @@ def print_collection_metrics() -> None:
         return
 
     collections = [
-        ("chat_history", rcm.chat_history_collection),
-        ("distilled", rcm.distilled_chat_summary_collection),
-        ("news", rcm.news_summary_collection),
-        ("timeline", rcm.timeline_summary_collection),
     ]
 
     for name, coll in collections:
