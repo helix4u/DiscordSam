@@ -96,6 +96,7 @@ Some of the most important settings you can tweak via the `.env` file are listed
 * `TTS_ENABLED_DEFAULT` – whether TTS is enabled by default.
 * `SEARX_URL` – URL of your SearXNG instance for `/search`.
 * `SEARX_PREFERENCES` – optional JSON string with engine preferences.
+* `PAYWALL_DOMAINS` – comma-separated list of domains to fetch via archive.is.
 * `CHROMA_DB_PATH` – location of the ChromaDB database directory.
 * `CHROMA_COLLECTION_NAME` – name of the collection for chat history.
 * `CHROMA_DISTILLED_COLLECTION_NAME` – name of the distilled summary collection.

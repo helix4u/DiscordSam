@@ -49,6 +49,10 @@ class Config:
                 except ValueError:
                     logger.warning("Invalid integer '%s' in %s; skipping", part, env_var)
             return values
+
+        def _parse_str_list(env_var: str) -> list[str]:
+            parts = os.getenv(env_var, "").split(",")
+            return [p.strip() for p in parts if p.strip()]
         self.DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
         # Token validation moved to ``require_bot_token`` so that modules which
         # don't need the bot token (e.g. ``open_chatgpt_login.py``) can import
@@ -111,6 +115,15 @@ class Config:
         self.CHROMA_TIMELINE_SUMMARY_COLLECTION_NAME = os.getenv("CHROMA_TIMELINE_SUMMARY_COLLECTION_NAME", "timeline_summaries")
         
         self.USER_PROVIDED_CONTEXT = os.getenv("USER_PROVIDED_CONTEXT", "")
+
+        self.PAYWALL_DOMAINS = _parse_str_list("PAYWALL_DOMAINS")
+        if not self.PAYWALL_DOMAINS:
+            self.PAYWALL_DOMAINS = [
+                "nytimes.com",
+                "washingtonpost.com",
+                "ft.com",
+                "wsj.com",
+            ]
 
         self.MAX_IMAGE_BYTES_FOR_PROMPT = _get_int("MAX_IMAGE_BYTES_FOR_PROMPT", 4 * 1024 * 1024)
         self.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT = _get_int("MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT", 8000)

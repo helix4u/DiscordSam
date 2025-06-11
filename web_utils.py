@@ -5,8 +5,9 @@ import re
 import json 
 from typing import List, Optional, Dict, Any
 from bs4 import BeautifulSoup
-import random 
-import hashlib 
+import random
+import hashlib
+from urllib.parse import urlparse
 
 import aiohttp
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError # type: ignore
@@ -19,6 +20,17 @@ from config import config
 logger = logging.getLogger(__name__)
 
 PLAYWRIGHT_SEM = asyncio.Semaphore(config.PLAYWRIGHT_MAX_CONCURRENCY)
+
+def _maybe_use_archive(url: str) -> str:
+    domain = urlparse(url).netloc.lower()
+    for paywall_domain in config.PAYWALL_DOMAINS:
+        if paywall_domain and paywall_domain.lower() in domain:
+            archived = f"https://archive.is/newest/{url}"
+            logger.info(
+                f"Paywall domain detected ({domain}). Using archive.is: {archived}"
+            )
+            return archived
+    return url
 
 JS_EXPAND_SHOWMORE_TWITTER = """
 (maxClicks) => {
@@ -141,8 +153,12 @@ async def _scrape_with_bs(url: str) -> Optional[str]:
     return None
 
 async def scrape_website(url: str) -> Optional[str]:
-    logger.info(f"Attempting to scrape website: {url}")
-    user_data_dir = os.path.join(os.getcwd(), ".pw-profile") 
+    url_to_use = _maybe_use_archive(url)
+    if url_to_use != url:
+        logger.info(f"Adjusted URL for scraping due to paywall: {url_to_use}")
+    else:
+        logger.info(f"Attempting to scrape website: {url_to_use}")
+    user_data_dir = os.path.join(os.getcwd(), ".pw-profile")
     profile_dir_usable = True
     if not os.path.exists(user_data_dir):
         try:
@@ -180,10 +196,10 @@ async def scrape_website(url: str) -> Optional[str]:
                 page = await context_manager.new_page()
                 
                 # Wait only until DOM content loads to avoid hanging on pages that never go network idle
-                logger.info(f"Navigating to {url} and waiting for DOM content to load...")
-                await page.goto(url, wait_until='domcontentloaded', timeout=35000)
+                logger.info(f"Navigating to {url_to_use} and waiting for DOM content to load...")
+                await page.goto(url_to_use, wait_until='domcontentloaded', timeout=35000)
                 logger.info(
-                    f"Navigation to {url} complete. Allowing time for additional JS rendering..."
+                    f"Navigation to {url_to_use} complete. Allowing time for additional JS rendering..."
                 )
                 await asyncio.sleep(2)  # Give 2 seconds for JS to potentially finish rendering after load
 
@@ -212,27 +228,27 @@ async def scrape_website(url: str) -> Optional[str]:
                                 logger.info(f"Found substantial content with selector '{selector}'.")
                                 break 
                         else:
-                            logger.debug(f"Selector '{selector}' not found or not visible on {url}")
+                            logger.debug(f"Selector '{selector}' not found or not visible on {url_to_use}")
                     except PlaywrightTimeoutError:
-                        logger.debug(f"Timeout waiting for selector '{selector}' or its text on {url}")
+                        logger.debug(f"Timeout waiting for selector '{selector}' or its text on {url_to_use}")
                     except Exception as e_sel: 
-                        logger.warning(f"Error processing selector '{selector}' on {url}: {e_sel}")
+                        logger.warning(f"Error processing selector '{selector}' on {url_to_use}: {e_sel}")
                 
                 if (not content or len(content.strip()) < 100) and page.url != "about:blank":
-                    logger.info(f"Primary selectors yielded little content for {url}. Falling back to document.body.innerText.")
+                    logger.info(f"Primary selectors yielded little content for {url_to_use}. Falling back to document.body.innerText.")
                     try:
                         body_content = await page.evaluate('document.body ? document.body.innerText : ""')
                         if body_content:
                             content = body_content 
                     except Exception as e_body_eval:
-                        logger.warning(f"Error evaluating document.body.innerText for {url}: {e_body_eval}")
+                        logger.warning(f"Error evaluating document.body.innerText for {url_to_use}: {e_body_eval}")
                 
                 if content:
                     content = content.strip()
                     content = re.sub(r"\s\s+", " ", content)
                     if len(content) > config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT:
                         logger.info(
-                            f"Scraped content from {url} was truncated from {len(content)} to {config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT} characters."
+                            f"Scraped content from {url_to_use} was truncated from {len(content)} to {config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT} characters."
                         )
                         content = (
                             content[: config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT] + "..."
@@ -240,20 +256,20 @@ async def scrape_website(url: str) -> Optional[str]:
                     return content if content else None
                 else:
                     logger.warning(
-                        f"No substantial content extracted from {url} after trying all selectors and body.innerText fallback."
+                        f"No substantial content extracted from {url_to_use} after trying all selectors and body.innerText fallback."
                     )
-                    bs_content = await _scrape_with_bs(url)
+                    bs_content = await _scrape_with_bs(url_to_use)
                     if bs_content:
                         logger.info("BeautifulSoup fallback succeeded.")
                         return bs_content
                     return None
 
     except PlaywrightTimeoutError:
-        logger.error(f"Playwright timed out during the scraping process for {url}")
-        return "Scraping timed out." 
+        logger.error(f"Playwright timed out during the scraping process for {url_to_use}")
+        return "Scraping timed out."
     except Exception as e:
-        logger.error(f"Playwright encountered an unexpected error for {url}: {e}", exc_info=True)
-        return "Failed to scrape the website due to an unexpected error." 
+        logger.error(f"Playwright encountered an unexpected error for {url_to_use}: {e}", exc_info=True)
+        return "Failed to scrape the website due to an unexpected error."
     finally:
         if page and not page.is_closed():
             try: await page.close()
@@ -262,7 +278,7 @@ async def scrape_website(url: str) -> Optional[str]:
             try: await context_manager.close()
             except Exception as e_ctx: 
                 if "Target page, context or browser has been closed" not in str(e_ctx):
-                    logger.debug(f"Ignoring error during context closure for {url}: {e_ctx}") 
+                    logger.debug(f"Ignoring error during context closure for {url_to_use}: {e_ctx}")
         if browser_instance_sw and not profile_dir_usable: 
             try: await browser_instance_sw.close()
             except Exception: pass
