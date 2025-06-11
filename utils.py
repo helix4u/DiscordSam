@@ -1,6 +1,7 @@
 import re
 from datetime import timedelta
 from typing import List, Optional, Tuple
+import psutil
 
 # Assuming config is imported from config.py where it's defined
 # from .config import config # If in a package
@@ -73,3 +74,20 @@ def parse_time_string_to_delta(time_str: str) -> Tuple[Optional[timedelta], Opti
         descriptive_str = "a duration" # Should ideally not be reached if parsing is correct
 
     return time_delta, descriptive_str
+
+
+def cleanup_playwright_processes() -> int:
+    """Kill lingering Playwright/Chromium processes.
+
+    Returns the number of processes terminated."""
+    killed = 0
+    markers = [".pw-", "playwright"]
+    for proc in psutil.process_iter(["pid", "cmdline"]):
+        try:
+            cmdline = " ".join(proc.info.get("cmdline") or [])
+            if any(m in cmdline for m in markers):
+                proc.kill()
+                killed += 1
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    return killed

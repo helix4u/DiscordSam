@@ -21,7 +21,7 @@ from rag_chroma_manager import (
     retrieve_and_prepare_rag_context
 )
 # Corrected import for detect_urls
-from utils import detect_urls 
+from utils import detect_urls, cleanup_playwright_processes
 from web_utils import scrape_website, fetch_youtube_transcript 
 from audio_utils import transcribe_audio_file, send_tts_audio, load_whisper_model 
 
@@ -45,8 +45,8 @@ def setup_events_and_tasks(bot: commands.Bot, llm_client_in: Any, bot_state_in: 
         return # Prevent events/tasks from being registered if setup is faulty
 
 
-    @tasks.loop(seconds=30) 
-    async def check_reminders_task(): 
+    @tasks.loop(seconds=30)
+    async def check_reminders_task():
         if not bot_state_instance or not bot_instance: # Check instances
             logger.error("check_reminders_task: Bot state or bot instance not available.")
             return
@@ -79,6 +79,12 @@ def setup_events_and_tasks(bot: commands.Bot, llm_client_in: Any, bot_state_in: 
             except Exception as e:
                 logger.error(f"Failed to send reminder (Channel ID {channel_id}, User ID {user_id}): {e}", exc_info=True)
 
+    @tasks.loop(minutes=10)
+    async def cleanup_playwright_task():
+        killed = cleanup_playwright_processes()
+        if killed:
+            logger.info(f"Cleaned up {killed} stray Chromium processes.")
+
     @bot_instance.event # type: ignore
     async def on_ready():
         if not bot_instance or not bot_instance.user: 
@@ -101,11 +107,15 @@ def setup_events_and_tasks(bot: commands.Bot, llm_client_in: Any, bot_state_in: 
             logger.info(f"Synced {len(synced)} slash commands to Discord.")
         except Exception as e:
             logger.error(f"Failed to sync slash commands: {e}", exc_info=True)
-        
+
         if not check_reminders_task.is_running():
             check_reminders_task.start()
             logger.info("Reminders task started.")
-        
+
+        if not cleanup_playwright_task.is_running():
+            cleanup_playwright_task.start()
+            logger.info("Playwright cleanup task started.")
+
         await bot_instance.change_presence(activity=discord.Game(name="with /commands | Ask me anything!"))
         logger.info("Bot presence updated.")
 
