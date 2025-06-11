@@ -130,6 +130,7 @@ Some of the most important settings you can tweak via the `.env` file are listed
     ```bash
     pip install -r requirements.txt
     ```
+    The list now includes `psutil`, which lets the bot clean up stray Playwright processes automatically.
     > **Important Note for PyTorch (used by Whisper):** For optimal performance, especially with GPU support, it's often best to install PyTorch separately by following the [official PyTorch instructions](https://pytorch.org/get-started/locally/) before running `pip install -r requirements.txt`. The `requirements.txt` might install a CPU-only version if a specific PyTorch version isn't already present.
 
 4.  **Install Playwright browsers:**
@@ -156,8 +157,12 @@ Some of the most important settings you can tweak via the `.env` file are listed
     ```
 
 ---
+## 8. Troubleshooting
 
-## 8. Potential Future Directions
+If Chromium or Playwright processes remain running after scraping, the bot will attempt to clean them up every 10 minutes using `psutil`.
+
+
+## 9. Potential Future Directions
 
 DiscordSam is a project with significant potential for growth. Here are some ideas for future enhancements (see `PROJECT_OVERVIEW.md` for more details):
 
@@ -172,7 +177,7 @@ DiscordSam is a project with significant potential for growth. Here are some ide
 
 ---
 
-## 9. Support / Issues / Contributing
+## 10. Support / Issues / Contributing
 
 Found a bug? Have a feature request? Want to contribute?
 
