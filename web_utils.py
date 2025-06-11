@@ -140,6 +140,19 @@ async def _scrape_with_bs(url: str) -> Optional[str]:
         logger.warning(f"BeautifulSoup fallback failed for {url}: {e}")
     return None
 
+
+def _detect_captcha(text: str) -> bool:
+    """Return True if the page text appears to contain a CAPTCHA challenge."""
+    lowered = text.lower()
+    indicators = [
+        "captcha",
+        "verify you are human",
+        "are you human",
+        "not a robot",
+        "security check",
+    ]
+    return any(ind in lowered for ind in indicators)
+
 async def scrape_website(url: str) -> Optional[str]:
     logger.info(f"Attempting to scrape website: {url}")
     user_data_dir = os.path.join(os.getcwd(), ".pw-profile") 
@@ -186,6 +199,20 @@ async def scrape_website(url: str) -> Optional[str]:
                     f"Navigation to {url} complete. Allowing time for additional JS rendering..."
                 )
                 await asyncio.sleep(2)  # Give 2 seconds for JS to potentially finish rendering after load
+
+                if _detect_captcha(await page.content()):
+                    if not config.HEADLESS_PLAYWRIGHT:
+                        logger.info(
+                            "CAPTCHA detected. Please solve it in the opened browser window."
+                        )
+                        await asyncio.to_thread(
+                            input, "Press Enter after solving the CAPTCHA..."
+                        )
+                    else:
+                        logger.warning(
+                            "CAPTCHA detected but HEADLESS_PLAYWRIGHT is true; cannot solve automatically."
+                        )
+
 
                 if config.SCRAPE_SCROLL_ATTEMPTS > 0:
                     logger.info(
