@@ -105,8 +105,6 @@ Some of the most important settings you can tweak via the `.env` file are listed
 * `MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT` – limit for scraped text added to prompts.
 * `NEWS_MAX_LINKS_TO_PROCESS` – number of news links to read with `/gettweets`.
 * `SCRAPE_SCROLL_ATTEMPTS` – how many times to scroll when scraping a webpage to load dynamic content.
-* `HEADLESS_PLAYWRIGHT` – set to `false` if you need to manually solve web CAPTCHAs (opens a visible browser).
-* `PLAYWRIGHT_MAX_CONCURRENCY` – number of concurrent Playwright tasks allowed.
 
 ---
 
