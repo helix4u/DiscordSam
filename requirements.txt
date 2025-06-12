@@ -28,7 +28,6 @@ chromadb>=0.4.22
 # Automated browser for scraping, headless tasks
 
 playwright>=1.30.0
-playwright-stealth>=1.0.6
 
 youtube-transcript-api>=0.6.0
 numpy>=1.23.0
