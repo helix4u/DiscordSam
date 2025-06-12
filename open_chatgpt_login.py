@@ -1,16 +1,30 @@
 import asyncio
 import os
+import random
 from typing import Optional
 
 from playwright.async_api import BrowserContext, async_playwright
+from playwright_stealth import stealth_async
 from config import config
 
-async def open_chatgpt_login():
+# List of common browser user-agent strings
+COMMON_USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.5993.88 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/117.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edg/115.0.1901.203",
+]
+
+async def open_chatgpt_login(user_agent: Optional[str] = None):
     """
     Launches a browser using a persistent context,
     navigates to the ChatGPT login page, and waits for the user to close it.
     This helps save the login session in the .pw-profile directory.
+    ``user_agent`` can be supplied to override the randomized default.
     """
+    if user_agent is None:
+        user_agent = random.choice(COMMON_USER_AGENTS)
+
     user_data_dir = os.path.join(os.getcwd(), ".pw-profile")
     profile_dir_exists_or_created = False
     if not os.path.exists(user_data_dir):
@@ -42,10 +56,12 @@ async def open_chatgpt_login():
                     # "--no-sandbox", # Uncomment if you run into sandbox issues, common in some environments
                     # "--disable-dev-shm-usage" # Can help in resource-constrained environments
                 ],
+                user_agent=user_agent,
                 slow_mo=100  # Slows down Playwright operations to make it easier to see
             )
             
             page = await browser_context.new_page()
+            await stealth_async(page)
             
             print("Navigating to ChatGPT (chat.openai.com)...")
             # Navigate to the main chat page, which will redirect to login if not authenticated

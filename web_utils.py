@@ -10,6 +10,7 @@ import hashlib
 
 import aiohttp
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError # type: ignore
+from playwright_stealth import stealth_async
 from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound # type: ignore
 import xml.etree.ElementTree 
 
@@ -19,6 +20,14 @@ from config import config
 logger = logging.getLogger(__name__)
 
 PLAYWRIGHT_SEM = asyncio.Semaphore(config.PLAYWRIGHT_MAX_CONCURRENCY)
+
+# Common browser user agents for Playwright stealth usage
+COMMON_USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.5993.88 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/117.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edg/115.0.1901.203",
+]
 
 JS_EXPAND_SHOWMORE_TWITTER = """
 (maxClicks) => {
@@ -142,7 +151,8 @@ async def _scrape_with_bs(url: str) -> Optional[str]:
 
 async def scrape_website(url: str) -> Optional[str]:
     logger.info(f"Attempting to scrape website: {url}")
-    user_data_dir = os.path.join(os.getcwd(), ".pw-profile") 
+    user_agent = random.choice(COMMON_USER_AGENTS)
+    user_data_dir = os.path.join(os.getcwd(), ".pw-profile")
     profile_dir_usable = True
     if not os.path.exists(user_data_dir):
         try:
@@ -162,8 +172,8 @@ async def scrape_website(url: str) -> Optional[str]:
                     context = await p.chromium.launch_persistent_context(
                         user_data_dir,
                         headless=config.HEADLESS_PLAYWRIGHT,
-                        args=["--disable-blink-features=AutomationControlled", "--no-sandbox", "--disable-dev-shm-usage"], 
-                        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36" 
+                        args=["--disable-blink-features=AutomationControlled", "--no-sandbox", "--disable-dev-shm-usage"],
+                        user_agent=user_agent
                     )
                 else: 
                     logger.warning("Using non-persistent context for scrape_website due to profile directory issue.")
@@ -172,12 +182,13 @@ async def scrape_website(url: str) -> Optional[str]:
                         args=["--disable-blink-features=AutomationControlled", "--no-sandbox", "--disable-dev-shm-usage"]
                     )
                     context = await browser_instance_sw.new_context(
-                        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-                        java_script_enabled=True, 
-                        ignore_https_errors=True 
+                        user_agent=user_agent,
+                        java_script_enabled=True,
+                        ignore_https_errors=True
                     )
-                context_manager = context 
+                context_manager = context
                 page = await context_manager.new_page()
+                await stealth_async(page)
                 
                 # Wait only until DOM content loads to avoid hanging on pages that never go network idle
                 logger.info(f"Navigating to {url} and waiting for DOM content to load...")
@@ -269,6 +280,7 @@ async def scrape_website(url: str) -> Optional[str]:
 
 async def scrape_latest_tweets(username_queried: str, limit: int = 10) -> List[Dict[str, Any]]:
     logger.info(f"Scraping last {limit} tweets for @{username_queried} (profile page, with replies) using Playwright JS execution.")
+    user_agent = random.choice(COMMON_USER_AGENTS)
     tweets_collected: List[Dict[str, Any]] = []
     seen_tweet_ids: set[str] = set() 
     
@@ -291,8 +303,8 @@ async def scrape_latest_tweets(username_queried: str, limit: int = 10) -> List[D
                     context = await p.chromium.launch_persistent_context(
                         user_data_dir, headless=config.HEADLESS_PLAYWRIGHT,
                         args=["--disable-blink-features=AutomationControlled", "--no-sandbox", "--disable-dev-shm-usage"],
-                        user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36",
-                        slow_mo=150 
+                        user_agent=user_agent,
+                        slow_mo=150
                     )
                 else:
                     logger.warning("Using non-persistent context for tweet scraping.")
@@ -302,10 +314,11 @@ async def scrape_latest_tweets(username_queried: str, limit: int = 10) -> List[D
                         slow_mo=150
                     )
                     context = await browser_instance_st.new_context(
-                        user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36"
+                        user_agent=user_agent
                     )
                 context_manager = context
                 page = await context_manager.new_page()
+                await stealth_async(page)
                 
                 url = f"https://x.com/{username_queried.lstrip('@')}/with_replies" 
                 logger.info(f"Navigating to Twitter profile: {url}")
