@@ -59,6 +59,8 @@ class Config:
         self.VISION_LLM_MODEL = os.getenv("VISION_LLM_MODEL", "llava")
         self.FAST_LLM_MODEL = os.getenv("FAST_LLM_MODEL", self.LLM_MODEL)
         self.LLM_API_KEY = os.getenv("LLM_API_KEY", "")
+        self.USE_RESPONSES_API = _get_bool("USE_RESPONSES_API", False)
+        self.SERVICE_TIER = os.getenv("SERVICE_TIER", "auto")
         self.SYSTEM_PROMPT_FILE = os.getenv("SYSTEM_PROMPT_FILE", "system_prompt.md")
 
         self.ALLOWED_CHANNEL_IDS = _parse_int_list("ALLOWED_CHANNEL_IDS")
