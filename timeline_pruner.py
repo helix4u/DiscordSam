@@ -130,7 +130,11 @@ async def prune_and_summarize(prune_days: int = PRUNE_DAYS):
         logger.error("ChromaDB initialization failed")
         return
 
-    llm_client = AsyncOpenAI(base_url=config.LOCAL_SERVER_URL, api_key=config.LLM_API_KEY or "lm-studio")
+    llm_client = AsyncOpenAI(
+        base_url=config.LOCAL_SERVER_URL,
+        api_key=config.LLM_API_KEY or "lm-studio",
+        timeout=900.0 if config.SERVICE_TIER == "flex" else 600.0,
+    )
 
     docs = _fetch_old_documents(prune_days)
     if not docs:

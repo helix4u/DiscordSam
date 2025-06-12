@@ -1,6 +1,6 @@
 import re
 from datetime import timedelta
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Any
 import psutil
 
 # Assuming config is imported from config.py where it's defined
@@ -9,6 +9,7 @@ import psutil
 # For this refactor, we'll assume config can be imported if placed correctly.
 # If main_bot.py initializes config, then other modules import it from there or config.py
 from config import config
+from common_models import MsgNode
 
 
 def chunk_text(text: str, max_length: int = config.EMBED_MAX_LENGTH) -> List[str]:
@@ -91,3 +92,60 @@ def cleanup_playwright_processes() -> int:
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue
     return killed
+
+
+async def call_llm_api(
+    llm_client: Any,
+    messages: List[MsgNode],
+    model: str,
+    *,
+    stream: bool = False,
+    temperature: float = 0.7,
+    max_tokens: int = config.MAX_COMPLETION_TOKENS,
+) -> Any:
+    """Call either the Responses API or Chat Completions depending on config."""
+
+    msg_dicts = [m.to_dict() for m in messages]
+
+    use_responses = config.USE_RESPONSES_API and hasattr(llm_client, "responses")
+
+    if use_responses:
+        instructions_parts = [
+            d["content"]
+            for d in msg_dicts
+            if d.get("role") == "system" and isinstance(d.get("content"), str)
+        ]
+        instructions = "\n".join(instructions_parts) if instructions_parts else None
+        input_messages = [d for d in msg_dicts if d.get("role") != "system"]
+        return await llm_client.responses.create(
+            model=model,
+            instructions=instructions,
+            input=input_messages,
+            temperature=temperature,
+            max_output_tokens=max_tokens,
+            stream=stream,
+            service_tier=config.SERVICE_TIER,
+        )
+    else:
+        return await llm_client.chat.completions.create(
+            model=model,
+            messages=msg_dicts,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            stream=stream,
+            service_tier=config.SERVICE_TIER,
+        )
+
+
+def extract_text_from_response(response: Any) -> Optional[str]:
+    """Return the assistant text from either API response."""
+
+    if hasattr(response, "choices"):
+        choice = response.choices[0] if response.choices else None
+        if choice and getattr(choice, "message", None):
+            return choice.message.content or ""
+
+    if hasattr(response, "output_text"):
+        return response.output_text or ""
+
+    return None

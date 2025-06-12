@@ -10,7 +10,8 @@ import random
 import chromadb 
 
 from config import config
-from common_models import MsgNode 
+from common_models import MsgNode
+from utils import call_llm_api, extract_text_from_response
 
 
 logger = logging.getLogger(__name__)
@@ -77,18 +78,20 @@ async def distill_conversation_to_sentence_llm(llm_client: Any, text_to_distill:
     )
     try:
         logger.debug(f"Requesting distillation from model {config.FAST_LLM_MODEL} for focused exchange.")
-        response = await llm_client.chat.completions.create(
-            model=config.FAST_LLM_MODEL, 
-            messages=[
-                {"role": "system", "content": "You are an expert contextual knowledge distiller focusing on user-assistant turn pairs."}, 
-                {"role": "user", "content": prompt}
+        response = await call_llm_api(
+            llm_client,
+            [
+                MsgNode("system", "You are an expert contextual knowledge distiller focusing on user-assistant turn pairs."),
+                MsgNode("user", prompt),
             ],
-            max_tokens=300, # Adjusted for potentially shorter input
-            temperature=0.5, # Slightly lower for more focused distillation
-            stream=False
+            model=config.FAST_LLM_MODEL,
+            stream=False,
+            temperature=0.5,
+            max_tokens=300,
         )
-        if response.choices and response.choices[0].message and response.choices[0].message.content:
-            distilled = response.choices[0].message.content.strip()
+        distilled = extract_text_from_response(response)
+        if distilled:
+            distilled = distilled.strip()
             logger.info(f"Distilled exchange to sentence(s): '{distilled[:100]}...'")
             return distilled
         logger.warning("LLM distillation (focused exchange) returned no content.")
@@ -120,18 +123,20 @@ async def synthesize_retrieved_contexts_llm(llm_client: Any, retrieved_full_text
     )
     try:
         logger.debug(f"Requesting context synthesis from model {config.FAST_LLM_MODEL}.")
-        response = await llm_client.chat.completions.create(
-            model=config.FAST_LLM_MODEL,
-            messages=[
-                {"role": "system", "content": "You are an expert context synthesizer."},
-                {"role": "user", "content": prompt}
+        response = await call_llm_api(
+            llm_client,
+            [
+                MsgNode("system", "You are an expert context synthesizer."),
+                MsgNode("user", prompt),
             ],
-            max_tokens=300, 
-            temperature=0.5, 
-            stream=False
+            model=config.FAST_LLM_MODEL,
+            stream=False,
+            temperature=0.5,
+            max_tokens=300,
         )
-        if response.choices and response.choices[0].message and response.choices[0].message.content:
-            synthesized_context = response.choices[0].message.content.strip()
+        synthesized_context = extract_text_from_response(response)
+        if synthesized_context:
+            synthesized_context = synthesized_context.strip()
             logger.info(f"Synthesized RAG context: '{synthesized_context[:150]}...'")
             return synthesized_context
         logger.warning("LLM context synthesis returned no content.")
