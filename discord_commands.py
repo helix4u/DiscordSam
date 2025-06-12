@@ -28,12 +28,7 @@ from web_utils import (
     query_searx, 
     scrape_latest_tweets
 )
-from utils import (
-    parse_time_string_to_delta,
-    chunk_text,
-    call_llm_api,
-    extract_text_from_response,
-)
+from utils import parse_time_string_to_delta, chunk_text 
 
 logger = logging.getLogger(__name__)
 
@@ -131,17 +126,15 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 )
                 
                 try:
-                    summary_response = await call_llm_api(
-                        llm_client_instance,
-                        [MsgNode("user", summarization_prompt)],
+                    summary_response = await llm_client_instance.chat.completions.create(
                         model=config.FAST_LLM_MODEL,
-                        stream=False,
-                        temperature=0.3,
-                        max_tokens=250,
+                        messages=[{"role": "user", "content": summarization_prompt}],
+                        max_tokens=250, 
+                        temperature=0.3, 
+                        stream=False
                     )
-                    article_summary = extract_text_from_response(summary_response)
-                    if article_summary:
-                        article_summary = article_summary.strip()
+                    if summary_response.choices and summary_response.choices[0].message and summary_response.choices[0].message.content:
+                        article_summary = summary_response.choices[0].message.content.strip()
                         logger.info(f"Summarized '{article_title}': {article_summary[:100]}...")
                         article_summaries_for_briefing.append(f"Source: {article_title} ({article_url})\nSummary: {article_summary}\n\n")
                         

@@ -87,8 +87,6 @@ Some of the most important settings you can tweak via the `.env` file are listed
 * `LLM` – default language model name.
 * `FAST_LLM_MODEL` – model used for quick responses.
 * `LLM_API_KEY` – API key used with your LLM server.
-* `USE_RESPONSES_API` – set to `true` to use the newer OpenAI Responses API.
-* `SERVICE_TIER` – set to `flex` for lower-cost, slower processing or `auto` for standard.
 * `SYSTEM_PROMPT_FILE` – path to a text/markdown file containing the system prompt.
 * `VISION_LLM_MODEL` – model used for image analysis.
 * `MAX_IMAGES_PER_MESSAGE` – number of images the bot will process per message.
@@ -128,7 +126,7 @@ Some of the most important settings you can tweak via the `.env` file are listed
     ```
 
 3.  **Install dependencies:**
-    The `requirements.txt` file lists all necessary Python packages. The bot now relies on the Responses API, so make sure your `openai` package is at least version `1.30.0`.
+    The `requirements.txt` file lists all necessary Python packages.
     ```bash
     pip install -r requirements.txt
     ```
