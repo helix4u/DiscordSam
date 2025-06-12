@@ -42,7 +42,6 @@ bot = commands.Bot(command_prefix=commands.when_mentioned_or("!"), intents=inten
 llm_client = AsyncOpenAI(
     base_url=config.LOCAL_SERVER_URL,
     api_key=config.LLM_API_KEY or "lm-studio",
-    timeout=900.0 if config.SERVICE_TIER == "flex" else 600.0,
 )  # api_key can be anything for local LLMs usually
 
 # Bot State Manager

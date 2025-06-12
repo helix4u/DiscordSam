@@ -11,7 +11,7 @@ from state import BotState
 # Import MsgNode from the new common_models.py
 from common_models import MsgNode
 # Import utility functions
-from utils import chunk_text, call_llm_api
+from utils import chunk_text
 # Import functions for post-stream processing
 from rag_chroma_manager import ingest_conversation_to_chromadb 
 from audio_utils import send_tts_audio 
@@ -122,13 +122,14 @@ async def get_simplified_llm_stream(
     final_stream_model = config.VISION_LLM_MODEL if is_vision_request else config.LLM_MODEL
     logger.info(f"Using model for final streaming response: {final_stream_model}")
     try:
-        final_llm_stream = await call_llm_api(
-            llm_client,
-            prompt_messages,
-            final_stream_model,
-            stream=True,
-            temperature=0.7,
-            max_tokens=config.MAX_COMPLETION_TOKENS,
+        api_messages = []
+        for msg_node in prompt_messages:
+            api_messages.append(msg_node.to_dict())
+
+        final_llm_stream = await llm_client.chat.completions.create(
+            model=final_stream_model,
+            messages=api_messages, 
+            max_tokens=config.MAX_COMPLETION_TOKENS, stream=True, temperature=0.7, 
         )
         return final_llm_stream, prompt_messages
     except Exception as e:
@@ -252,15 +253,8 @@ async def _stream_llm_handler(
 
         async for chunk_data in stream:
             delta_content = ""
-            if hasattr(chunk_data, "choices"):
-                if chunk_data.choices and chunk_data.choices[0].delta:
-                    delta_content = chunk_data.choices[0].delta.content or ""
-            else:
-                ev_type = getattr(chunk_data, "type", "")
-                if ev_type == "response.output_text.delta":
-                    delta_content = getattr(chunk_data, "delta", "") or ""
-                else:
-                    continue
+            if chunk_data.choices and chunk_data.choices[0].delta:
+                delta_content = chunk_data.choices[0].delta.content or ""
             
             if delta_content: 
                 full_response_content += delta_content
