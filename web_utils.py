@@ -2,9 +2,8 @@ import asyncio
 import logging
 import os
 import re
-import json
+import json 
 from typing import List, Optional, Dict, Any
-from urllib.parse import urlparse, parse_qs
 from bs4 import BeautifulSoup
 import random 
 import hashlib 
@@ -413,44 +412,19 @@ async def query_searx(query: str) -> List[Dict[str, Any]]:
         logger.error(f"Failed to decode JSON response from Searx for query '{query}'")
     return []
 
-
-def parse_youtube_video_id(url: str) -> Optional[str]:
-    """Extract the YouTube video ID from a URL."""
-    parsed = urlparse(url)
-    host = parsed.hostname or ""
-
-    if host.endswith("youtu.be"):
-        video_id = parsed.path.strip("/")
-    elif "youtube" in host:
-        if parsed.path.startswith("/embed/"):
-            video_id = parsed.path.split("/embed/")[1].split("/")[0]
-        elif parsed.path.startswith("/shorts/"):
-            video_id = parsed.path.split("/shorts/")[1].split("/")[0]
-        else:
-            query_v = parse_qs(parsed.query).get("v")
-            video_id = query_v[0] if query_v else None
-    elif "googleusercontent.com" in host and "youtube.com" in parsed.path:
-        match = re.search(r"youtube\.com/(?:[0-8]/)?([0-9A-Za-z_-]{11})", parsed.path)
-        video_id = match.group(1) if match else None
-    else:
-        video_id = None
-
-    if video_id and re.fullmatch(r"[0-9A-Za-z_-]{11}", video_id):
-        return video_id
-    return None
-
 async def fetch_youtube_transcript(url: str) -> Optional[str]:
     try:
-        video_id = parse_youtube_video_id(url)
-        if not video_id:
+        video_id_match = re.search(r'(?:v=|\/|embed\/|shorts\/|youtu\.be\/|googleusercontent\.com\/youtube\.com\/(?:[0-8]\/)?)([0-9A-Za-z_-]{11})', url) 
+        
+        if not video_id_match:
             logger.warning(f"No YouTube video ID found in URL: {url}")
             return None
-
+        
+        video_id = video_id_match.group(1)
         logger.info(f"Fetching YouTube transcript for video ID: {video_id} (from URL: {url})")
-
-        ytt_api = YouTubeTranscriptApi()
-        transcript_list = await asyncio.to_thread(ytt_api.list, video_id)
-        transcript_obj: Optional[Any] = None
+        
+        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+        transcript_obj: Optional[Any] = None 
         
         try:
             transcript_obj = transcript_list.find_manually_created_transcript(['en', 'en-US', 'en-GB'])
@@ -469,7 +443,7 @@ async def fetch_youtube_transcript(url: str) -> Optional[str]:
                     logger.warning(f"No English or any other language transcripts found for {video_id}.")
 
         if transcript_obj:
-            fetched_data = await asyncio.to_thread(transcript_obj.fetch)
+            fetched_data = transcript_obj.fetch()
             full_text = " ".join([entry['text'] for entry in fetched_data])
             
             if len(full_text) > config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT:
@@ -481,15 +455,11 @@ async def fetch_youtube_transcript(url: str) -> Optional[str]:
             logger.warning(f"No transcript could be fetched for YouTube video: {url} (ID: {video_id})")
             return None
             
-    except xml.etree.ElementTree.ParseError as e_xml:
-        logger.error(
-            f"Failed to parse YouTube transcript XML for {url} (ID: {video_id}): {e_xml}",
-            exc_info=True,
-        )
-        return None
-    except Exception as e:
-        logger.error(
-            f"Failed to fetch YouTube transcript for {url} (ID: {video_id}): {e}",
-            exc_info=True,
-        )
-        return None
+    except xml.etree.ElementTree.ParseError as e_xml: 
+        video_id_for_log = video_id_match.group(1) if 'video_id_match' in locals() and video_id_match else 'unknown_id_xml_err'
+        logger.error(f"Failed to parse YouTube transcript XML for {url} (ID: {video_id_for_log}): {e_xml}", exc_info=True)
+        return None 
+    except Exception as e: 
+        video_id_for_log = video_id_match.group(1) if 'video_id_match' in locals() and video_id_match else 'unknown_id_gen_err'
+        logger.error(f"Failed to fetch YouTube transcript for {url} (ID: {video_id_for_log}): {e}", exc_info=True)
+        return None 
