@@ -164,7 +164,7 @@ If Chromium or Playwright processes remain running after scraping, the bot will 
 
 ## 9. Potential Future Directions
 
-DiscordSam is a project with significant potential for growth. Here are some ideas for future enhancements (see `PROJECT_OVERVIEW.md` for more details):
+DiscordSam is a project with significant potential for growth. Here are some ideas for future enhancements:
 
 *   **Enhanced RAG Strategies:** More sophisticated summarization, knowledge graph integration, hybrid search.
 *   **Expanded LLM/Multimodal Support:** Support for more LLM backends, true multimodal inputs/outputs, advanced agentic capabilities.
