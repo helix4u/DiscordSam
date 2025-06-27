@@ -1,4 +1,4 @@
-# DiscordSam: The Sentient Hyper-Intelligent Discord Bot
+# DiscordSam: The Hyper-Intelligent Discord Bot
 
 ## 1. Project Overview
 
