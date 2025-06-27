@@ -187,122 +187,66 @@ async def scrape_website(url: str) -> Optional[str]:
                 )
                 await asyncio.sleep(2)  # Give 2 seconds for JS to potentially finish rendering after load
 
-                # Determine the best container selector first
-                content_selectors = ["article", "main", "div[role='main']", "body"]
-                main_container_selector = "body" # Default
-                initial_content_check = ""
-
-                for selector_attempt in content_selectors:
-                    try:
-                        element = page.locator(selector_attempt).first
-                        if await element.count() > 0 and await element.is_visible(timeout=1500):
-                            initial_content_check = await element.inner_text(timeout=3000)
-                            if initial_content_check and len(initial_content_check.strip()) > 100:
-                                main_container_selector = selector_attempt
-                                logger.info(f"Using '{main_container_selector}' as main container for additive scraping.")
-                                break
-                            else:
-                                logger.debug(f"Selector '{selector_attempt}' content too short or not found.")
-                        else:
-                            logger.debug(f"Selector '{selector_attempt}' not found or not visible on {url}")
-                    except PlaywrightTimeoutError:
-                        logger.debug(f"Timeout checking selector '{selector_attempt}' on {url}")
-                    except Exception as e_sel_check:
-                        logger.warning(f"Error checking selector '{selector_attempt}' on {url}: {e_sel_check}")
-
-                logger.info(f"Final main container selector for JS: '{main_container_selector}'")
-
-                collected_texts_hashes = set()
-                collected_texts_ordered = []
-                total_collected_length = 0
-
                 if config.SCRAPE_SCROLL_ATTEMPTS > 0:
                     logger.info(
-                        f"Scrolling page up to {config.SCRAPE_SCROLL_ATTEMPTS} times to load dynamic content, extracting additively."
+                        f"Scrolling page up to {config.SCRAPE_SCROLL_ATTEMPTS} times to load dynamic content."
                     )
                     last_height = await page.evaluate("document.body.scrollHeight")
-
-                    for i in range(config.SCRAPE_SCROLL_ATTEMPTS):
-                        # Extract content blocks using JS
-                        try:
-                            current_blocks = await page.evaluate(JS_EXTRACT_TEXT_BLOCKS, main_container_selector)
-                            newly_added_count_this_scroll = 0
-                            for block_text in current_blocks:
-                                block_hash = hashlib.md5(block_text.encode('utf-8')).hexdigest()
-                                if block_hash not in collected_texts_hashes:
-                                    if (total_collected_length + len(block_text)) <= config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT:
-                                        collected_texts_hashes.add(block_hash)
-                                        collected_texts_ordered.append(block_text)
-                                        total_collected_length += len(block_text) + 2 # +2 for \n\n
-                                        newly_added_count_this_scroll +=1
-                                    else:
-                                        logger.info(f"Reached max text length limit ({config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT}), stopping further text collection.")
-                                        break
-                            logger.info(f"Scroll {i+1}: Added {newly_added_count_this_scroll} new text blocks. Total blocks: {len(collected_texts_ordered)}")
-                            if total_collected_length >= config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT:
-                                break # Break scroll loop if max length reached
-                        except PlaywrightTimeoutError:
-                            logger.warning(f"Timeout during JS text block extraction on scroll {i+1} for {url}.")
-                        except Exception as e_js_extract:
-                            logger.error(f"JS text block extraction error on scroll {i+1} for {url}: {e_js_extract}")
-
-                        # Scroll down
+                    for _ in range(config.SCRAPE_SCROLL_ATTEMPTS):
                         await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                        await asyncio.sleep(random.uniform(1.8, 2.5)) # Slightly longer, randomized sleep
-
+                        await asyncio.sleep(1.5)
                         new_height = await page.evaluate("document.body.scrollHeight")
-                        if new_height == last_height and newly_added_count_this_scroll == 0 : # Stop if no new content and no new height
-                            logger.info(f"Scroll {i+1}: Page height did not change and no new blocks added. Stopping scroll.")
+                        if new_height == last_height:
                             break
                         last_height = new_height
-                else: # No scrolling, just extract once using the JS block extractor
+
+                content_selectors = ["article", "main", "div[role='main']", "body"]
+                content = ""
+                for selector in content_selectors:
                     try:
-                        current_blocks = await page.evaluate(JS_EXTRACT_TEXT_BLOCKS, main_container_selector)
-                        for block_text in current_blocks:
-                            block_hash = hashlib.md5(block_text.encode('utf-8')).hexdigest()
-                            # No need to check hash here as it's the first and only pull
-                            if (total_collected_length + len(block_text)) <= config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT:
-                                collected_texts_hashes.add(block_hash) # Still add for consistency if this path is taken
-                                collected_texts_ordered.append(block_text)
-                                total_collected_length += len(block_text) + 2
-                            else:
+                        element = page.locator(selector).first
+                        if await element.count() > 0 and await element.is_visible(timeout=2000): # Shorter timeout for visibility check
+                            logger.debug(f"Attempting to get text from selector: '{selector}'")
+                            content = await element.inner_text(timeout=5000)
+                            if content and len(content.strip()) > 200:
+                                logger.info(f"Found substantial content with selector '{selector}'.")
                                 break
-                        logger.info(f"No-scroll extraction: Added {len(collected_texts_ordered)} text blocks.")
-                    except Exception as e_js_extract_no_scroll:
-                        logger.error(f"JS text block extraction error (no scroll) for {url}: {e_js_extract_no_scroll}")
+                        else:
+                            logger.debug(f"Selector '{selector}' not found or not visible on {url}")
+                    except PlaywrightTimeoutError:
+                        logger.debug(f"Timeout waiting for selector '{selector}' or its text on {url}")
+                    except Exception as e_sel:
+                        logger.warning(f"Error processing selector '{selector}' on {url}: {e_sel}")
 
+                if (not content or len(content.strip()) < 100) and page.url != "about:blank":
+                    logger.info(f"Primary selectors yielded little content for {url}. Falling back to document.body.innerText.")
+                    try:
+                        body_content = await page.evaluate('document.body ? document.body.innerText : ""')
+                        if body_content:
+                            content = body_content
+                    except Exception as e_body_eval:
+                        logger.warning(f"Error evaluating document.body.innerText for {url}: {e_body_eval}")
 
-                final_content = ""
-                if collected_texts_ordered:
-                    final_content = "\n\n".join(collected_texts_ordered)
-                    # Redundant length check, but good for safety. The truncation is now primarily managed during collection.
-                    if len(final_content) > config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT:
-                        final_content = final_content[:config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT] + "..."
-                        logger.info(f"Final collected content for {url} was slightly trimmed to ensure limit.")
-                    return final_content if final_content.strip() else None
-
-                # Fallback if JS block extraction yielded nothing, try original body.innerText or BS4
-                logger.warning(f"Additive JS block extraction yielded no content for {url}. Trying fallbacks.")
-                try:
-                    body_content = await page.evaluate('document.body ? document.body.innerText : ""')
-                    if body_content:
-                        body_content = body_content.strip()
-                        body_content = re.sub(r"\s\s+", " ", body_content)
-                        if len(body_content) > config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT:
-                             body_content = body_content[:config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT] + "..."
-                        logger.info(f"Fallback to body.innerText succeeded for {url}.")
-                        return body_content
-                except Exception as e_body_eval:
-                    logger.warning(f"Error evaluating document.body.innerText fallback for {url}: {e_body_eval}")
-
-                # Final fallback to BeautifulSoup if all else fails
-                bs_content = await _scrape_with_bs(url)
-                if bs_content:
-                    logger.info(f"Final fallback to BeautifulSoup succeeded for {url}.")
-                    return bs_content
-
-                logger.warning(f"No content extracted from {url} after all methods.")
-                return None
+                if content:
+                    content = content.strip()
+                    content = re.sub(r"\s\s+", " ", content)
+                    if len(content) > config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT:
+                        logger.info(
+                            f"Scraped content from {url} was truncated from {len(content)} to {config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT} characters."
+                        )
+                        content = (
+                            content[: config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT] + "..."
+                        )
+                    return content if content else None
+                else:
+                    logger.warning(
+                        f"No substantial content extracted from {url} after trying all selectors and body.innerText fallback."
+                    )
+                    bs_content = await _scrape_with_bs(url)
+                    if bs_content:
+                        logger.info("BeautifulSoup fallback succeeded.")
+                        return bs_content
+                    return None
 
     except PlaywrightTimeoutError:
         logger.error(f"Playwright timed out during the scraping process for {url}")
@@ -446,45 +390,6 @@ async def scrape_latest_tweets(username_queried: str, limit: int = 10) -> List[D
     logger.info(f"Finished scraping. Collected {len(tweets_collected)} unique tweets for @{username_queried}.")
     return tweets_collected[:limit]
 
-JS_EXTRACT_TEXT_BLOCKS = """
-(containerSelector) => {
-    const blocks = [];
-    const container = document.querySelector(containerSelector);
-    if (!container) {
-        return blocks;
-    }
-
-    // Attempt to find meaningful blocks of text.
-    // This could be paragraphs, list items, or divs that are direct children
-    // and seem to contain distinct pieces of information.
-    // For simplicity, let's start with direct children <p> and <div> tags.
-    // More sophisticated selectors might be needed for complex pages.
-    // We also filter out very short text blocks.
-    const MIN_BLOCK_LENGTH = 50; // Minimum characters for a block to be considered
-
-    // Prioritize more specific elements if they exist, otherwise broader ones.
-    let elements = Array.from(container.querySelectorAll('article, div[role="listitem"], li'));
-    if (elements.length === 0) {
-        elements = Array.from(container.querySelectorAll('p, div:not(:has(div))')); // divs that don't contain other divs
-    }
-    if (elements.length === 0 && container.children.length > 0) {
-        elements = Array.from(container.children); // Fallback to direct children
-    }
-
-
-    elements.forEach(el => {
-        const text = el.innerText ? el.innerText.trim() : '';
-        if (text.length >= MIN_BLOCK_LENGTH) {
-            // Basic duplicate check based on text content within this current extraction
-            // More robust deduplication will happen in Python using hashes.
-            if (!blocks.some(b => b.includes(text) || text.includes(b))) {
-                 blocks.push(text);
-            }
-        }
-    });
-    return blocks;
-}
-"""
 
 async def query_searx(query: str) -> List[Dict[str, Any]]:
     logger.info(f"Querying Searx for: '{query}'")
