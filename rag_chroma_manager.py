@@ -105,6 +105,8 @@ async def extract_structured_data_llm(
 
     user_prompt_template = """\
 Please extract entities, relations, and observations from the following text.
+Pay close attention to the most recent interactions (user query and assistant response),
+typically found towards the end of the text, as they are of high importance for extraction.
 
 TEXT TO ANALYZE:
 ---
