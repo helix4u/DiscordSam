@@ -3,9 +3,10 @@ import logging
 import os
 import re
 import json
-from typing import List, Optional, Dict, Any, Callable, Awaitable
+from typing import List, Optional, Dict, Any, Callable, Awaitable, Tuple
 from bs4 import BeautifulSoup
 import random
+from datetime import datetime
 import hashlib
 
 import aiohttp
@@ -140,8 +141,21 @@ async def _scrape_with_bs(url: str) -> Optional[str]:
         logger.warning(f"BeautifulSoup fallback failed for {url}: {e}")
     return None
 
-async def scrape_website(url: str, progress_callback: Optional[Callable[[str], Awaitable[None]]] = None) -> Optional[str]: # Added progress_callback for consistency, though not used in this specific function in the plan
+async def scrape_website(
+    url: str,
+    progress_callback: Optional[Callable[[str], Awaitable[None]]] = None,
+    screenshots_dir: Optional[str] = None
+) -> Tuple[Optional[str], List[str]]:
     logger.info(f"Attempting to scrape website: {url}")
+    screenshot_paths: List[str] = []
+    if screenshots_dir:
+        try:
+            os.makedirs(screenshots_dir, exist_ok=True)
+            logger.info(f"Screenshots will be saved in: {screenshots_dir}")
+        except OSError as e:
+            logger.error(f"Could not create screenshots directory {screenshots_dir}: {e}. Screenshots will not be saved.")
+            screenshots_dir = None # Disable screenshots if dir creation fails
+
     user_data_dir = os.path.join(os.getcwd(), ".pw-profile")
     profile_dir_usable = True
     if not os.path.exists(user_data_dir):
@@ -192,9 +206,20 @@ async def scrape_website(url: str, progress_callback: Optional[Callable[[str], A
                         f"Scrolling page up to {config.SCRAPE_SCROLL_ATTEMPTS} times to load dynamic content."
                     )
                     last_height = await page.evaluate("document.body.scrollHeight")
-                    for _ in range(config.SCRAPE_SCROLL_ATTEMPTS):
+                    for scroll_attempt in range(config.SCRAPE_SCROLL_ATTEMPTS):
+                        if screenshots_dir and page:
+                            try:
+                                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                                screenshot_filename = f"screenshot_scroll_{scroll_attempt + 1}_{timestamp}.png"
+                                full_screenshot_path = os.path.join(screenshots_dir, screenshot_filename)
+                                await page.screenshot(path=full_screenshot_path)
+                                screenshot_paths.append(full_screenshot_path)
+                                logger.info(f"Saved screenshot: {full_screenshot_path}")
+                            except Exception as e_ss:
+                                logger.error(f"Failed to take screenshot: {e_ss}")
+
                         await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                        await asyncio.sleep(1.5)
+                        await asyncio.sleep(1.5) # Wait for content to load after scroll
                         new_height = await page.evaluate("document.body.scrollHeight")
                         if new_height == last_height:
                             break
@@ -237,7 +262,7 @@ async def scrape_website(url: str, progress_callback: Optional[Callable[[str], A
                         content = (
                             content[: config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT] + "..."
                         )
-                    return content if content else None
+                    return content if content else None, screenshot_paths
                 else:
                     logger.warning(
                         f"No substantial content extracted from {url} after trying all selectors and body.innerText fallback."
@@ -245,19 +270,19 @@ async def scrape_website(url: str, progress_callback: Optional[Callable[[str], A
                     bs_content = await _scrape_with_bs(url)
                     if bs_content:
                         logger.info("BeautifulSoup fallback succeeded.")
-                        return bs_content
-                    return None
+                        return bs_content, screenshot_paths # screenshot_paths will be empty here
+                    return None, screenshot_paths # screenshot_paths will be empty here
 
     except PlaywrightTimeoutError:
         logger.error(f"Playwright timed out during the scraping process for {url}")
         if progress_callback: # Notify about timeout
             await progress_callback(f"Scraping {url} timed out.")
-        return "Scraping timed out."
+        return "Scraping timed out.", screenshot_paths # Return collected paths even on timeout
     except Exception as e:
         logger.error(f"Playwright encountered an unexpected error for {url}: {e}", exc_info=True)
         if progress_callback: # Notify about error
             await progress_callback(f"Failed to scrape {url} due to an error.")
-        return "Failed to scrape the website due to an unexpected error."
+        return "Failed to scrape the website due to an unexpected error.", screenshot_paths # Return collected paths on error
     finally:
         if page and not page.is_closed():
             try: await page.close()

@@ -12,10 +12,12 @@ from typing import Any, Optional, List, Union, Dict
 from config import config
 from state import BotState
 from common_models import MsgNode
+import shutil # For deleting directories
 
 from llm_handling import (
     _build_initial_prompt_messages,
-    stream_llm_response_to_message
+    stream_llm_response_to_message,
+    get_description_for_image # Import the new function
 )
 from rag_chroma_manager import (
     retrieve_and_prepare_rag_context
@@ -264,78 +266,113 @@ def setup_events_and_tasks(bot: commands.Bot, llm_client_in: Any, bot_state_in: 
 
         scraped_content_accumulator = []
         if detected_urls_in_text := detect_urls(str(current_text_for_url_detection)):
-            playwright_used_in_loop = False # Track if Playwright was used in this loop
+            playwright_used_in_loop = False
+            temp_screenshots_base_dir = f"temp/screenshots_{message.id}"
+
             for i, url in enumerate(detected_urls_in_text[:2]):
                 logger.info(f"Processing URL from message (index {i}): {url}")
                 content_piece = None
+                screenshot_descriptions_for_this_url = []
+
+                # Create a unique subdir for each URL to avoid filename clashes if multiple URLs are processed
+                current_url_screenshots_dir = os.path.join(temp_screenshots_base_dir, f"url_{i+1}")
 
                 is_googleusercontent_youtube = "googleusercontent.com/youtube.com/" in url
                 youtube_indicators = ["youtube.com/watch", "youtu.be/", "youtube.com/shorts", "googleusercontent.com/youtube.com/"]
                 is_any_youtube_type = any(indicator in url for indicator in youtube_indicators) or "youtube.com/watch?v=" in url or "youtu.be/" in url
 
                 if is_any_youtube_type:
-                    # fetch_youtube_transcript might call scrape_website (Playwright) as a fallback
                     if bot_state_instance: await bot_state_instance.update_last_playwright_usage_time()
                     playwright_used_in_loop = True
-                    transcript = await fetch_youtube_transcript(url)
+                    transcript = await fetch_youtube_transcript(url) # fetch_youtube_transcript does not take screenshots_dir
                     if transcript:
                         content_piece = f"\n\n--- YouTube Transcript for {url} ---\n{transcript}\n--- End Transcript ---"
                         logger.info(f"Successfully fetched YouTube transcript for {url}.")
-                    elif not is_googleusercontent_youtube:
-                        logger.warning(f"YouTube transcript failed for {url}. Falling back to generic web scrape of the page.")
-                        # scrape_website uses Playwright
-                        if bot_state_instance: await bot_state_instance.update_last_playwright_usage_time() # Ensure it's updated again if called directly
+                    # No screenshot fallback for YouTube transcript failures currently, as fetch_youtube_transcript handles its own fallback logic.
+                    # If we wanted screenshots of the YouTube page itself, that would be a separate call to scrape_website.
+                    elif not is_googleusercontent_youtube: # Fallback to generic scrape only if not the specific API-like URL
+                        logger.warning(f"YouTube transcript failed for {url}. Falling back to generic web scrape of the page (will attempt screenshots).")
+                        if bot_state_instance: await bot_state_instance.update_last_playwright_usage_time()
                         playwright_used_in_loop = True
-                        scraped_text = await scrape_website(url)
+                        scraped_text, screenshot_paths = await scrape_website(url, screenshots_dir=current_url_screenshots_dir)
                         if scraped_text and "Failed to scrape" not in scraped_text and "Scraping timed out" not in scraped_text:
                             content_piece = f"\n\n--- Webpage Content (fallback for YouTube URL {url}) ---\n{scraped_text}\n--- End Webpage Content ---"
                             logger.info(f"Fetched webpage content for {url} (YouTube transcript fallback).")
+                            if screenshot_paths and llm_client_instance:
+                                for ss_idx, ss_path in enumerate(screenshot_paths):
+                                    desc = await get_description_for_image(llm_client_instance, ss_path)
+                                    screenshot_descriptions_for_this_url.append(f"\n\n--- Image Description (Screenshot {ss_idx+1} for {url} fallback) ---\n{desc}\n--- End Image Description ---")
                         else:
                             logger.warning(f"Failed to get transcript or scrape fallback for YouTube URL {url}. Scraped_text: '{scraped_text}'")
                     else:
                          logger.warning(f"Failed to get YouTube transcript for {url} (specific googleusercontent type '0'). Skipping generic web scrape for this pattern.")
-                else:
-                    # scrape_website uses Playwright
+
+                else: # Non-YouTube URL, proceed with scraping and screenshots
                     if bot_state_instance: await bot_state_instance.update_last_playwright_usage_time()
                     playwright_used_in_loop = True
-                    scraped_text = await scrape_website(url)
+                    scraped_text, screenshot_paths = await scrape_website(url, screenshots_dir=current_url_screenshots_dir)
                     if scraped_text and "Failed to scrape" not in scraped_text and "Scraping timed out" not in scraped_text:
                         content_piece = f"\n\n--- Webpage Content for {url} ---\n{scraped_text}\n--- End Webpage Content ---"
                         logger.info(f"Fetched webpage content for non-YouTube URL: {url}.")
+                        if screenshot_paths and llm_client_instance:
+                            for ss_idx, ss_path in enumerate(screenshot_paths):
+                                desc = await get_description_for_image(llm_client_instance, ss_path)
+                                screenshot_descriptions_for_this_url.append(f"\n\n--- Image Description (Screenshot {ss_idx+1} for {url}) ---\n{desc}\n--- End Image Description ---")
                     else:
                         logger.warning(f"Failed to scrape content for non-YouTube URL {url}. Scraped_text: '{scraped_text}'")
+
+                if screenshot_descriptions_for_this_url:
+                    content_piece = ("" if content_piece is None else content_piece) + "".join(screenshot_descriptions_for_this_url)
 
                 if content_piece:
                     scraped_content_accumulator.append(content_piece)
                 else:
-                    notice = f"\n\nCould not retrieve content from {url}"
+                    notice = f"\n\n[Could not retrieve text content or screenshot descriptions from {url}]"
                     scraped_content_accumulator.append(notice)
-                    logger.info(f"Appended notice for failed content retrieval: {url}")
+                    logger.info(f"Appended notice for failed content/description retrieval: {url}")
                 await asyncio.sleep(0.2)
 
-            if playwright_used_in_loop and bot_state_instance: # Log overall usage if any specific call happened
+            if playwright_used_in_loop and bot_state_instance:
                  logger.debug("Playwright usage time updated due to URL processing in on_message.")
 
+            if os.path.exists(temp_screenshots_base_dir):
+                try:
+                    shutil.rmtree(temp_screenshots_base_dir)
+                    logger.info(f"Successfully deleted temporary screenshot directory: {temp_screenshots_base_dir}")
+                except Exception as e_rmtree:
+                    logger.error(f"Failed to delete temporary screenshot directory {temp_screenshots_base_dir}: {e_rmtree}")
 
         final_user_message_text_for_llm = user_message_text_for_processing
-        # ... (rest of message processing and LLM call remains the same)
         if scraped_content_accumulator:
             combined_scraped_content = "".join(scraped_content_accumulator)
-            max_total_scraped_len = config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT * 1.5
+
+            # Truncate if necessary, but try to keep it generous for combined content
+            # MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT is for a single page, this might be multiple things
+            max_total_scraped_len = config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT * 2
             if len(combined_scraped_content) > max_total_scraped_len:
-                combined_scraped_content = combined_scraped_content[:int(max_total_scraped_len)] + "\n[Combined scraped content truncated due to length]..."
+                combined_scraped_content = combined_scraped_content[:int(max_total_scraped_len)] + "\n[Combined scraped content and image descriptions truncated due to length]..."
 
-            final_user_message_text_for_llm = combined_scraped_content + "\n\nUser's message (following processed URL content and/or audio transcript, if any): " + user_message_text_for_processing
+            # Update the text part of current_message_content_parts
+            # The image descriptions are now part of this text block.
+            # Raw images are not sent to the main LLM if descriptions are generated.
+            final_user_message_text_for_llm = combined_scraped_content + "\n\nUser's original message (following processed URL content, screenshot descriptions, and/or audio transcript, if any): " + user_message_text_for_processing
 
-        text_part_found_and_updated_with_scrape = False
+        # Update the text part in current_message_content_parts
+        # We are NOT adding screenshot images themselves to current_message_content_parts here,
+        # as we are using their descriptions instead.
+        text_part_found_and_updated = False
         for part_idx, part_dict in enumerate(current_message_content_parts):
             if part_dict["type"] == "text":
                 current_message_content_parts[part_idx]["text"] = final_user_message_text_for_llm
-                text_part_found_and_updated_with_scrape = True
+                text_part_found_and_updated = True
                 break
-        if not text_part_found_and_updated_with_scrape:
-            logger.error("Critical: Text part missing in current_message_content_parts before LLM call.")
+        if not text_part_found_and_updated: # Should ideally not happen if initialized correctly
+            logger.error("Critical: Text part missing in current_message_content_parts before LLM call after URL processing.")
             current_message_content_parts.insert(0, {"type": "text", "text": final_user_message_text_for_llm})
+
+        # The rest of the logic determining user_msg_node_content_final based on current_message_content_parts
+        # will now correctly use the text that includes scraped content and image descriptions.
+        # Attached images (non-screenshots) are still handled as before.
 
         final_content_is_empty = True
         has_text_content = False
