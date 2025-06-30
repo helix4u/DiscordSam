@@ -669,7 +669,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             return
 
         await interaction.response.defer(ephemeral=False)
-        await interaction.edit_original_response(content="Preparing your AP Photo description...")
+        await interaction.edit_original_response(content="Processing your image for the AP Photo description...") # Refined placeholder text
 
 
         try:
