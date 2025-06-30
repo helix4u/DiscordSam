@@ -11,7 +11,7 @@ from typing import Any, Optional, List, Union, Dict
 # Bot services and utilities
 from config import config
 from state import BotState
-from common_models import MsgNode, LLMRequest, MessageRequestData # Added LLMRequest and MessageRequestData
+from common_models import MsgNode
 import shutil # For deleting directories
 
 from llm_handling import (
@@ -104,15 +104,6 @@ def setup_events_and_tasks(bot: commands.Bot, llm_client_in: Any, bot_state_in: 
 
 
     @bot_instance.event # type: ignore
-# Added asyncio for create_task
-import asyncio
-# Need to import the processor task to start it
-# Assuming main_bot.py now correctly has this import available to the environment
-# If llm_request_processor is in the same directory or a discoverable path.
-from llm_request_processor import llm_request_processor_task
-
-
-@bot_instance.event # type: ignore
     async def on_ready():
         if not bot_instance or not bot_instance.user:
             logger.critical("Bot user not available on_ready. This is highly unusual.")
@@ -145,31 +136,12 @@ from llm_request_processor import llm_request_processor_task
         await bot_instance.change_presence(activity=discord.Game(name="with /commands | Ask me anything!"))
         logger.info("Bot presence updated.")
 
-        # Start the LLM request processor task
-        if bot_state_instance and llm_client_instance and bot_instance:
-            # Check if task already exists and is running to prevent duplicates on multiple on_ready events (e.g., reconnects)
-            if not hasattr(bot_instance, 'llm_processor_task_instance') or bot_instance.llm_processor_task_instance.done():
-                logger.info("Starting LLM request processor task...")
-                bot_instance.llm_processor_task_instance = asyncio.create_task(
-                    llm_request_processor_task(bot_state_instance, llm_client_instance, bot_instance)
-                )
-            else:
-                logger.info("LLM request processor task already running.")
-        else:
-            logger.error("Cannot start LLM request processor task: bot_state, llm_client, or bot_instance is not available.")
-
 
     @bot_instance.event # type: ignore
     async def on_message(message: discord.Message):
         if not bot_instance or not bot_instance.user or not llm_client_instance or not bot_state_instance:
             logger.error("on_message: Bot components (bot, llm_client, bot_state) not ready. Skipping message processing.")
             return
-
-        # Check if the processor task itself is active before queueing.
-        # This is a secondary check; primarily, putting on the queue should be enough.
-        if bot_state_instance and not bot_state_instance.llm_processor_task_active.is_set():
-            logger.warning("on_message: LLM processor task is not active. Messages may not be processed.")
-            # Optionally, notify user or just log. For now, just log.
 
         if message.author.bot: return
         if message.channel is None or message.channel.id is None :
@@ -433,40 +405,20 @@ from llm_request_processor import llm_request_processor_task
         llm_prompt_for_current_turn = await _build_initial_prompt_messages(
             user_query_content=user_msg_node_content_final,
             channel_id=channel_id,
-            bot_state=bot_state_instance, # History is read here
+            bot_state=bot_state_instance,
             user_id=str(message.author.id),
             synthesized_rag_context_str=synthesized_rag_context
         )
 
-        # Package request for the queue
-        request_data = MessageRequestData(
+        await stream_llm_response_to_message(
             target_message=message,
+            llm_client=llm_client_instance,
+            bot_state=bot_state_instance,
             user_msg_node=user_msg_node_for_short_term_history,
             prompt_messages=llm_prompt_for_current_turn,
             synthesized_rag_context_for_display=synthesized_rag_context,
             bot_user_id=bot_instance.user.id
         )
-
-        llm_req = LLMRequest(request_type='message', data=request_data)
-
-        if bot_state_instance:
-            await bot_state_instance.llm_request_queue.put(llm_req)
-            try:
-                # Notify user their message is queued.
-                # qsize() is approximate, so manage expectations or omit position.
-                queue_size = bot_state_instance.llm_request_queue.qsize()
-                reply_content = f"Your message has been queued (approx. position: {queue_size}). I'll process it soon!"
-                if queue_size == 0: # qsize might be 0 if worker is fast or just picked it up
-                    reply_content = "Your message is being processed!"
-
-                await message.reply(reply_content, mention_author=False, delete_after=15)
-                logger.info(f"Message from {message.author.name} queued. Approx queue size: {queue_size}")
-            except discord.HTTPException as e:
-                logger.warning(f"Failed to send 'queued' confirmation reply: {e}")
-        else:
-            logger.error("Bot state instance not available, cannot queue message for LLM processing.")
-            await message.reply("Sorry, I couldn't queue your message right now due to an internal issue.", mention_author=False)
-
 
     # ... (on_raw_reaction_add, on_app_command_error, on_command_error remain the same)
     @bot_instance.event
