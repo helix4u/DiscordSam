@@ -13,6 +13,12 @@ class BotState:
         self.reminders: List[Tuple[datetime, int, int, str, str]] = []
         # Stores the last time a Playwright-dependent command was initiated
         self.last_playwright_usage_time: Optional[datetime] = None
+        # Lock for controlling access to LLM processing by the worker
+        self.llm_processing_lock = asyncio.Lock()
+        # Queue for incoming LLM requests
+        self.llm_request_queue = asyncio.Queue()
+        # Event to signal if the LLM processor task is active
+        self.llm_processor_task_active = asyncio.Event()
 
     async def update_last_playwright_usage_time(self):
         """Updates the timestamp for the last Playwright usage."""

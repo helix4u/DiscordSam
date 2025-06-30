@@ -1,3 +1,5 @@
+from llm_request_processor import llm_request_processor_task # Import the processor task
+import asyncio # For task creation
 import logging
 
 import discord
@@ -21,7 +23,7 @@ from discord_events import setup_events_and_tasks
 # If other modules also call it, it might lead to unexpected behavior or multiple handlers.
 # It's best to configure logging once at the entry point of the application.
 logging.basicConfig(
-    level=logging.INFO, 
+    level=logging.INFO,
     format="%(asctime)s.%(msecs)03d %(levelname)s:%(filename)s:%(lineno)d - %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
@@ -73,7 +75,9 @@ if __name__ == "__main__":
         logger.info("Discord slash commands setup complete.")
 
         logger.info("Setting up Discord events and tasks...")
-        setup_events_and_tasks(bot, llm_client, bot_state) # Pass the initialized llm_client and bot_state
+        # Crucially, bot, llm_client, and bot_state are passed to setup_events_and_tasks
+        # These will be available in the on_ready event within discord_events.py
+        setup_events_and_tasks(bot, llm_client, bot_state)
         logger.info("Discord events and tasks setup complete.")
     except Exception as e_setup:
         logger.critical(f"An error occurred during command or event setup: {e_setup}", exc_info=True)
