@@ -359,44 +359,110 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 await interaction.edit_original_response(content=f"Sorry, I couldn't find any search results for '{query}'.", embed=None)
                 return
 
-            await interaction.edit_original_response(content=f"Found {len(search_results)} results for '{query}'. Formatting...")
+            await interaction.edit_original_response(content=f"Found {len(search_results)} results for '{query}'. Processing top results...")
 
-            snippets = []
-            for i, r in enumerate(search_results):
-                title = discord.utils.escape_markdown(r.get('title','N/A'))
-                url_link = r.get('url','N/A')
-                content_raw = r.get('content', r.get('description', 'No snippet available'))
-                content_str = str(content_raw) if content_raw is not None else 'No snippet available'
-                snippet_text = discord.utils.escape_markdown(content_str[:250])
-                snippets.append(f"{i+1}. **{title}** (<{url_link}>)\n   {snippet_text}...")
+            max_results_to_process = config.NEWS_MAX_LINKS_TO_PROCESS # Reuse similar config as /news
+            num_to_process = min(len(search_results), max_results_to_process)
+            page_summaries_for_final_synthesis: List[str] = []
+            processed_urls_search = set()
 
-            formatted_results = "\n\n".join(snippets)
-            result_chunks = chunk_text(formatted_results, config.EMBED_MAX_LENGTH)
+            for i in range(num_to_process):
+                result = search_results[i]
+                page_url = result.get('url')
+                page_title = result.get('title', 'Untitled Page')
 
-            for i, chunk in enumerate(result_chunks):
-                embed_title = (
-                    f"Top Search Results for: {query}"
-                    if i == 0
-                    else f"Top Search Results for: {query} (cont.)"
+                if not page_url or page_url in processed_urls_search:
+                    logger.info(f"Skipping duplicate or invalid URL for search: {page_url}")
+                    continue
+                processed_urls_search.add(page_url)
+
+                update_embed_search = discord.Embed(
+                    title=f"Search Results for: {query}",
+                    description=f"Processing result {i+1}/{num_to_process}: Scraping '{page_title}'...",
+                    color=config.EMBED_COLOR["incomplete"]
                 )
-                current_embed=discord.Embed(
-                        title=embed_title,
-                        description=chunk,
-                        color=config.EMBED_COLOR["incomplete"], # Kept as incomplete, summary is the "complete" part
+                await interaction.edit_original_response(embed=update_embed_search, content=None)
+
+                if bot_state_instance and hasattr(bot_state_instance, 'update_last_playwright_usage_time'):
+                    await bot_state_instance.update_last_playwright_usage_time()
+
+                scraped_content = await scrape_website(page_url)
+
+                if not scraped_content or "Failed to scrape" in scraped_content or "Scraping timed out" in scraped_content:
+                    logger.warning(f"Failed to scrape '{page_title}' from {page_url} for search. Reason: {scraped_content}")
+                    page_summaries_for_final_synthesis.append(f"Source: {page_title} ({page_url})\nSummary: [Could not retrieve content for summarization]\n\n")
+                    continue
+
+                update_embed_search.description = f"Processing result {i+1}/{num_to_process}: Summarizing '{page_title}'..."
+                await interaction.edit_original_response(embed=update_embed_search)
+
+                summarization_prompt_search = (
+                    f"You are an expert summarizer. Please read the following web page content, "
+                    f"which was found when searching for the query '{query}'. Extract the key factual "
+                    f"points and provide a concise summary (2-4 sentences) relevant to this query. "
+                    f"Focus on information that directly addresses or relates to the user's search intent.\n\n"
+                    f"Page Title: {page_title}\n"
+                    f"Page Content:\n{scraped_content[:config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT*2]}"
+                )
+
+                try:
+                    summary_response_search = await llm_client_instance.chat.completions.create(
+                        model=config.FAST_LLM_MODEL,
+                        messages=[{"role": "user", "content": summarization_prompt_search}],
+                        max_tokens=250,
+                        temperature=0.3,
+                        stream=False
                     )
-                if i == 0:
-                    await interaction.edit_original_response(content=None, embed=current_embed) # Clear content, show first embed
-                else:
-                    await interaction.followup.send(embed=current_embed) # New message for more results
+                    if summary_response_search.choices and summary_response_search.choices[0].message and summary_response_search.choices[0].message.content:
+                        page_summary = summary_response_search.choices[0].message.content.strip()
+                        logger.info(f"Summarized '{page_title}' for search query '{query}': {page_summary[:100]}...")
+                        page_summaries_for_final_synthesis.append(f"Source Page: {page_title} ({page_url})\nSummary of Page Content: {page_summary}\n\n")
+                        # Optionally, store these summaries if a suitable storage mechanism exists (like news summaries)
+                        # store_search_page_summary(query=query, url=page_url, summary_text=page_summary) # Example, if implemented
+                    else:
+                        logger.warning(f"LLM summarization returned no content for '{page_title}' (search query '{query}').")
+                        page_summaries_for_final_synthesis.append(f"Source Page: {page_title} ({page_url})\nSummary: [AI summarization failed or returned no content]\n\n")
+                except Exception as e_summ_search:
+                    logger.error(f"Error during LLM summarization for '{page_title}' (search query '{query}'): {e_summ_search}", exc_info=True)
+                    page_summaries_for_final_synthesis.append(f"Source Page: {page_title} ({page_url})\nSummary: [Error during AI summarization]\n\n")
+            
+            if not page_summaries_for_final_synthesis:
+                error_embed_search = discord.Embed(
+                    title=f"Search Results for: {query}",
+                    description=f"Could not process any web pages to generate a summary for '{query}'.",
+                    color=config.EMBED_COLOR["error"]
+                )
+                await interaction.edit_original_response(embed=error_embed_search)
+                return
 
-            user_query_content_for_summary = f"Please analyze and concisely summarize the key information from these search results regarding the original query '{query}'. Focus on the most relevant points and synthesize them into a coherent overview. Do not just list the snippets. Provide a helpful summary.\n\nSearch Results:\n{formatted_results[:config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT]}"
-            user_msg_node = MsgNode("user", user_query_content_for_summary, name=str(interaction.user.id))
+            final_update_embed = discord.Embed(
+                title=f"Search Results for: {query}",
+                description="All relevant pages processed. Generating final search summary...",
+                color=config.EMBED_COLOR["incomplete"]
+            )
+            await interaction.edit_original_response(embed=final_update_embed)
 
-            rag_query_for_search_summary = query
+            combined_page_summaries_text = "".join(page_summaries_for_final_synthesis)
+
+            final_synthesis_prompt_content = (
+                f"You are a search engine. Your purpose is to provide a concise, factual, and direct summary of information found across multiple web pages related to the user's query. "
+                f"Do not adopt a conversational persona or use journalistic language. Act like a search engine's summary snippet.\n\n"
+                f"User's Original Query: '{query}'\n\n"
+                f"Below are summaries of content from several web pages. Synthesize these into a single, integrated summary that directly addresses the user's query. "
+                f"Focus on the most relevant facts and information. Aim for a comprehensive yet brief overview. "
+                f"If the sources provide conflicting information, you may note this neutrally. Do not add information not present in the summaries.\n\n"
+                f"--- Collected Page Summaries ---\n"
+                f"{combined_page_summaries_text}"
+                f"--- End of Page Summaries ---\n\n"
+                f"Based on these summaries, provide a direct answer/summary for the query: '{query}'"
+            )
+            user_msg_node = MsgNode("user", final_synthesis_prompt_content, name=str(interaction.user.id))
+
+            rag_query_for_search_summary = query 
             synthesized_rag_context = await retrieve_and_prepare_rag_context(llm_client_instance, rag_query_for_search_summary)
 
             prompt_nodes = await _build_initial_prompt_messages(
-                user_query_content=user_query_content_for_summary,
+                user_query_content=final_synthesis_prompt_content,
                 channel_id=interaction.channel_id,
                 bot_state=bot_state_instance,
                 user_id=str(interaction.user.id),
