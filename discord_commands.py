@@ -11,11 +11,7 @@ from datetime import datetime
 # Bot services and utilities
 from config import config
 from state import BotState
-from common_models import (
-    MsgNode, LLMRequest, InteractionRequestData,
-    NewsCommandData, IngestCommandData, SearchCommandData, GetTweetsCommandData, APCommandData
-)
-#from pydantic import BaseModel # No longer needed here
+from common_models import MsgNode
 
 from llm_handling import (
     _build_initial_prompt_messages,
@@ -62,55 +58,166 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             await interaction.response.send_message("Bot components not ready. Cannot generate news.", ephemeral=True)
             return
 
-        await interaction.response.defer(ephemeral=False) # Defer early
+        await interaction.response.defer(ephemeral=False)
 
-        # The actual processing logic will be moved to the queue worker.
-        # Here, we just package and enqueue.
+        # Update Playwright usage time
+        if bot_state_instance and hasattr(bot_state_instance, 'update_last_playwright_usage_time'):
+            await bot_state_instance.update_last_playwright_usage_time() # Made awaitable
+            logger.debug(f"Updated last_playwright_usage_time via bot_state_instance for /news command")
 
-        # Note: Playwright usage time should ideally be updated by the worker
-        # if Playwright is used during the execution of the queued task.
-        # For now, we're simplifying; the worker will need access to bot_state.
+        search_topic = f"news {topic}"
 
-        # Build the core information needed for the LLM, this might involve some initial non-LLM work.
-        # However, long-running scraping and multiple LLM calls (like summarization per article)
-        # should definitely be part of the worker task.
-
-        # For the `/news` command, the entire original logic (searching, scraping, summarizing individual articles,
-        # then final briefing) is LLM-heavy and long-running.
-        # It's best to encapsulate the *intent* and parameters in the queue item.
-
-        # Simplified: We'll pass the topic and let the worker handle the multi-step process.
-        # This means the worker will need to be more complex for this command.
-        # Alternatively, for this specific command, the "prompt_messages" might be a placeholder
-        # or an initial instruction, and the worker reconstructs the full flow.
-
-        # Let's make the worker responsible for the whole news generation flow.
-        # We'll create a specific data structure for news requests.
-        # NewsCommandData is now imported from common_models.py
-
-        news_data = NewsCommandData(
-            interaction=interaction,
-            topic=topic,
-            bot_user_id=bot_instance.user.id if bot_instance else None
+        initial_embed = discord.Embed(
+            title=f"News Briefing: {topic}",
+            description=f"Gathering news articles for '{search_topic}'...",
+            color=config.EMBED_COLOR["incomplete"]
         )
+        await interaction.edit_original_response(embed=initial_embed)
 
-        # We are not pre-building user_msg_node or prompt_messages here for /news,
-        # as the worker will handle the entire news generation logic.
-        # The 'data' field in LLMRequest will carry this news_data.
+        try:
+            max_articles_to_process = config.NEWS_MAX_LINKS_TO_PROCESS
+            logger.info(f"/news command for topic '{topic}' (searching for '{search_topic}') by {interaction.user.name}, max_articles={max_articles_to_process}")
 
-        llm_req = LLMRequest(request_type='news_command', data=news_data)
+            search_results = await query_searx(search_topic)
 
-        if bot_state_instance:
-            await bot_state_instance.llm_request_queue.put(llm_req)
+            if not search_results:
+                error_embed = discord.Embed(
+                    title=f"News Briefing: {topic}",
+                    description=f"Sorry, I couldn't find any initial search results for '{search_topic}'.",
+                    color=config.EMBED_COLOR["error"]
+                )
+                await interaction.edit_original_response(embed=error_embed)
+                return
+
+            num_to_process = min(len(search_results), max_articles_to_process)
+            article_summaries_for_briefing: List[str] = []
+            processed_urls = set()
+
+            for i in range(num_to_process):
+                result = search_results[i]
+                article_url = result.get('url')
+                article_title = result.get('title', 'Untitled Article')
+
+                if not article_url or article_url in processed_urls:
+                    logger.info(f"Skipping duplicate or invalid URL: {article_url}")
+                    continue
+                processed_urls.add(article_url)
+
+                update_embed = discord.Embed(
+                    title=f"News Briefing: {topic}",
+                    description=f"Processing article {i+1}/{num_to_process}: Scraping '{article_title}'...",
+                    color=config.EMBED_COLOR["incomplete"]
+                )
+                await interaction.edit_original_response(embed=update_embed)
+
+                if bot_state_instance and hasattr(bot_state_instance, 'update_last_playwright_usage_time'):
+                    await bot_state_instance.update_last_playwright_usage_time() # Made awaitable
+
+                scraped_content = await scrape_website(article_url)
+
+                if not scraped_content or "Failed to scrape" in scraped_content or "Scraping timed out" in scraped_content:
+                    logger.warning(f"Failed to scrape '{article_title}' from {article_url}. Reason: {scraped_content}")
+                    article_summaries_for_briefing.append(f"Source: {article_title} ({article_url})\nSummary: [Could not retrieve content for summarization]\n\n")
+                    continue
+
+                update_embed.description = f"Processing article {i+1}/{num_to_process}: Summarizing '{article_title}'..."
+                await interaction.edit_original_response(embed=update_embed)
+
+                summarization_prompt = (
+                    f"You are an expert news summarizer. Please read the following article content, "
+                    f"which was found when searching for the topic '{search_topic}'. Extract the key factual"
+                    f"news points and provide a concise summary (2-4 sentences) relevant to this topic. "
+                    f"Focus on who, what, when, where, and why if applicable. Avoid opinions or speculation not present in the text.\n\n"
+                    f"Article Title: {article_title}\n"
+                    f"Article Content:\n{scraped_content[:config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT*2]}"
+                )
+
+                try:
+                    summary_response = await llm_client_instance.chat.completions.create(
+                        model=config.FAST_LLM_MODEL,
+                        messages=[{"role": "user", "content": summarization_prompt}],
+                        max_tokens=250,
+                        temperature=0.3,
+                        stream=False
+                    )
+                    if summary_response.choices and summary_response.choices[0].message and summary_response.choices[0].message.content:
+                        article_summary = summary_response.choices[0].message.content.strip()
+                        logger.info(f"Summarized '{article_title}': {article_summary[:100]}...")
+                        article_summaries_for_briefing.append(f"Source: {article_title} ({article_url})\nSummary: {article_summary}\n\n")
+
+                        store_news_summary(topic=topic, url=article_url, summary_text=article_summary)
+                    else:
+                        logger.warning(f"LLM summarization returned no content for '{article_title}'.")
+                        article_summaries_for_briefing.append(f"Source: {article_title} ({article_url})\nSummary: [AI summarization failed or returned no content]\n\n")
+                except Exception as e_summ:
+                    logger.error(f"Error during LLM summarization for '{article_title}': {e_summ}", exc_info=True)
+                    article_summaries_for_briefing.append(f"Source: {article_title} ({article_url})\nSummary: [Error during AI summarization]\n\n")
+
+            if not article_summaries_for_briefing:
+                error_embed = discord.Embed(
+                    title=f"News Briefing: {topic}",
+                    description=f"Could not process any articles to generate a briefing for '{topic}'.",
+                    color=config.EMBED_COLOR["error"]
+                )
+                await interaction.edit_original_response(embed=error_embed)
+                return
+
+            update_embed.description = "All articles processed. Generating final news briefing..."
+            await interaction.edit_original_response(embed=update_embed)
+
+            combined_summaries_text = "".join(article_summaries_for_briefing)
+
+            final_briefing_prompt_content = (
+                f"You are Sam, a news anchor delivering a concise and objective briefing. "
+                f"The following are summaries of news articles related to the topic: '{topic}'. "
+                f"Synthesize this information into a coherent news report. Start with a clear headline for the briefing. "
+                f"Present the key developments and information from the summaries. Maintain a neutral and informative tone. "
+                f"Do not add external information or opinions not present in the provided summaries.\n\n"
+                f"Topic: {topic}\n\n"
+                f"Collected Article Summaries:\n{combined_summaries_text}"
+            )
+
+            user_msg_node_for_briefing = MsgNode("user", final_briefing_prompt_content, name=str(interaction.user.id))
+
+            rag_query_for_briefing = f"news briefing about {topic}"
+            synthesized_rag_context_for_briefing = await retrieve_and_prepare_rag_context(llm_client_instance, rag_query_for_briefing)
+
+            prompt_nodes_for_briefing = await _build_initial_prompt_messages(
+                user_query_content=final_briefing_prompt_content,
+                channel_id=interaction.channel_id,
+                bot_state=bot_state_instance,
+                user_id=str(interaction.user.id),
+                synthesized_rag_context_str=synthesized_rag_context_for_briefing,
+                max_image_history_depth=0
+            )
+
+            await stream_llm_response_to_interaction(
+                interaction=interaction,
+                llm_client=llm_client_instance,
+                bot_state=bot_state_instance,
+                user_msg_node=user_msg_node_for_briefing,
+                prompt_messages=prompt_nodes_for_briefing,
+                title=f"News Briefing: {topic}",
+                synthesized_rag_context_for_display=synthesized_rag_context_for_briefing,
+                bot_user_id=bot_instance.user.id
+            )
+
+        except Exception as e:
+            logger.error(f"Error in /news command for topic '{topic}': {e}", exc_info=True)
+            error_embed = discord.Embed(
+                title=f"News Briefing: {topic}",
+                description=f"An unexpected error occurred while generating your news briefing: {str(e)[:1000]}",
+                color=config.EMBED_COLOR["error"]
+            )
             try:
-                queue_size = bot_state_instance.llm_request_queue.qsize()
-                await interaction.edit_original_response(content=f"Your request for a news briefing on '{topic}' has been queued (approx. position: {queue_size}). I'll start working on it soon!")
-                logger.info(f"/news command for '{topic}' by {interaction.user.name} queued. Approx queue size: {queue_size}")
-            except discord.HTTPException as e:
-                logger.warning(f"Failed to send 'queued' confirmation for /news: {e}")
-        else:
-            logger.error("Bot state instance not available, cannot queue /news command.")
-            await interaction.edit_original_response(content=f"Sorry, I couldn't queue your news request for '{topic}' due to an internal issue.")
+                if interaction.response.is_done():
+                     await interaction.edit_original_response(embed=error_embed, content=None) # Clear content
+                else:
+                    # This case should ideally not be hit if defer() was successful
+                    await interaction.response.send_message(embed=error_embed, ephemeral=True)
+            except discord.HTTPException:
+                await interaction.followup.send(embed=error_embed, ephemeral=True)
+
 
     @bot_instance.tree.command(name="ingest_chatgpt_export", description="Ingests a conversations.json file from a ChatGPT export.")
     @app_commands.describe(file_path="The full local path to your conversations.json file.")
@@ -128,23 +235,17 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             await interaction.followup.send(f"Error: File not found at the specified path: `{file_path}`", ephemeral=True)
             return
 
-        # Define a simple data structure for this command's queue request
-        # IngestCommandData is now imported from common_models.py
+        try:
+            parsed_conversations = parse_chatgpt_export(file_path)
+            if not parsed_conversations:
+                await interaction.followup.send("Could not parse any conversations from the file. It might be empty or in an unexpected format.", ephemeral=True)
+                return
 
-        ingest_data = IngestCommandData(interaction=interaction, file_path=file_path)
-        llm_req = LLMRequest(request_type='ingest_command', data=ingest_data)
-
-        if bot_state_instance:
-            await bot_state_instance.llm_request_queue.put(llm_req)
-            try:
-                queue_size = bot_state_instance.llm_request_queue.qsize()
-                await interaction.followup.send(f"Your request to ingest '{os.path.basename(file_path)}' has been queued (approx. position: {queue_size}). Processing will begin shortly.", ephemeral=True)
-                logger.info(f"/ingest_chatgpt_export for '{file_path}' by {interaction.user.name} queued. Approx queue size: {queue_size}")
-            except discord.HTTPException as e:
-                logger.warning(f"Failed to send 'queued' confirmation for /ingest_chatgpt_export: {e}")
-        else:
-            logger.error("Bot state instance not available, cannot queue /ingest_chatgpt_export command.")
-            await interaction.followup.send(f"Sorry, I couldn't queue your ingest request for '{os.path.basename(file_path)}' due to an internal issue.", ephemeral=True)
+            count = await store_chatgpt_conversations_in_chromadb(llm_client_instance, parsed_conversations)
+            await interaction.followup.send(f"Successfully processed and stored {count} conversations (with distillations) from the export file into ChromaDB.", ephemeral=True)
+        except Exception as e_ingest:
+            logger.error(f"Error during ChatGPT export ingestion process for file '{file_path}': {e_ingest}", exc_info=True)
+            await interaction.followup.send(f"An error occurred during the ingestion process: {str(e_ingest)[:1000]}", ephemeral=True)
 
     @ingest_chatgpt_export_command.error
     async def ingest_export_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
@@ -197,65 +298,44 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             return
 
         await interaction.response.defer(ephemeral=False)
-
-        # Playwright usage time update should ideally be handled by the worker if it does the scraping.
-        # For now, let's assume the scraping happens before queuing for roast.
-        # This means the initial response might take a moment if scraping is slow.
-        # A more advanced setup would queue the URL, and the worker does scrape + LLM.
+        await interaction.edit_original_response(content=f"Getting ready to roast {url}...")
 
         if bot_state_instance and hasattr(bot_state_instance, 'update_last_playwright_usage_time'):
-            await bot_state_instance.update_last_playwright_usage_time()
-            logger.debug(f"Updated last_playwright_usage_time for /roast command (pre-queue scrape)")
+            await bot_state_instance.update_last_playwright_usage_time() # Made awaitable
+            logger.debug(f"Updated last_playwright_usage_time via bot_state_instance for /roast command")
 
-        await interaction.edit_original_response(content=f"Attempting to fetch content from {url} to prepare for roasting...")
-        webpage_text = await scrape_website(url)
+        try:
+            webpage_text = await scrape_website(url)
+            if not webpage_text or "Failed to scrape" in webpage_text or "Scraping timed out" in webpage_text:
+                error_message = f"Sorry, I couldn't properly roast {url}. Reason: {webpage_text or 'Could not retrieve any content from the page.'}"
+                await interaction.edit_original_response(content=error_message, embed=None) # Clear embed
+                return
 
-        if not webpage_text or "Failed to scrape" in webpage_text or "Scraping timed out" in webpage_text:
-            error_message = f"Sorry, I couldn't properly roast {url}. Reason: {webpage_text or 'Could not retrieve any content from the page.'}"
-            await interaction.edit_original_response(content=error_message, embed=None)
-            return
+            await interaction.edit_original_response(content=f"Crafting a roast for {url} based on its content...")
 
-        await interaction.edit_original_response(content=f"Content from {url} fetched. Now queuing the roast request...")
+            user_query_content = f"Analyze the following content from the webpage {url} and write a short, witty, and biting comedy roast routine about it. Be creative and funny, focusing on absurdities or humorous angles. Do not just summarize. Make it a roast!\n\nWebpage Content:\n{webpage_text}"
+            user_msg_node = MsgNode("user", user_query_content, name=str(interaction.user.id))
 
-        user_query_content = f"Analyze the following content from the webpage {url} and write a short, witty, and biting comedy roast routine about it. Be creative and funny, focusing on absurdities or humorous angles. Do not just summarize. Make it a roast!\n\nWebpage Content:\n{webpage_text}"
-        user_msg_node = MsgNode("user", user_query_content, name=str(interaction.user.id))
+            rag_query_for_roast = f"comedy roast of webpage content from URL: {url}"
+            synthesized_rag_context = await retrieve_and_prepare_rag_context(llm_client_instance, rag_query_for_roast)
 
-        rag_query_for_roast = f"comedy roast of webpage content from URL: {url}"
-        # RAG context generation involves an LLM call, so this should also be part of the worker.
-        # For now, generating it before queuing. This makes the command execution longer before queuing.
-        # Ideal: Worker does RAG context, then main LLM call.
-        synthesized_rag_context = await retrieve_and_prepare_rag_context(llm_client_instance, rag_query_for_roast)
-
-        prompt_nodes = await _build_initial_prompt_messages(
-            user_query_content=user_query_content,
-            channel_id=interaction.channel_id,
-            bot_state=bot_state_instance, # For history
-            user_id=str(interaction.user.id),
-            synthesized_rag_context_str=synthesized_rag_context
-        )
-
-        request_data = InteractionRequestData(
-            interaction=interaction,
-            user_msg_node=user_msg_node,
-            prompt_messages=prompt_nodes,
-            title=f"Comedy Roast of {url}",
-            synthesized_rag_context_for_display=synthesized_rag_context,
-            bot_user_id=bot_instance.user.id if bot_instance else None
-        )
-
-        llm_req = LLMRequest(request_type='interaction', data=request_data)
-
-        if bot_state_instance:
-            await bot_state_instance.llm_request_queue.put(llm_req)
-            try:
-                queue_size = bot_state_instance.llm_request_queue.qsize()
-                await interaction.edit_original_response(content=f"Your roast request for '{url}' has been queued (approx. position: {queue_size}). The comedic genius is warming up!")
-                logger.info(f"/roast command for '{url}' by {interaction.user.name} queued. Approx queue size: {queue_size}")
-            except discord.HTTPException as e:
-                logger.warning(f"Failed to send 'queued' confirmation for /roast: {e}")
-        else:
-            logger.error("Bot state instance not available, cannot queue /roast command.")
-            await interaction.edit_original_response(content=f"Sorry, I couldn't queue your roast request for '{url}' due to an internal issue.")
+            prompt_nodes = await _build_initial_prompt_messages(
+                user_query_content=user_query_content,
+                channel_id=interaction.channel_id,
+                bot_state=bot_state_instance,
+                user_id=str(interaction.user.id),
+                synthesized_rag_context_str=synthesized_rag_context
+            )
+            # stream_llm_response_to_interaction will handle editing the original response
+            await stream_llm_response_to_interaction(
+                interaction, llm_client_instance, bot_state_instance, user_msg_node, prompt_nodes,
+                title=f"Comedy Roast of {url}",
+                synthesized_rag_context_for_display=synthesized_rag_context,
+                bot_user_id=bot_instance.user.id
+            )
+        except Exception as e:
+            logger.error(f"Error in roast_slash_command for URL '{url}': {e}", exc_info=True)
+            await interaction.edit_original_response(content=f"Ouch, the roast attempt for {url} backfired on me! Error: {str(e)[:1000]}", embed=None)
 
     @bot_instance.tree.command(name="search", description="Performs a web search and summarizes results.")
     @app_commands.describe(query="Your search query.")
@@ -271,30 +351,134 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             return
 
         await interaction.response.defer(ephemeral=False)
+        await interaction.edit_original_response(content=f"Searching the web for: '{query}'...")
 
-        # Similar to /news, the /search command involves multiple steps (web search, scraping, summarizing, final synthesis)
-        # This entire flow should be handled by the worker.
-        # SearchCommandData is now imported from common_models.py
+        try:
+            search_results = await query_searx(query)
+            if not search_results:
+                await interaction.edit_original_response(content=f"Sorry, I couldn't find any search results for '{query}'.", embed=None)
+                return
 
-        search_data = SearchCommandData(
-            interaction=interaction,
-            query=query,
-            bot_user_id=bot_instance.user.id if bot_instance else None
-        )
+            await interaction.edit_original_response(content=f"Found {len(search_results)} results for '{query}'. Processing top results...")
 
-        llm_req = LLMRequest(request_type='search_command', data=search_data)
+            max_results_to_process = config.NEWS_MAX_LINKS_TO_PROCESS # Reuse similar config as /news
+            num_to_process = min(len(search_results), max_results_to_process)
+            page_summaries_for_final_synthesis: List[str] = []
+            processed_urls_search = set()
 
-        if bot_state_instance:
-            await bot_state_instance.llm_request_queue.put(llm_req)
-            try:
-                queue_size = bot_state_instance.llm_request_queue.qsize()
-                await interaction.edit_original_response(content=f"Your search for '{query}' has been queued (approx. position: {queue_size}). I'll start digging for information soon!")
-                logger.info(f"/search command for '{query}' by {interaction.user.name} queued. Approx queue size: {queue_size}")
-            except discord.HTTPException as e:
-                logger.warning(f"Failed to send 'queued' confirmation for /search: {e}")
-        else:
-            logger.error("Bot state instance not available, cannot queue /search command.")
-            await interaction.edit_original_response(content=f"Sorry, I couldn't queue your search for '{query}' due to an internal issue.")
+            for i in range(num_to_process):
+                result = search_results[i]
+                page_url = result.get('url')
+                page_title = result.get('title', 'Untitled Page')
+
+                if not page_url or page_url in processed_urls_search:
+                    logger.info(f"Skipping duplicate or invalid URL for search: {page_url}")
+                    continue
+                processed_urls_search.add(page_url)
+
+                update_embed_search = discord.Embed(
+                    title=f"Search Results for: {query}",
+                    description=f"Processing result {i+1}/{num_to_process}: Scraping '{page_title}'...",
+                    color=config.EMBED_COLOR["incomplete"]
+                )
+                await interaction.edit_original_response(embed=update_embed_search, content=None)
+
+                if bot_state_instance and hasattr(bot_state_instance, 'update_last_playwright_usage_time'):
+                    await bot_state_instance.update_last_playwright_usage_time()
+
+                scraped_content = await scrape_website(page_url)
+
+                if not scraped_content or "Failed to scrape" in scraped_content or "Scraping timed out" in scraped_content:
+                    logger.warning(f"Failed to scrape '{page_title}' from {page_url} for search. Reason: {scraped_content}")
+                    page_summaries_for_final_synthesis.append(f"Source: {page_title} ({page_url})\nSummary: [Could not retrieve content for summarization]\n\n")
+                    continue
+
+                update_embed_search.description = f"Processing result {i+1}/{num_to_process}: Summarizing '{page_title}'..."
+                await interaction.edit_original_response(embed=update_embed_search)
+
+                summarization_prompt_search = (
+                    f"You are an expert summarizer. Please read the following web page content, "
+                    f"which was found when searching for the query '{query}'. Extract the key factual "
+                    f"points and provide a concise summary (2-4 sentences) relevant to this query. "
+                    f"Focus on information that directly addresses or relates to the user's search intent.\n\n"
+                    f"Page Title: {page_title}\n"
+                    f"Page Content:\n{scraped_content[:config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT*2]}"
+                )
+
+                try:
+                    summary_response_search = await llm_client_instance.chat.completions.create(
+                        model=config.FAST_LLM_MODEL,
+                        messages=[{"role": "user", "content": summarization_prompt_search}],
+                        max_tokens=250,
+                        temperature=0.3,
+                        stream=False
+                    )
+                    if summary_response_search.choices and summary_response_search.choices[0].message and summary_response_search.choices[0].message.content:
+                        page_summary = summary_response_search.choices[0].message.content.strip()
+                        logger.info(f"Summarized '{page_title}' for search query '{query}': {page_summary[:100]}...")
+                        page_summaries_for_final_synthesis.append(f"Source Page: {page_title} ({page_url})\nSummary of Page Content: {page_summary}\n\n")
+                        # Optionally, store these summaries if a suitable storage mechanism exists (like news summaries)
+                        # store_search_page_summary(query=query, url=page_url, summary_text=page_summary) # Example, if implemented
+                    else:
+                        logger.warning(f"LLM summarization returned no content for '{page_title}' (search query '{query}').")
+                        page_summaries_for_final_synthesis.append(f"Source Page: {page_title} ({page_url})\nSummary: [AI summarization failed or returned no content]\n\n")
+                except Exception as e_summ_search:
+                    logger.error(f"Error during LLM summarization for '{page_title}' (search query '{query}'): {e_summ_search}", exc_info=True)
+                    page_summaries_for_final_synthesis.append(f"Source Page: {page_title} ({page_url})\nSummary: [Error during AI summarization]\n\n")
+            
+            if not page_summaries_for_final_synthesis:
+                error_embed_search = discord.Embed(
+                    title=f"Search Results for: {query}",
+                    description=f"Could not process any web pages to generate a summary for '{query}'.",
+                    color=config.EMBED_COLOR["error"]
+                )
+                await interaction.edit_original_response(embed=error_embed_search)
+                return
+
+            final_update_embed = discord.Embed(
+                title=f"Search Results for: {query}",
+                description="All relevant pages processed. Generating final search summary...",
+                color=config.EMBED_COLOR["incomplete"]
+            )
+            await interaction.edit_original_response(embed=final_update_embed)
+
+            combined_page_summaries_text = "".join(page_summaries_for_final_synthesis)
+
+            final_synthesis_prompt_content = (
+                f"You are a search engine. Your purpose is to provide a concise, factual, and direct summary of information found across multiple web pages related to the user's query. "
+                f"Do not adopt a conversational persona or use journalistic language. Act like a search engine's summary snippet.\n\n"
+                f"User's Original Query: '{query}'\n\n"
+                f"Below are summaries of content from several web pages. Synthesize these into a single, integrated summary that directly addresses the user's query. "
+                f"Focus on the most relevant facts and information. Aim for a comprehensive yet brief overview. "
+                f"If the sources provide conflicting information, you may note this neutrally. Do not add information not present in the summaries.\n\n"
+                f"--- Collected Page Summaries ---\n"
+                f"{combined_page_summaries_text}"
+                f"--- End of Page Summaries ---\n\n"
+                f"Based on these summaries, provide a direct answer/summary for the query: '{query}'"
+            )
+            user_msg_node = MsgNode("user", final_synthesis_prompt_content, name=str(interaction.user.id))
+
+            rag_query_for_search_summary = query 
+            synthesized_rag_context = await retrieve_and_prepare_rag_context(llm_client_instance, rag_query_for_search_summary)
+
+            prompt_nodes = await _build_initial_prompt_messages(
+                user_query_content=final_synthesis_prompt_content,
+                channel_id=interaction.channel_id,
+                bot_state=bot_state_instance,
+                user_id=str(interaction.user.id),
+                synthesized_rag_context_str=synthesized_rag_context
+            )
+            # stream_llm_response_to_interaction will send new followups for the summary
+            await stream_llm_response_to_interaction(
+                interaction, llm_client_instance, bot_state_instance, user_msg_node, prompt_nodes,
+                title=f"Summary for Search: {query}",
+                force_new_followup_flow=True,
+                synthesized_rag_context_for_display=synthesized_rag_context,
+                bot_user_id=bot_instance.user.id
+            )
+        except Exception as e:
+            logger.error(f"Error in search_slash_command for query '{query}': {e}", exc_info=True)
+            await interaction.edit_original_response(content=f"Yikes, my search circuits are fuzzy! Failed to search for '{query}'. Error: {str(e)[:1000]}", embed=None)
 
     @bot_instance.tree.command(name="pol", description="Generates a sarcastic response to a political statement.")
     @app_commands.describe(statement="The political statement.")
@@ -310,62 +494,47 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             return
 
         await interaction.response.defer(ephemeral=False)
+        await interaction.edit_original_response(content="Crafting a suitably sarcastic political commentary...")
 
-        # RAG context generation involves an LLM call, ideally part of the worker.
-        # For now, doing it before queuing.
-        await interaction.edit_original_response(content="Preparing context for political commentary...")
-        rag_query_for_pol = statement
-        synthesized_rag_context = await retrieve_and_prepare_rag_context(llm_client_instance, rag_query_for_pol)
+        try:
+            pol_system_content = (
+                "You are a bot that generates extremely sarcastic, snarky, and somewhat troll-like comments "
+                "to mock extremist political views or absurd political statements. Your goal is to be biting and humorous, "
+                "undermining the statement without resorting to direct vulgarity or hate speech. Focus on sharp wit, irony, and highlighting logical fallacies in a comedic way. "
+                "Keep it relatively brief but impactful."
+            )
+            user_query_content = f"Generate a sarcastic comeback or commentary for the following political statement: \"{statement}\""
+            user_msg_node = MsgNode("user", user_query_content, name=str(interaction.user.id))
 
-        await interaction.edit_original_response(content="Crafting a suitably sarcastic political commentary... (Queued)")
+            rag_query_for_pol = statement
+            synthesized_rag_context = await retrieve_and_prepare_rag_context(llm_client_instance, rag_query_for_pol)
 
-        pol_system_content = (
-            "You are a bot that generates extremely sarcastic, snarky, and somewhat troll-like comments "
-            "to mock extremist political views or absurd political statements. Your goal is to be biting and humorous, "
-            "undermining the statement without resorting to direct vulgarity or hate speech. Focus on sharp wit, irony, and highlighting logical fallacies in a comedic way. "
-            "Keep it relatively brief but impactful."
-        )
-        user_query_content = f"Generate a sarcastic comeback or commentary for the following political statement: \"{statement}\""
-        user_msg_node = MsgNode("user", user_query_content, name=str(interaction.user.id))
+            base_prompt_nodes = await _build_initial_prompt_messages(
+                user_query_content=user_query_content,
+                channel_id=interaction.channel_id,
+                bot_state=bot_state_instance,
+                user_id=str(interaction.user.id),
+                synthesized_rag_context_str=synthesized_rag_context
+            )
 
-        base_prompt_nodes = await _build_initial_prompt_messages(
-            user_query_content=user_query_content,
-            channel_id=interaction.channel_id,
-            bot_state=bot_state_instance, # For history
-            user_id=str(interaction.user.id),
-            synthesized_rag_context_str=synthesized_rag_context
-        )
+            insert_idx = 0
+            for idx, node in enumerate(base_prompt_nodes):
+                if node.role != "system":
+                    insert_idx = idx
+                    break
+                insert_idx = idx + 1
 
-        insert_idx = 0
-        for idx, node in enumerate(base_prompt_nodes):
-            if node.role != "system":
-                insert_idx = idx
-                break
-            insert_idx = idx + 1
-        final_prompt_nodes = base_prompt_nodes[:insert_idx] + [MsgNode("system", pol_system_content)] + base_prompt_nodes[insert_idx:]
+            final_prompt_nodes = base_prompt_nodes[:insert_idx] + [MsgNode("system", pol_system_content)] + base_prompt_nodes[insert_idx:]
 
-        request_data = InteractionRequestData(
-            interaction=interaction,
-            user_msg_node=user_msg_node,
-            prompt_messages=final_prompt_nodes,
-            title="Sarcastic Political Commentary",
-            synthesized_rag_context_for_display=synthesized_rag_context,
-            bot_user_id=bot_instance.user.id if bot_instance else None
-        )
-
-        llm_req = LLMRequest(request_type='interaction', data=request_data)
-
-        if bot_state_instance:
-            await bot_state_instance.llm_request_queue.put(llm_req)
-            try:
-                queue_size = bot_state_instance.llm_request_queue.qsize()
-                await interaction.edit_original_response(content=f"Your political commentary request for '{statement[:30]}...' has been queued (approx. position: {queue_size}). Sharpening my wit...")
-                logger.info(f"/pol command for '{statement[:30]}...' by {interaction.user.name} queued. Approx queue size: {queue_size}")
-            except discord.HTTPException as e:
-                logger.warning(f"Failed to send 'queued' confirmation for /pol: {e}")
-        else:
-            logger.error("Bot state instance not available, cannot queue /pol command.")
-            await interaction.edit_original_response(content=f"Sorry, I couldn't queue your /pol request for '{statement[:30]}...' due to an internal issue.")
+            await stream_llm_response_to_interaction(
+                interaction, llm_client_instance, bot_state_instance, user_msg_node, final_prompt_nodes,
+                title="Sarcastic Political Commentary",
+                synthesized_rag_context_for_display=synthesized_rag_context,
+                bot_user_id=bot_instance.user.id
+            )
+        except Exception as e:
+            logger.error(f"Error in pol_slash_command for statement '{statement[:50]}...': {e}", exc_info=True)
+            await interaction.edit_original_response(content=f"My political satire circuits just blew a fuse! Error: {str(e)[:1000]}", embed=None)
 
     @bot_instance.tree.command(name="gettweets", description="Fetches and summarizes recent tweets from a user.")
     @app_commands.describe(username="The X/Twitter username (without @).", limit="Number of tweets to fetch (max 50).")
@@ -385,42 +554,106 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
         clean_username_for_initial_message = username.lstrip('@')
         await interaction.edit_original_response(content=f"Starting to scrape tweets for @{clean_username_for_initial_message} (up to {limit})...")
 
-        async def send_progress(message: str): # This progress callback will be passed to the worker if needed
+        async def send_progress(message: str):
             try:
                 await interaction.edit_original_response(content=message)
             except discord.HTTPException as e_prog:
+                # Log if the original message edit fails, especially if it's due to interaction expiry
                 logger.warning(f"Failed to send progress update for gettweets (edit original): {e_prog}")
             except Exception as e_unexp:
                  logger.error(f"Unexpected error in send_progress for gettweets: {e_unexp}", exc_info=True)
 
-        # The worker will handle scraping, displaying raw tweets, then summarizing.
-        # The send_progress callback might be tricky to pass and use effectively by a generic worker.
-        # For now, the worker will handle its own progress updates to the interaction if complex.
-        # Simplified: queue the username and limit.
-        # GetTweetsCommandData is now imported from common_models.py
 
-        gettweets_data = GetTweetsCommandData(
-            interaction=interaction,
-            username=username,
-            limit=limit,
-            bot_user_id=bot_instance.user.id if bot_instance else None
-        )
+        try:
+            clean_username = username.lstrip('@')
 
-        llm_req = LLMRequest(request_type='gettweets_command', data=gettweets_data)
+            if bot_state_instance and hasattr(bot_state_instance, 'update_last_playwright_usage_time'):
+                await bot_state_instance.update_last_playwright_usage_time() # Made awaitable
+                logger.debug(f"Updated last_playwright_usage_time via bot_state_instance for /gettweets @{clean_username}")
 
-        if bot_state_instance:
-            await bot_state_instance.llm_request_queue.put(llm_req)
+            # Initial message is already sent above. send_progress will now update it.
+            tweets = await scrape_latest_tweets(clean_username, limit=limit, progress_callback=send_progress)
+
+            if not tweets:
+                final_content_message = f"Finished scraping for @{clean_username}. No tweets found or profile might be private/inaccessible."
+                await interaction.edit_original_response(content=final_content_message, embed=None) # Ensure embed is cleared
+                # Followup with a more user-friendly ephemeral message if needed, but primary is above.
+                # await interaction.followup.send(f"Could not fetch any recent tweets for @{clean_username}. The profile might be private, have no tweets, or there was an issue.", ephemeral=True)
+                return
+
+            tweet_texts_for_display = []
+            for t in tweets:
+                ts_str = t.get('timestamp', 'N/A')
+                display_ts = ts_str
+                try:
+                    dt_obj = datetime.fromisoformat(ts_str.replace("Z", "+00:00")) if ts_str != 'N/A' else None
+                    display_ts = dt_obj.strftime("%Y-%m-%d %H:%M UTC") if dt_obj else ts_str
+                except ValueError: pass
+
+                author_display = t.get('username', clean_username)
+                content_display = discord.utils.escape_markdown(t.get('content', 'N/A'))
+                tweet_url_display = t.get('tweet_url', '')
+
+                header = f"[{display_ts}] @{author_display}"
+                if t.get('is_repost') and t.get('reposted_by'):
+                    header = f"[{display_ts}] @{t.get('reposted_by')} reposted @{author_display}"
+
+                link_text = f" ([Link]({tweet_url_display}))" if tweet_url_display else ""
+                tweet_texts_for_display.append(f"**{header}**: {content_display}{link_text}")
+
+            raw_tweets_display_str = "\n\n".join(tweet_texts_for_display)
+            if not raw_tweets_display_str: raw_tweets_display_str = "No tweet content could be formatted for display."
+
+            await send_progress(f"Formatting {len(tweets)} tweets for display...")
+
+            embed_title = f"Recent Tweets from @{clean_username}"
+            raw_tweet_chunks = chunk_text(raw_tweets_display_str, config.EMBED_MAX_LENGTH)
+
+            for i, chunk_content_part in enumerate(raw_tweet_chunks):
+                chunk_title = embed_title if i == 0 else f"{embed_title} (cont.)"
+                embed = discord.Embed(
+                    title=chunk_title,
+                    description=chunk_content_part,
+                    color=config.EMBED_COLOR["complete"]
+                )
+                if i == 0:
+                    await interaction.edit_original_response(content=None, embed=embed) # Clear content text, show first embed
+                else:
+                    await interaction.followup.send(embed=embed) # New messages for subsequent chunks
+
+            user_query_content_for_summary = (
+                f"Please analyze and summarize the main themes, topics discussed, and overall sentiment "
+                f"from @{clean_username}'s recent tweets provided below. Extract key points and present a concise overview. "
+                f"Do not just re-list the tweets.\n\nRecent Tweets:\n{raw_tweets_display_str[:config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT]}"
+            )
+            user_msg_node = MsgNode("user", user_query_content_for_summary, name=str(interaction.user.id))
+
+            rag_query_for_tweets_summary = f"summary of recent tweets from Twitter user @{clean_username}"
+            synthesized_rag_context = await retrieve_and_prepare_rag_context(llm_client_instance, rag_query_for_tweets_summary)
+
+            prompt_nodes_summary = await _build_initial_prompt_messages(
+                user_query_content=user_query_content_for_summary,
+                channel_id=interaction.channel_id,
+                bot_state=bot_state_instance,
+                user_id=str(interaction.user.id),
+                synthesized_rag_context_str=synthesized_rag_context
+            )
+            # This will create a new message flow for the summary
+            await stream_llm_response_to_interaction(
+                interaction, llm_client_instance, bot_state_instance, user_msg_node, prompt_nodes_summary,
+                title=f"Tweet Summary for @{clean_username}",
+                force_new_followup_flow=True,
+                synthesized_rag_context_for_display=synthesized_rag_context,
+                bot_user_id=bot_instance.user.id
+            )
+        except Exception as e:
+            logger.error(f"Error in gettweets_slash_command for @{username}: {e}", exc_info=True)
+            error_content = f"My tweet-fetching antenna is bent! Failed for @{username}. Error: {str(e)[:500]}"
             try:
-                queue_size = bot_state_instance.llm_request_queue.qsize()
-                # Initial message was already: content=f"Starting to scrape tweets for @{clean_username_for_initial_message} (up to {limit})..."
-                # Edit it to reflect queuing.
-                await interaction.edit_original_response(content=f"Your request to fetch tweets for @{username.lstrip('@')} has been queued (approx. position: {queue_size}). This might take a few moments.")
-                logger.info(f"/gettweets command for @{username} by {interaction.user.name} queued. Approx queue size: {queue_size}")
-            except discord.HTTPException as e:
-                logger.warning(f"Failed to send 'queued' confirmation for /gettweets: {e}")
-        else:
-            logger.error("Bot state instance not available, cannot queue /gettweets command.")
-            await interaction.edit_original_response(content=f"Sorry, I couldn't queue your /gettweets request for @{username.lstrip('@')} due to an internal issue.")
+                await interaction.edit_original_response(content=error_content, embed=None) # Clear embed
+            except discord.HTTPException:
+                 logger.warning(f"Could not send final error message (edit) for gettweets @{username} to user.")
+
 
     @bot_instance.tree.command(name="ap", description="Describes an attached image with a creative AP Photo twist.")
     @app_commands.describe(image="The image to describe.", user_prompt="Optional additional prompt for the description.")
@@ -436,70 +669,66 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             return
 
         await interaction.response.defer(ephemeral=False)
+        await interaction.edit_original_response(content="Preparing your AP Photo description...")
 
-        # Image processing and RAG context should ideally be done by the worker.
-        # For now, reading image bytes and generating RAG before queuing.
-        # This makes the command take longer before user sees "queued" confirmation if image is large or RAG is slow.
 
-        await interaction.edit_original_response(content="Preparing your AP Photo description (reading image & context)...")
+        try:
+            if not image.content_type or not image.content_type.startswith("image/"):
+                await interaction.edit_original_response(content="The attached file is not a valid image. Please attach a PNG, JPG, GIF, etc.", embed=None)
+                return
 
-        if not image.content_type or not image.content_type.startswith("image/"):
-            await interaction.edit_original_response(content="The attached file is not a valid image. Please attach a PNG, JPG, GIF, etc.", embed=None)
-            return
+            image_bytes = await image.read()
+            if len(image_bytes) > config.MAX_IMAGE_BYTES_FOR_PROMPT:
+                logger.warning(f"Image {image.filename} provided by {interaction.user.name} is too large ({len(image_bytes)} bytes). Max allowed: {config.MAX_IMAGE_BYTES_FOR_PROMPT}.")
+                await interaction.edit_original_response(content=f"The image you attached is too large (max {config.MAX_IMAGE_BYTES_FOR_PROMPT // (1024*1024)}MB). Please try a smaller one.", embed=None)
+                return
 
-        image_bytes = await image.read() # Read here, pass bytes or b64 string in queue data
-        if len(image_bytes) > config.MAX_IMAGE_BYTES_FOR_PROMPT:
-            logger.warning(f"Image {image.filename} provided by {interaction.user.name} is too large ({len(image_bytes)} bytes). Max allowed: {config.MAX_IMAGE_BYTES_FOR_PROMPT}.")
-            await interaction.edit_original_response(content=f"The image you attached is too large (max {config.MAX_IMAGE_BYTES_FOR_PROMPT // (1024*1024)}MB). Please try a smaller one.", embed=None)
-            return
+            base64_image = base64.b64encode(image_bytes).decode('utf-8')
+            image_url_for_llm = f"data:{image.content_type};base64,{base64_image}"
 
-        base64_image_str = base64.b64encode(image_bytes).decode('utf-8')
-        # The worker will reconstruct the image_url_for_llm using this b64 string and image.content_type
+            chosen_celebrity = random.choice(["Keanu Reeves", "Dwayne 'The Rock' Johnson", "Zendaya", "Tom Hanks", "Margot Robbie", "Ryan Reynolds", "Morgan Freeman", "Awkwafina"])
 
-        chosen_celebrity = random.choice(["Keanu Reeves", "Dwayne 'The Rock' Johnson", "Zendaya", "Tom Hanks", "Margot Robbie", "Ryan Reynolds", "Morgan Freeman", "Awkwafina"])
+            ap_task_prompt_text = (
+                f"You are an Associated Press (AP) photo caption writer with a quirky sense of humor. Your task is to describe the attached image in vivid detail, as if for someone who cannot see it. "
+                f"However, here's the twist: you must creatively and seamlessly replace the main subject or a prominent character in the image with the celebrity **{chosen_celebrity}**. "
+                f"Maintain a professional AP caption style (who, what, when, where, why - if inferable), but weave in {chosen_celebrity}'s presence naturally and humorously. "
+                f"Start your response with 'AP Photo: {chosen_celebrity}...' "
+                f"If the user provided an additional prompt, try to incorporate its theme or request into your {chosen_celebrity}-centric description: '{user_prompt if user_prompt else 'No additional user prompt.'}'"
+            )
 
-        rag_query_for_ap = user_prompt if user_prompt else f"AP photo style description featuring {chosen_celebrity} for an image."
-        synthesized_rag_context = await retrieve_and_prepare_rag_context(llm_client_instance, rag_query_for_ap)
+            user_content_for_ap_node = [
+                {"type": "text", "text": user_prompt if user_prompt else "Describe this image with the AP Photo celebrity twist."},
+                {"type": "image_url", "image_url": {"url": image_url_for_llm}}
+            ]
+            user_msg_node = MsgNode("user", user_content_for_ap_node, name=str(interaction.user.id))
 
-        # Building the prompt structure that the worker will use
-        ap_task_prompt_text = (
-            f"You are an Associated Press (AP) photo caption writer with a quirky sense of humor. Your task is to describe the attached image in vivid detail, as if for someone who cannot see it. "
-            f"However, here's the twist: you must creatively and seamlessly replace the main subject or a prominent character in the image with the celebrity **{chosen_celebrity}**. "
-            f"Maintain a professional AP caption style (who, what, when, where, why - if inferable), but weave in {chosen_celebrity}'s presence naturally and humorously. "
-            f"Start your response with 'AP Photo: {chosen_celebrity}...' "
-            f"If the user provided an additional prompt, try to incorporate its theme or request into your {chosen_celebrity}-centric description: '{user_prompt if user_prompt else 'No additional user prompt.'}'"
-        )
-        user_content_text_for_ap = user_prompt if user_prompt else "Describe this image with the AP Photo celebrity twist."
-        # The worker will assemble the user_msg_node content list with the text and image_url.
+            rag_query_for_ap = user_prompt if user_prompt else f"AP photo style description featuring {chosen_celebrity} for an image."
+            synthesized_rag_context = await retrieve_and_prepare_rag_context(llm_client_instance, rag_query_for_ap)
 
-        # For the AP command, we pass the necessary components to reconstruct the final prompt in the worker.
-        # APCommandData is now imported from common_models.py
+            base_prompt_nodes = await _build_initial_prompt_messages(
+                user_query_content=user_content_for_ap_node,
+                channel_id=interaction.channel_id,
+                bot_state=bot_state_instance,
+                user_id=str(interaction.user.id),
+                synthesized_rag_context_str=synthesized_rag_context,
+                max_image_history_depth=0
+            )
 
-        ap_data = APCommandData(
-            interaction=interaction,
-            image_b64=base64_image_str,
-            image_content_type=image.content_type,
-            user_prompt_text=user_content_text_for_ap,
-            ap_system_task_prompt=ap_task_prompt_text,
-            base_user_id_for_node=str(interaction.user.id),
-            synthesized_rag_context=synthesized_rag_context,
-            title=f"AP Photo Description ft. {chosen_celebrity}",
-            bot_user_id=bot_instance.user.id if bot_instance else None
-        )
+            insert_idx = 0
+            for idx, node in enumerate(base_prompt_nodes):
+                if node.role != "system": insert_idx = idx; break
+                insert_idx = idx + 1
+            final_prompt_nodes = base_prompt_nodes[:insert_idx] + [MsgNode("system", ap_task_prompt_text)] + base_prompt_nodes[insert_idx:]
 
-        llm_req = LLMRequest(request_type='ap_command', data=ap_data)
-
-        if bot_state_instance:
-            await bot_state_instance.llm_request_queue.put(llm_req)
-            try:
-                queue_size = bot_state_instance.llm_request_queue.qsize()
-                await interaction.edit_original_response(content=f"Your AP photo description for '{image.filename}' has been queued (approx. position: {queue_size}). The paparazzi are getting ready!")
-                logger.info(f"/ap command for '{image.filename}' by {interaction.user.name} queued. Approx queue size: {queue_size}")
-            except discord.HTTPException as e:
-                logger.warning(f"Failed to send 'queued' confirmation for /ap: {e}")
-        else:
-            logger.error("Bot state instance not available, cannot queue /ap command.")
-            await interaction.edit_original_response(content=f"Sorry, I couldn't queue your /ap request for '{image.filename}' due to an internal issue.")
+            await stream_llm_response_to_interaction(
+                interaction, llm_client_instance, bot_state_instance, user_msg_node, final_prompt_nodes,
+                title=f"AP Photo Description ft. {chosen_celebrity}",
+                synthesized_rag_context_for_display=synthesized_rag_context,
+                bot_user_id=bot_instance.user.id
+            )
+        except Exception as e:
+            logger.error(f"Error in ap_slash_command for image '{image.filename}': {e}", exc_info=True)
+            await interaction.edit_original_response(content=f"My camera lens for the AP command seems to be cracked! Error: {str(e)[:1000]}", embed=None)
 
     @bot_instance.tree.command(name="clearhistory", description="Clears the bot's short-term message history for this channel.")
     @app_commands.checks.has_permissions(manage_messages=True)
