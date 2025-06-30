@@ -381,23 +381,44 @@ async def retrieve_and_prepare_rag_context(llm_client: Any, query: str, n_result
             ("chat_history", chat_history_collection),
             ("timeline", timeline_summary_collection),
             ("news", news_summary_collection),
+            ("entity", entity_collection),
+            ("relation", relation_collection),
+            ("observation", observation_collection),
         ]
 
         for name, collection_obj in additional_collections: # Renamed 'collection' to 'collection_obj' to avoid conflict
             if not collection_obj:
+                logger.debug(f"RAG: Collection '{name}' is not available, skipping.")
                 continue
             try:
                 logger.debug(
-                    f"RAG: Querying {name} collection for query: '{query[:50]}...' (n_results={n_results_collections})"
+                    f"RAG: Querying {name} collection for query: '{str(query)[:50]}...' (n_results={n_results_collections})"
                 )
-                res = collection_obj.query(query_texts=[query], n_results=n_results_collections, include=["documents"])
-                docs = res.get("documents", [[]])[0] if res and res.get("documents") else []
-                retrieved_full_conversation_texts.extend([d for d in docs if isinstance(d, str)])
+                # Ensure query_texts is a list of strings
+                query_texts_list = [query] if isinstance(query, str) else query
+
+                res = collection_obj.query(
+                    query_texts=query_texts_list,
+                    n_results=n_results_collections,
+                    include=["documents"]
+                )
+
+                # Check if 'documents' key exists and it's not None
+                if res and res.get("documents") and res["documents"][0] is not None:
+                    # Ensure that res["documents"][0] is a list of strings
+                    docs_from_collection = [doc for doc in res["documents"][0] if isinstance(doc, str)]
+                    if docs_from_collection:
+                        retrieved_full_conversation_texts.extend(docs_from_collection)
+                        logger.info(f"RAG: Retrieved {len(docs_from_collection)} documents from '{name}' collection.")
+                    else:
+                        logger.info(f"RAG: No documents found in '{name}' collection for the query.")
+                else:
+                    logger.info(f"RAG: No 'documents' found or documents list is empty/None in response from '{name}' collection for query: '{str(query)[:50]}...'")
             except Exception as e_other:
-                logger.error(f"RAG: Error querying {name} collection: {e_other}", exc_info=True)
+                logger.error(f"RAG: Error querying '{name}' collection: {e_other}", exc_info=True)
 
         if not retrieved_full_conversation_texts:
-            logger.info("RAG: No context texts retrieved for synthesis.")
+            logger.info("RAG: No context texts retrieved from any source for synthesis.")
             return None
 
         synthesized_context = await synthesize_retrieved_contexts_llm(llm_client, retrieved_full_conversation_texts, query)
