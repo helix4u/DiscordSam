@@ -59,15 +59,16 @@ class Config:
         self.VISION_LLM_MODEL = os.getenv("VISION_LLM_MODEL", "llava")
         self.FAST_LLM_MODEL = os.getenv("FAST_LLM_MODEL", self.LLM_MODEL)
         self.LLM_API_KEY = os.getenv("LLM_API_KEY", "")
+        self.LLM_SUPPORTS_JSON_MODE = _get_bool("LLM_SUPPORTS_JSON_MODE", False) # New Flag
         self.SYSTEM_PROMPT_FILE = os.getenv("SYSTEM_PROMPT_FILE", "system_prompt.md")
 
         self.ALLOWED_CHANNEL_IDS = _parse_int_list("ALLOWED_CHANNEL_IDS")
         self.ALLOWED_ROLE_IDS = _parse_int_list("ALLOWED_ROLE_IDS")
-        
+
         self.MAX_IMAGES_PER_MESSAGE = _get_int("MAX_IMAGES_PER_MESSAGE", 1)
         self.MAX_MESSAGE_HISTORY = _get_int("MAX_MESSAGE_HISTORY", 10)
         self.MAX_COMPLETION_TOKENS = _get_int("MAX_COMPLETION_TOKENS", 2048)
-        
+
         self.TTS_API_URL = os.getenv("TTS_API_URL", "http://localhost:8880/v1/audio/speech")
         self.TTS_VOICE = os.getenv("TTS_VOICE", "af_sky+af+af_nicole")
         self.TTS_ENABLED_DEFAULT = _get_bool("TTS_ENABLED_DEFAULT", True)
@@ -109,14 +110,17 @@ class Config:
         self.CHROMA_DISTILLED_COLLECTION_NAME = os.getenv("CHROMA_DISTILLED_COLLECTION_NAME", "distilled_chat_summaries")
         self.CHROMA_NEWS_SUMMARY_COLLECTION_NAME = os.getenv("CHROMA_NEWS_SUMMARY_COLLECTION_NAME", "news_summaries")
         self.CHROMA_TIMELINE_SUMMARY_COLLECTION_NAME = os.getenv("CHROMA_TIMELINE_SUMMARY_COLLECTION_NAME", "timeline_summaries")
-        
+        self.CHROMA_ENTITIES_COLLECTION_NAME = os.getenv("CHROMA_ENTITIES_COLLECTION_NAME", "entities_collection")
+        self.CHROMA_RELATIONS_COLLECTION_NAME = os.getenv("CHROMA_RELATIONS_COLLECTION_NAME", "relations_collection")
+        self.CHROMA_OBSERVATIONS_COLLECTION_NAME = os.getenv("CHROMA_OBSERVATIONS_COLLECTION_NAME", "observations_collection")
+
         self.USER_PROVIDED_CONTEXT = os.getenv("USER_PROVIDED_CONTEXT", "")
 
         self.MAX_IMAGE_BYTES_FOR_PROMPT = _get_int("MAX_IMAGE_BYTES_FOR_PROMPT", 4 * 1024 * 1024)
         self.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT = _get_int("MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT", 8000)
         self.RAG_NUM_DISTILLED_SENTENCES_TO_FETCH = _get_int("RAG_NUM_DISTILLED_SENTENCES_TO_FETCH", 3)
         self.RAG_NUM_COLLECTION_DOCS_TO_FETCH = _get_int("RAG_NUM_COLLECTION_DOCS_TO_FETCH", 3)
-        
+
         self.NEWS_MAX_LINKS_TO_PROCESS = _get_int("NEWS_MAX_LINKS_TO_PROCESS", 5)
 
         self.TIMELINE_PRUNE_DAYS = _get_int("TIMELINE_PRUNE_DAYS", 30)
