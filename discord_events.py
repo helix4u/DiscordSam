@@ -374,6 +374,28 @@ def setup_events_and_tasks(bot: commands.Bot, llm_client_in: Any, bot_state_in: 
         # will now correctly use the text that includes scraped content and image descriptions.
         # Attached images (non-screenshots) are still handled as before.
 
+        placeholder_message_for_edit: Optional[discord.Message] = None # Initialize placeholder
+
+        # Determine if we need to send a placeholder (i.e., if screenshots are likely)
+        # This happens if detected_urls_in_text is not empty and the URL processing loop will run.
+        # We send it before the loop that calls scrape_website and get_description_for_image.
+        if detected_urls_in_text and not message.author.bot: # Ensure it's not a bot message causing this
+            try:
+                # Check if the channel is suitable for sending messages
+                if isinstance(message.channel, discord.abc.Messageable):
+                    placeholder_message_for_edit = await message.reply(
+                        "Processing webpage(s) and analyzing visuals... This may take a moment.",
+                        silent=True
+                    )
+                    logger.info(f"Sent placeholder message {placeholder_message_for_edit.id} for URL processing in channel {message.channel.id}")
+                else:
+                    logger.warning(f"Cannot send placeholder message in non-messageable channel {message.channel.id} for URL processing.")
+            except discord.HTTPException as e_placeholder:
+                logger.error(f"Failed to send placeholder message for URL processing: {e_placeholder}")
+            except Exception as e_gen_placeholder: # Catch any other unexpected errors
+                logger.error(f"Unexpected error sending placeholder message for URL processing: {e_gen_placeholder}", exc_info=True)
+
+
         final_content_is_empty = True
         has_text_content = False
         has_image_content = False
@@ -417,7 +439,8 @@ def setup_events_and_tasks(bot: commands.Bot, llm_client_in: Any, bot_state_in: 
             user_msg_node=user_msg_node_for_short_term_history,
             prompt_messages=llm_prompt_for_current_turn,
             synthesized_rag_context_for_display=synthesized_rag_context,
-            bot_user_id=bot_instance.user.id
+            bot_user_id=bot_instance.user.id,
+            existing_message_to_edit=placeholder_message_for_edit # Pass the placeholder here
         )
 
     # ... (on_raw_reaction_add, on_app_command_error, on_command_error remain the same)
