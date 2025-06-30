@@ -1,8 +1,10 @@
 import asyncio
 import logging
+import base64
+import os
 from typing import List, Any, Optional, Union, Tuple, cast
 import discord
-from openai import AsyncStream # type: ignore
+from openai import AsyncStream, OpenAIError # type: ignore
 from datetime import datetime
 
 # Assuming config is imported from config.py
@@ -480,4 +482,66 @@ async def stream_llm_response_to_message(
         await send_tts_audio(target_message.channel, full_response_content, base_filename=f"message_{target_message.id}")
     elif not full_response_content.strip():
         logger.info(f"No actual content in LLM response for message '{title}'. Skipping history, RAG, TTS.")
+
+
+async def get_description_for_image(llm_client: Any, image_path: str) -> str:
+    """
+    Generates a textual description for a given image using a vision-capable LLM.
+    """
+    logger.info(f"Attempting to generate description for image: {image_path}")
+    try:
+        if not os.path.exists(image_path):
+            logger.error(f"Image file not found: {image_path}")
+            return "[Error: Image file not found for description.]"
+
+        with open(image_path, "rb") as image_file:
+            image_bytes = image_file.read()
+
+        b64_image = base64.b64encode(image_bytes).decode('utf-8')
+
+        # Ensure VISION_LLM_MODEL is appropriate for non-streaming, single image description
+        # It might be the same as config.VISION_LLM_MODEL or a specific one if needed.
+        # For now, we assume config.VISION_LLM_MODEL can handle this.
+        if not config.VISION_LLM_MODEL:
+            logger.error("VISION_LLM_MODEL is not configured. Cannot describe image.")
+            return "[Error: Vision model not configured for image description.]"
+
+        prompt_messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Describe this screenshot of a webpage. Focus on the visible text, layout, and any interactive elements. What information is presented here? Provide a concise summary."},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{b64_image}"},
+                    },
+                ],
+            }
+        ]
+
+        logger.debug(f"Sending image description request to model: {config.VISION_LLM_MODEL}")
+        response = await llm_client.chat.completions.create(
+            model=config.VISION_LLM_MODEL,
+            messages=prompt_messages,
+            max_tokens=config.MAX_COMPLETION_TOKENS_IMAGE_DESCRIPTION if hasattr(config, 'MAX_COMPLETION_TOKENS_IMAGE_DESCRIPTION') else 300, # Use a specific max_tokens for descriptions
+            temperature=0.3 # Lower temperature for more factual descriptions
+        )
+
+        if response.choices and response.choices[0].message and response.choices[0].message.content:
+            description = response.choices[0].message.content.strip()
+            logger.info(f"Successfully generated description for image {image_path}: {description[:100]}...")
+            return description
+        else:
+            logger.warning(f"LLM did not return content for image description: {image_path}")
+            return "[Error: LLM did not return description for image.]"
+
+    except OpenAIError as e:
+        logger.error(f"OpenAI API error while generating description for {image_path}: {e}", exc_info=True)
+        return f"[Error: OpenAI API issue during image description - {type(e).__name__}.]"
+    except FileNotFoundError:
+        logger.error(f"Image file not found (should have been caught earlier but as a safeguard): {image_path}")
+        return "[Error: Image file not found for description (safeguard).]"
+    except Exception as e:
+        logger.error(f"Unexpected error generating description for image {image_path}: {e}", exc_info=True)
+        return f"[Error: Unexpected issue during image description - {type(e).__name__}.]"
 
