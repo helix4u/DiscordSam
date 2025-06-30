@@ -450,43 +450,23 @@ async def stream_llm_response_to_message(
     prompt_messages: List[MsgNode],
     title: str = "Sam's Response",
     synthesized_rag_context_for_display: Optional[str] = None,
-    bot_user_id: Optional[int] = None,
-    existing_message_to_edit: Optional[discord.Message] = None # New parameter
+    bot_user_id: Optional[int] = None
 ):
+    initial_embed = discord.Embed(title=title, description="⏳ Thinking...", color=config.EMBED_COLOR["incomplete"])
     reply_message: Optional[discord.Message] = None
 
     if not isinstance(target_message.channel, discord.abc.Messageable):
         logger.error(f"Target message's channel (ID: {target_message.channel.id}) is not Messageable. Cannot stream response for '{title}'.")
         return
 
-    if existing_message_to_edit:
-        reply_message = existing_message_to_edit
-        # Optionally, edit it immediately to the "Thinking..." state if it's not already
-        # This ensures the user sees a consistent "Thinking" message before streaming starts.
-        initial_embed_for_edit = discord.Embed(title=title, description="⏳ Thinking...", color=config.EMBED_COLOR["incomplete"])
-        try:
-            await reply_message.edit(embed=initial_embed_for_edit)
-            logger.debug(f"Edited existing message {reply_message.id} to 'Thinking...' state for '{title}'.")
-        except discord.HTTPException as e:
-            logger.warning(f"Failed to edit existing message {reply_message.id} to 'Thinking...' state for '{title}': {e}")
-            # If editing fails, we might want to fall back to sending a new message or just proceed.
-            # For now, proceed, _stream_llm_handler will handle it.
-    else:
-        initial_embed_for_new_reply = discord.Embed(title=title, description="⏳ Thinking...", color=config.EMBED_COLOR["incomplete"])
-        try:
-            reply_message = await target_message.reply(embed=initial_embed_for_new_reply, silent=True)
-            logger.debug(f"Sent new reply message {reply_message.id} with 'Thinking...' state for '{title}'.")
-        except discord.HTTPException as e:
-            logger.error(f"Failed to send initial reply for message stream '{title}': {e}")
-            return # Critical failure if we can't even send the initial reply
-
-    # If reply_message is still None here, it means we couldn't send a new one and an existing one wasn't provided or failed to be confirmed.
-    if not reply_message:
-        logger.error(f"Could not establish a message to edit or reply to for '{title}'. Aborting stream.")
+    try:
+        reply_message = await target_message.reply(embed=initial_embed, silent=True)
+    except discord.HTTPException as e:
+        logger.error(f"Failed to send initial reply for message stream '{title}': {e}")
         return
 
     full_response_content, final_prompt_for_rag = await _stream_llm_handler(
-        interaction_or_message=target_message, # Still pass target_message for context, _stream_llm_handler uses it for channel
+        interaction_or_message=target_message,
         llm_client=llm_client,
         prompt_messages=prompt_messages,
         title=title,
