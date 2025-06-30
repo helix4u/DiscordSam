@@ -3,7 +3,7 @@ import logging
 import os
 import re
 import json
-from typing import List, Optional, Dict, Any, Callable, Awaitable
+from typing import List, Optional, Dict, Any
 from bs4 import BeautifulSoup
 import random
 import hashlib
@@ -140,7 +140,7 @@ async def _scrape_with_bs(url: str) -> Optional[str]:
         logger.warning(f"BeautifulSoup fallback failed for {url}: {e}")
     return None
 
-async def scrape_website(url: str, progress_callback: Optional[Callable[[str], Awaitable[None]]] = None) -> Optional[str]: # Added progress_callback for consistency, though not used in this specific function in the plan
+async def scrape_website(url: str) -> Optional[str]:
     logger.info(f"Attempting to scrape website: {url}")
     user_data_dir = os.path.join(os.getcwd(), ".pw-profile")
     profile_dir_usable = True
@@ -250,13 +250,9 @@ async def scrape_website(url: str, progress_callback: Optional[Callable[[str], A
 
     except PlaywrightTimeoutError:
         logger.error(f"Playwright timed out during the scraping process for {url}")
-        if progress_callback: # Notify about timeout
-            await progress_callback(f"Scraping {url} timed out.")
         return "Scraping timed out."
     except Exception as e:
         logger.error(f"Playwright encountered an unexpected error for {url}: {e}", exc_info=True)
-        if progress_callback: # Notify about error
-            await progress_callback(f"Failed to scrape {url} due to an error.")
         return "Failed to scrape the website due to an unexpected error."
     finally:
         if page and not page.is_closed():
@@ -271,7 +267,7 @@ async def scrape_website(url: str, progress_callback: Optional[Callable[[str], A
             try: await browser_instance_sw.close()
             except Exception: pass
 
-async def scrape_latest_tweets(username_queried: str, limit: int = 10, progress_callback: Optional[Callable[[str], Awaitable[None]]] = None) -> List[Dict[str, Any]]:
+async def scrape_latest_tweets(username_queried: str, limit: int = 10) -> List[Dict[str, Any]]:
     logger.info(f"Scraping last {limit} tweets for @{username_queried} (profile page, with replies) using Playwright JS execution.")
     tweets_collected: List[Dict[str, Any]] = []
     seen_tweet_ids: set[str] = set()
@@ -359,17 +355,10 @@ async def scrape_latest_tweets(username_queried: str, limit: int = 10, progress_
                             tweets_collected.append(data)
                             seen_tweet_ids.add(uid)
                             newly_added_count +=1
-                            if progress_callback:
-                                try:
-                                    await progress_callback(f"Scraped {len(tweets_collected)}/{limit} tweets for @{username_queried}...")
-                                except Exception as e_cb:
-                                    logger.warning(f"Progress callback error: {e_cb}")
                             if len(tweets_collected) >= limit: break
 
-                    if newly_added_count == 0 and scroll_attempt > (limit // 2 + 7): # Increased patience slightly
+                    if newly_added_count == 0 and scroll_attempt > (limit // 2 + 7):
                         logger.info("No new unique tweets found in several scroll attempts. Stopping.")
-                        if progress_callback:
-                            await progress_callback(f"Stopping early: No new unique tweets found after {scroll_attempt + 1} scrolls. Collected {len(tweets_collected)}.")
                         break
 
                     # Scroll down to load more tweets
@@ -382,12 +371,8 @@ async def scrape_latest_tweets(username_queried: str, limit: int = 10, progress_
 
     except PlaywrightTimeoutError as e:
         logger.warning(f"Playwright overall timeout during tweet scraping for @{username_queried}: {e}")
-        if progress_callback:
-            await progress_callback(f"Tweet scraping for @{username_queried} timed out overall. Collected {len(tweets_collected)}.")
     except Exception as e:
         logger.error(f"Unexpected error during tweet scraping for @{username_queried}: {e}", exc_info=True)
-        if progress_callback:
-            await progress_callback(f"An unexpected error occurred while scraping tweets for @{username_queried}. Collected {len(tweets_collected)}.")
     finally:
         if page and not page.is_closed():
             try: await page.close()

@@ -129,10 +129,6 @@ class Config:
         self.PLAYWRIGHT_MAX_CONCURRENCY = _get_int("PLAYWRIGHT_MAX_CONCURRENCY", 2)
         self.SCRAPE_SCROLL_ATTEMPTS = _get_int("SCRAPE_SCROLL_ATTEMPTS", 3)
 
-        # Configuration for Playwright cleanup task
-        self.PLAYWRIGHT_CLEANUP_INTERVAL_MINUTES = _get_int("PLAYWRIGHT_CLEANUP_INTERVAL_MINUTES", 5) # How often the cleanup task runs
-        self.PLAYWRIGHT_IDLE_CLEANUP_THRESHOLD_MINUTES = _get_int("PLAYWRIGHT_IDLE_CLEANUP_THRESHOLD_MINUTES", 10) # How long Playwright must be idle before cleanup
-
 
 # Global config instance
 config = Config()
