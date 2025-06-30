@@ -1,7 +1,7 @@
 import asyncio
 from collections import defaultdict
-from datetime import datetime
-from typing import List, Tuple, Any
+from datetime import datetime, timedelta # Added timedelta
+from typing import List, Tuple, Any, Optional # Added Optional
 
 class BotState:
     """An async-safe container for the bot's shared, mutable state."""
@@ -11,6 +11,19 @@ class BotState:
         self.message_history = defaultdict(list)
         # Stores reminder tuples: (datetime, channel_id, user_id, message, time_str)
         self.reminders: List[Tuple[datetime, int, int, str, str]] = []
+        # Stores the last time a Playwright-dependent command was initiated
+        self.last_playwright_usage_time: Optional[datetime] = None
+
+    async def update_last_playwright_usage_time(self):
+        """Updates the timestamp for the last Playwright usage."""
+        async with self._lock:
+            self.last_playwright_usage_time = datetime.now()
+            # logger.debug(f"Last Playwright usage time updated to: {self.last_playwright_usage_time}") # Optional: for debugging
+
+    async def get_last_playwright_usage_time(self) -> Optional[datetime]:
+        """Gets the last Playwright usage time."""
+        async with self._lock:
+            return self.last_playwright_usage_time
 
     async def append_history(self, channel_id: int, msg_node: Any, max_len: int):
         """Appends a message node to a channel's history and trims it."""
@@ -44,4 +57,3 @@ class BotState:
             due = [r for r in self.reminders if r[0] <= now]
             self.reminders = [r for r in self.reminders if r[0] > now]
             return due
-
