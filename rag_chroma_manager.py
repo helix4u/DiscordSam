@@ -93,7 +93,7 @@ async def extract_structured_data_llm(
         logger.debug("extract_structured_data_llm: text_content is empty, skipping extraction.")
         return None
 
-    max_input_length = 12000
+    max_input_length = 120000
     truncated_text = text_content[:max_input_length]
 
     system_prompt = (
@@ -242,7 +242,7 @@ async def distill_conversation_to_sentence_llm(llm_client: Any, text_to_distill:
         logger.debug("Distillation skipped: text_to_distill is empty.")
         return None
 
-    truncated_text = text_to_distill[:3000]
+    truncated_text = text_to_distill[:30000]
 
     prompt = (
         "You are a text distillation expert. Read the following conversational exchange (User query and Assistant response) "
