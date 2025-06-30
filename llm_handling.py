@@ -231,7 +231,7 @@ async def _stream_llm_handler(
 
         if synthesized_rag_context_for_display:
             display_rag_context = synthesized_rag_context_for_display.replace('\n', ' ').strip()
-            prefix_parts.append(f"**Synthesized Context for Query:**\n> {display_rag_context}\n\n---")
+            prefix_parts.append(f"**Synthesized Context for Query:**\n> {display_rag_context}\n\n")
 
         prefix_parts.append("**Response:**\n")
         response_prefix = "\n".join(prefix_parts)
