@@ -292,10 +292,10 @@ async def synthesize_retrieved_contexts_llm(llm_client: Any, retrieved_full_text
         "as it pertains to the user's query. This synthesized paragraph will be used to give an AI "
         "assistant context. Do not answer the user's query. Focus on extracting and combining relevant "
         "facts and discussion points from the snippets. If no snippets are truly relevant, state that "
-        "no specific relevant context was found in past conversations. Be objective.\n\n"
+        "no specific relevant context was found in past conversations (unless doing timeline summaries, then ignore the above instruction and use the summary prompt). Be objective.\n\n"
         f"USER'S CURRENT QUERY:\n---\n{current_query}\n---\n\n"
         f"RETRIEVED SNIPPETS:\n---\n{formatted_snippets}---\n\n"
-        "SYNTHESIZED CONTEXT PARAGRAPH (2-5 sentences ideally):"
+        "SYNTHESIZED CONTEXT PARAGRAPH (3-7 sentences ideally):"
     )
     try:
         logger.debug(f"Requesting context synthesis from model {config.FAST_LLM_MODEL}.")
