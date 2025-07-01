@@ -182,8 +182,8 @@ async def prune_and_summarize(prune_days: int = PRUNE_DAYS):
                         f"{block_start_dt.strftime('%Y-%m-%d %H:%M:%S')} to "
                         f"{block_end_dt.strftime('%Y-%m-%d %H:%M:%S')} "
                         f"as a keyword dense narrative focusing on content, date, novel learnings, etc. "
-                        f"Do not state anything about the reference the word snippet, conversation, retrieved, etc. "
-                        f"This is for a RAG db. Keep it clean."
+                        f"Do not state anything about or reference the word snippet, conversation, retrieved, etc. "
+                        f"This is for a RAG db. Keep it clean, but keep all pertinant detail."
                     )
                     summary = await rcm.synthesize_retrieved_contexts_llm(llm_client, texts, query)
                     
