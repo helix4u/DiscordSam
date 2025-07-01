@@ -262,7 +262,7 @@ async def distill_conversation_to_sentence_llm(llm_client: Any, text_to_distill:
                 {"role": "system", "content": "You are an expert contextual knowledge distiller focusing on user-assistant turn pairs."},
                 {"role": "user", "content": prompt}
             ],
-            max_tokens=300,
+            max_tokens=2048,
             temperature=0.5,
             stream=False
         )
@@ -283,7 +283,7 @@ async def synthesize_retrieved_contexts_llm(llm_client: Any, retrieved_full_text
 
     formatted_snippets = ""
     for i, text in enumerate(retrieved_full_texts):
-        formatted_snippets += f"--- Snippet {i+1} ---\n{text[:1500]}\n\n"
+        formatted_snippets += f"--- Memory {i+1} ---\n{text[:2500]}\n\n"
 
     prompt = (
         "You are a master context synthesizer. Below are several retrieved conversation snippets (refer to these as memories) that "
