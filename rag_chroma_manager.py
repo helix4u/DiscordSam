@@ -286,16 +286,17 @@ async def synthesize_retrieved_contexts_llm(llm_client: Any, retrieved_full_text
         formatted_snippets += f"--- Snippet {i+1} ---\n{text[:1500]}\n\n"
 
     prompt = (
-        "You are a master context synthesizer. Below are several retrieved conversation snippets that "
+        "You are a master context synthesizer. Below are several retrieved conversation snippets (refer to these as memories) that "
         "might be relevant to the user's current query. Your task is to read all of them and synthesize "
-        "a single, concise paragraph that captures the most relevant information from these snippets "
+        "a single, concise and detailed paragraph that captures the most relevant information from these memories "
         "as it pertains to the user's query. This synthesized paragraph will be used to give an AI "
         "assistant context. Do not answer the user's query. Focus on extracting and combining relevant "
-        "facts and discussion points from the snippets. If no snippets are truly relevant, state that "
-        "no specific relevant context was found in past conversations (unless doing timeline summaries, then ignore the above instruction and use the summary prompt). Be objective.\n\n"
+        "facts and discussion points from the snippets. If no snippets are truly relevant, create "
+        "a generisized context that will assist the AI persona in creating a better informed response for the user "
+        "(unless doing timeline summaries, then ignore the above instruction and use the summary prompt). Be detailed and personal.\n\n"
         f"USER'S CURRENT QUERY:\n---\n{current_query}\n---\n\n"
-        f"RETRIEVED SNIPPETS:\n---\n{formatted_snippets}---\n\n"
-        "SYNTHESIZED CONTEXT PARAGRAPH (3-7 sentences ideally):"
+        f"RETRIEVED SNIPPETS(MEMORIES):\n---\n{formatted_snippets}---\n\n"
+        "SYNTHESIZED CONTEXT PARAGRAPH (3-8 sentences ideally):"
     )
     try:
         logger.debug(f"Requesting context synthesis from model {config.FAST_LLM_MODEL}.")
