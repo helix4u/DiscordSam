@@ -358,7 +358,7 @@ def setup_events_and_tasks(bot: commands.Bot, llm_client_in: Any, bot_state_in: 
             final_user_message_text_for_llm = combined_scraped_content + "\n\nUser's original message (following processed URL content, screenshot descriptions, and/or audio transcript, if any): " + user_message_text_for_processing
 
         if scraped_content_accumulator and not user_message_text_for_processing.strip() and detected_urls_in_text:
-            final_user_message_text_for_llm += "\n\nPlease provide a detailed summary of the content above as if I will not watch or read it myself."
+            final_user_message_text_for_llm += "\n\nProvide a detailed summary of the content, as I will not see it myself."
 
         # Update the text part in current_message_content_parts
         # We are NOT adding screenshot images themselves to current_message_content_parts here,
