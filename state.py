@@ -13,6 +13,8 @@ class BotState:
         self.reminders: List[Tuple[datetime, int, int, str, str]] = []
         # Stores the last time a Playwright-dependent command was initiated
         self.last_playwright_usage_time: Optional[datetime] = None
+        # Locks to ensure only one LLM stream per channel at a time
+        self.channel_locks = defaultdict(asyncio.Lock)
 
     async def update_last_playwright_usage_time(self):
         """Updates the timestamp for the last Playwright usage."""
@@ -57,3 +59,7 @@ class BotState:
             due = [r for r in self.reminders if r[0] <= now]
             self.reminders = [r for r in self.reminders if r[0] > now]
             return due
+
+    def get_channel_lock(self, channel_id: int) -> asyncio.Lock:
+        """Retrieve (or create) the asyncio.Lock for a specific channel."""
+        return self.channel_locks[channel_id]
