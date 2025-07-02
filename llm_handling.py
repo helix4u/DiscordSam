@@ -370,6 +370,10 @@ async def stream_llm_response_to_interaction(
     synthesized_rag_context_for_display: Optional[str] = None,
     bot_user_id: Optional[int] = None
 ):
+    channel_lock = None
+    if interaction.channel_id is not None:
+        channel_lock = bot_state.get_channel_lock(interaction.channel_id)
+
     initial_msg_for_handler: Optional[discord.Message] = None
     if not force_new_followup_flow:
         try:
@@ -403,15 +407,22 @@ async def stream_llm_response_to_interaction(
              except discord.HTTPException: pass
         return
 
-    full_response_content, final_prompt_for_rag = await _stream_llm_handler(
-        interaction_or_message=interaction,
-        llm_client=llm_client,
-        prompt_messages=prompt_messages,
-        title=title,
-        initial_message_to_edit=initial_msg_for_handler,
-        synthesized_rag_context_for_display=synthesized_rag_context_for_display,
-        bot_user_id=bot_user_id
-    )
+    async def _run_stream():
+        return await _stream_llm_handler(
+            interaction_or_message=interaction,
+            llm_client=llm_client,
+            prompt_messages=prompt_messages,
+            title=title,
+            initial_message_to_edit=initial_msg_for_handler,
+            synthesized_rag_context_for_display=synthesized_rag_context_for_display,
+            bot_user_id=bot_user_id,
+        )
+
+    if channel_lock:
+        async with channel_lock:
+            full_response_content, final_prompt_for_rag = await _run_stream()
+    else:
+        full_response_content, final_prompt_for_rag = await _run_stream()
 
     if full_response_content.strip():
         channel_id = interaction.channel_id
@@ -452,6 +463,7 @@ async def stream_llm_response_to_message(
     synthesized_rag_context_for_display: Optional[str] = None,
     bot_user_id: Optional[int] = None
 ):
+    channel_lock = bot_state.get_channel_lock(target_message.channel.id)
     initial_embed = discord.Embed(title=title, description="⏳ Thinking...", color=config.EMBED_COLOR["incomplete"])
     reply_message: Optional[discord.Message] = None
 
@@ -465,15 +477,19 @@ async def stream_llm_response_to_message(
         logger.error(f"Failed to send initial reply for message stream '{title}': {e}")
         return
 
-    full_response_content, final_prompt_for_rag = await _stream_llm_handler(
-        interaction_or_message=target_message,
-        llm_client=llm_client,
-        prompt_messages=prompt_messages,
-        title=title,
-        initial_message_to_edit=reply_message,
-        synthesized_rag_context_for_display=synthesized_rag_context_for_display,
-        bot_user_id=bot_user_id
-    )
+    async def _run_stream():
+        return await _stream_llm_handler(
+            interaction_or_message=target_message,
+            llm_client=llm_client,
+            prompt_messages=prompt_messages,
+            title=title,
+            initial_message_to_edit=reply_message,
+            synthesized_rag_context_for_display=synthesized_rag_context_for_display,
+            bot_user_id=bot_user_id,
+        )
+
+    async with channel_lock:
+        full_response_content, final_prompt_for_rag = await _run_stream()
 
     if full_response_content.strip():
         channel_id = target_message.channel.id
