@@ -1,5 +1,4 @@
 import logging
-import asyncio
 import discord
 from discord import app_commands # type: ignore
 from discord.ext import commands # For bot type hint
@@ -23,7 +22,6 @@ from rag_chroma_manager import (
     parse_chatgpt_export,
     store_chatgpt_conversations_in_chromadb,
     store_news_summary,
-    ingest_conversation_to_chromadb,
 )
 from web_utils import (
     scrape_website,
@@ -32,7 +30,6 @@ from web_utils import (
     fetch_rss_entries
 )
 from utils import parse_time_string_to_delta, chunk_text
-from audio_utils import send_tts_audio
 from rss_cache import load_seen_entries, save_seen_entries
 
 logger = logging.getLogger(__name__)
@@ -623,22 +620,6 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                     await interaction.edit_original_response(content=None, embed=embed)
                 else:
                     await interaction.followup.send(embed=embed)
-
-            # Apply standard post-processing: update history, send TTS, and ingest into Chroma
-            user_msg_content = f"/rss {feed_url} limit={limit}"
-            user_msg_node = MsgNode("user", user_msg_content, name=str(interaction.user.id))
-            assistant_msg_node = MsgNode("assistant", combined, name=str(bot_instance.user.id))
-
-            await bot_state_instance.append_history(interaction.channel_id, user_msg_node, config.MAX_MESSAGE_HISTORY)
-            await bot_state_instance.append_history(interaction.channel_id, assistant_msg_node, config.MAX_MESSAGE_HISTORY)
-
-            asyncio.create_task(send_tts_audio(interaction, combined, base_filename=f"rss_{interaction.id}"))
-            await ingest_conversation_to_chromadb(
-                llm_client_instance,
-                interaction.channel_id,
-                interaction.user.id,
-                [user_msg_node, assistant_msg_node],
-            )
 
         except Exception as e:
             logger.error(f"Error in rss_slash_command for {feed_url}: {e}", exc_info=True)
