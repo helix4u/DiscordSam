@@ -355,10 +355,10 @@ def setup_events_and_tasks(bot: commands.Bot, llm_client_in: Any, bot_state_in: 
             # Update the text part of current_message_content_parts
             # The image descriptions are now part of this text block.
             # Raw images are not sent to the main LLM if descriptions are generated.
-            final_user_message_text_for_llm = combined_scraped_content + "\n\nUser's original message (following processed URL content, screenshot descriptions, and/or audio transcript, if any): " + user_message_text_for_processing
+            final_user_message_text_for_llm = combined_scraped_content + "\n\nUser's original message (following processed URL content, screenshot descriptions, and/or audio transcript, if any). Default task: Provide a detailed summary of the content, not a generic description, as they will not see the original content: " + user_message_text_for_processing
 
         if scraped_content_accumulator and not user_message_text_for_processing.strip() and detected_urls_in_text:
-            final_user_message_text_for_llm += "\n\nProvide a detailed summary of the content, as I will not see it myself."
+            final_user_message_text_for_llm += "\n\nProvide a detailed summary of the content, not a generic description, as I will not see it myself."
 
         # Update the text part in current_message_content_parts
         # We are NOT adding screenshot images themselves to current_message_content_parts here,
