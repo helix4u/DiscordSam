@@ -1,11 +1,12 @@
 import logging
 import discord
-from discord import app_commands # type: ignore
-from discord.ext import commands # For bot type hint
+from discord import app_commands  # type: ignore
+from discord.ext import commands  # For bot type hint
 import os
 import base64
 import random
-from typing import Any, Optional, List # Keep existing imports
+import asyncio
+from typing import Any, Optional, List  # Keep existing imports
 from datetime import datetime
 
 # Bot services and utilities
@@ -22,6 +23,7 @@ from rag_chroma_manager import (
     parse_chatgpt_export,
     store_chatgpt_conversations_in_chromadb,
     store_news_summary,
+    ingest_conversation_to_chromadb,
 )
 from web_utils import (
     scrape_website,
@@ -29,6 +31,7 @@ from web_utils import (
     scrape_latest_tweets,
     fetch_rss_entries
 )
+from audio_utils import send_tts_audio
 from utils import parse_time_string_to_delta, chunk_text
 from rss_cache import load_seen_entries, save_seen_entries
 
@@ -620,6 +623,33 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                     await interaction.edit_original_response(content=None, embed=embed)
                 else:
                     await interaction.followup.send(embed=embed)
+
+            # --- New: Postprocess like other responses ---
+            asyncio.create_task(
+                send_tts_audio(interaction, combined, base_filename=f"rss_{interaction.id}")
+            )
+            user_msg = MsgNode(
+                "user",
+                f"/rss {feed_url} (limit {limit})",
+                name=str(interaction.user.id),
+            )
+            assistant_msg = MsgNode(
+                "assistant",
+                combined,
+                name=str(bot_instance.user.id),
+            )
+            await bot_state_instance.append_history(
+                interaction.channel_id, user_msg, config.MAX_MESSAGE_HISTORY
+            )
+            await bot_state_instance.append_history(
+                interaction.channel_id, assistant_msg, config.MAX_MESSAGE_HISTORY
+            )
+            await ingest_conversation_to_chromadb(
+                llm_client_instance,
+                interaction.channel_id,
+                interaction.user.id,
+                [user_msg, assistant_msg],
+            )
 
         except Exception as e:
             logger.error(f"Error in rss_slash_command for {feed_url}: {e}", exc_info=True)
