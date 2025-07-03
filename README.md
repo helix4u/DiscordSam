@@ -105,6 +105,7 @@ Some of the most important settings you can tweak via the `.env` file are listed
 * `MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT` – limit for scraped text added to prompts.
 * `NEWS_MAX_LINKS_TO_PROCESS` – number of news links to read with `/gettweets`.
 * `SCRAPE_SCROLL_ATTEMPTS` – how many times to scroll when scraping a webpage to load dynamic content.
+* `TIMELINE_PRUNE_DAYS` – how many days of chat history to retain before daily pruning and summarization.
 
 ---
 
