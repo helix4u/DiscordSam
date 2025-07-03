@@ -6,7 +6,8 @@ import json
 from typing import List, Optional, Dict, Any, Callable, Awaitable, Tuple
 from bs4 import BeautifulSoup
 import random
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 import hashlib
 
 import aiohttp
@@ -524,12 +525,26 @@ async def fetch_rss_entries(feed_url: str) -> List[Dict[str, Any]]:
         channel = root.find("channel") or root
         items = channel.findall("item")
         entries: List[Dict[str, Any]] = []
+        one_week_ago = datetime.now(timezone.utc) - timedelta(days=7)
         for it in items:
+            pub_date_str = it.findtext("pubDate") or ""
+            pub_date_dt = None
+            if pub_date_str:
+                try:
+                    pub_date_dt = parsedate_to_datetime(pub_date_str)
+                    if pub_date_dt.tzinfo is None:
+                        pub_date_dt = pub_date_dt.replace(tzinfo=timezone.utc)
+                except Exception:
+                    pub_date_dt = None
+
+            if pub_date_dt is None or pub_date_dt < one_week_ago:
+                continue
+
             entries.append({
                 "title": it.findtext("title") or "",
                 "link": it.findtext("link") or "",
                 "guid": it.findtext("guid") or it.findtext("link") or "",
-                "pubDate": it.findtext("pubDate") or "",
+                "pubDate": pub_date_str,
                 "description": it.findtext("description") or "",
             })
         return entries
