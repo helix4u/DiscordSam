@@ -13,7 +13,7 @@ from state import BotState
 # Import MsgNode from the new common_models.py
 from common_models import MsgNode
 # Import utility functions
-from utils import chunk_text
+from utils import chunk_text, cleanup_playwright_processes
 # Import functions for post-stream processing
 from rag_chroma_manager import ingest_conversation_to_chromadb
 from audio_utils import send_tts_audio
@@ -334,6 +334,9 @@ async def _stream_llm_handler(
             else:
                 logger.error(f"Cannot send final color overflow chunk {i+1} for '{title}': channel is None.")
                 break
+
+        # Trigger a cleanup of any lingering Chromium/Playwright processes
+        cleanup_playwright_processes()
 
         if not full_response_content.strip() and sent_messages:
             empty_response_text = response_prefix + "\nSam didn't provide a response to the query."
