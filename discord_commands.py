@@ -47,6 +47,17 @@ DEFAULT_RSS_FEEDS = [
     ("CBS Science", "https://www.cbsnews.com/latest/rss/science"),
     ("CBS Technology", "https://www.cbsnews.com/latest/rss/technology"),
     ("CBS Entertainment", "https://www.cbsnews.com/latest/rss/entertainment"),
+    # Additional verified feeds
+    ("CNN Top Stories", "http://rss.cnn.com/rss/cnn_topstories.rss"),
+    ("NPR News", "http://www.npr.org/rss/rss.php?id=1001"),
+    ("BBC Americas", "http://feeds.bbci.co.uk/news/world/us_and_canada/rss.xml?edition=int"),
+    ("KSL Local Stories", "https://www.ksl.com/rss/news"),
+    ("UEN News", "https://www.uen.org/feeds/rss/news.xml.php"),
+    ("ASCD SmartBrief", "http://www.smartbrief.com/servlet/rss?b=ASCD"),
+    ("NPR Education", "http://www.npr.org/rss/rss.php?id=1013"),
+    ("Nature News", "http://feeds.nature.com/nature/rss/current"),
+    ("NPR Technology", "http://www.npr.org/rss/rss.php?id=1019"),
+    ("Surfing the Net with Kids", "http://feeds.surfnetkids.com/SurfingTheNetWithKids"),
 ]
 
 # Module-level globals to store instances passed from main_bot.py
