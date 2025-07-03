@@ -57,6 +57,60 @@ DEFAULT_RSS_FEEDS = [
     ("Surfing the Net with Kids", "http://feeds.surfnetkids.com/SurfingTheNetWithKids"),
 ]
 
+# Default Twitter users for the /gettweets command dropdown
+DEFAULT_TWITTER_USERS = [
+    "acyn",
+    "elonmusk",
+    "basedmikelee",
+    "rapidresponse47",
+    "dhsgov",
+    "stephenm",
+    "trumpdailyposts",
+    "whitehouse",
+    "senmikelee",
+    "sec_noem",
+    "dnigabbard",
+    "secdef",
+    "secrubio",
+    "petehegseth",
+    "triciaohio",
+    "presssec",
+    "cnbc",
+    "patriottakes",
+    "aclu",
+    "dodresponse",
+    "curtisut",
+    "unusual_whales",
+    "ksl5tv",
+    "abc4utah",
+    "ap",
+    "betterutah",
+    "sltribpolitics",
+    "dnewspolitics",
+    "nytimes",
+    "cspan",
+    "politico",
+    "thehill",
+    "politifact",
+    "atrupar",
+    "fox13",
+    "kslcom",
+    "kutv2news",
+    "wutangkids",
+    "meidastouch",
+    "therickwilson",
+    "sama",
+    "openai",
+    "openainewsroom",
+    "openaidevs",
+    "briantylercohen",
+    "KeithOlbermann",
+    "magalietracker",
+    "racismdog",
+    "thedemocrats",
+    "jdvance",
+    "kristinoem",
+]
 # Module-level globals to store instances passed from main_bot.py
 bot_instance: Optional[commands.Bot] = None
 llm_client_instance: Optional[Any] = None
@@ -682,22 +736,46 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             await interaction.edit_original_response(content=f"Failed to process RSS feed. Error: {str(e)[:500]}", embed=None)
 
     @bot_instance.tree.command(name="gettweets", description="Fetches and summarizes recent tweets from a user.")
-    @app_commands.describe(username="The X/Twitter username (without @).", limit="Number of tweets to fetch (max 50).")
-    async def gettweets_slash_command(interaction: discord.Interaction, username: str, limit: app_commands.Range[int, 1, 50] = 10):
+    @app_commands.describe(
+        username="The X/Twitter username (without @).",
+        preset_user="Choose a preset account instead of typing one.",
+        limit="Number of tweets to fetch (max 50)."
+    )
+    @app_commands.choices(
+        preset_user=[app_commands.Choice(name=u, value=u) for u in DEFAULT_TWITTER_USERS]
+    )
+    async def gettweets_slash_command(
+        interaction: discord.Interaction,
+        username: str = "",
+        preset_user: str = "",
+        limit: app_commands.Range[int, 1, 50] = 10,
+    ):
         if not llm_client_instance or not bot_state_instance or not bot_instance or not bot_instance.user:
             logger.error("gettweets_slash_command: One or more bot components are None.")
             await interaction.response.send_message("Bot components not ready. Cannot get tweets.", ephemeral=True)
             return
 
-        logger.info(f"Gettweets command initiated by {interaction.user.name} for @{username}, limit {limit}.")
+        user_to_fetch = username or preset_user
+        if not user_to_fetch:
+            await interaction.response.send_message(
+                "Please provide a username or choose one from the dropdown.",
+                ephemeral=True,
+            )
+            return
+
+        logger.info(
+            f"Gettweets command initiated by {interaction.user.name} for @{user_to_fetch}, limit {limit}."
+        )
         if interaction.channel_id is None:
             await interaction.response.send_message("Error: This command must be used in a channel.", ephemeral=True)
             return
 
         await interaction.response.defer(ephemeral=False)
         # Send initial message using edit_original_response, this will be updated by send_progress
-        clean_username_for_initial_message = username.lstrip('@')
-        await interaction.edit_original_response(content=f"Starting to scrape tweets for @{clean_username_for_initial_message} (up to {limit})...")
+        clean_username_for_initial_message = user_to_fetch.lstrip('@')
+        await interaction.edit_original_response(
+            content=f"Starting to scrape tweets for @{clean_username_for_initial_message} (up to {limit})..."
+        )
 
         async def send_progress(message: str):
             try:
@@ -710,11 +788,13 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
 
 
         try:
-            clean_username = username.lstrip('@')
+            clean_username = user_to_fetch.lstrip('@')
 
             if bot_state_instance and hasattr(bot_state_instance, 'update_last_playwright_usage_time'):
-                await bot_state_instance.update_last_playwright_usage_time() # Made awaitable
-                logger.debug(f"Updated last_playwright_usage_time via bot_state_instance for /gettweets @{clean_username}")
+                await bot_state_instance.update_last_playwright_usage_time()  # Made awaitable
+                logger.debug(
+                    f"Updated last_playwright_usage_time via bot_state_instance for /gettweets @{clean_username}"
+                )
 
             # Initial message is already sent above. send_progress will now update it.
             tweets = await scrape_latest_tweets(clean_username, limit=limit, progress_callback=send_progress)
@@ -792,12 +872,18 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 bot_user_id=bot_instance.user.id
             )
         except Exception as e:
-            logger.error(f"Error in gettweets_slash_command for @{username}: {e}", exc_info=True)
-            error_content = f"My tweet-fetching antenna is bent! Failed for @{username}. Error: {str(e)[:500]}"
+            logger.error(
+                f"Error in gettweets_slash_command for @{user_to_fetch}: {e}", exc_info=True
+            )
+            error_content = (
+                f"My tweet-fetching antenna is bent! Failed for @{user_to_fetch}. Error: {str(e)[:500]}"
+            )
             try:
-                await interaction.edit_original_response(content=error_content, embed=None) # Clear embed
+                await interaction.edit_original_response(content=error_content, embed=None)  # Clear embed
             except discord.HTTPException:
-                 logger.warning(f"Could not send final error message (edit) for gettweets @{username} to user.")
+                logger.warning(
+                    f"Could not send final error message (edit) for gettweets @{user_to_fetch} to user."
+                )
 
 
     @bot_instance.tree.command(name="ap", description="Describes an attached image with a creative AP Photo twist.")
