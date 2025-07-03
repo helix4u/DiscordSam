@@ -26,9 +26,11 @@ from rag_chroma_manager import (
 from web_utils import (
     scrape_website,
     query_searx,
-    scrape_latest_tweets
+    scrape_latest_tweets,
+    fetch_rss_entries
 )
 from utils import parse_time_string_to_delta, chunk_text
+from rss_cache import load_seen_entries, save_seen_entries
 
 logger = logging.getLogger(__name__)
 
@@ -535,6 +537,93 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
         except Exception as e:
             logger.error(f"Error in pol_slash_command for statement '{statement[:50]}...': {e}", exc_info=True)
             await interaction.edit_original_response(content=f"My political satire circuits just blew a fuse! Error: {str(e)[:1000]}", embed=None)
+
+    @bot_instance.tree.command(name="rss", description="Fetches new entries from an RSS feed and summarizes them.")
+    @app_commands.describe(feed_url="The RSS feed URL.", limit="Number of new entries to fetch (max 10).")
+    async def rss_slash_command(
+        interaction: discord.Interaction,
+        feed_url: str,
+        limit: app_commands.Range[int, 1, 10] = 5,
+    ):
+        if not llm_client_instance or not bot_state_instance or not bot_instance or not bot_instance.user:
+            logger.error("rss_slash_command: One or more bot components are None.")
+            await interaction.response.send_message("Bot components not ready. Cannot fetch RSS.", ephemeral=True)
+            return
+
+        logger.info(f"RSS command initiated by {interaction.user.name} for {feed_url}, limit {limit}.")
+        if interaction.channel_id is None:
+            await interaction.response.send_message("Error: This command must be used in a channel.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=False)
+        await interaction.edit_original_response(content=f"Fetching RSS feed: {feed_url}...")
+
+        seen = load_seen_entries()
+        seen_ids = set(seen.get(feed_url, []))
+
+        try:
+            entries = await fetch_rss_entries(feed_url)
+            new_entries = [e for e in entries if e.get("guid") not in seen_ids]
+            if not new_entries:
+                await interaction.edit_original_response(content="No new entries found.")
+                return
+
+            to_process = new_entries[:limit]
+            summaries: List[str] = []
+
+            for idx, ent in enumerate(to_process, 1):
+                title = ent.get("title") or "Untitled"
+                link = ent.get("link") or ""
+                guid = ent.get("guid") or link
+
+                await interaction.edit_original_response(content=f"Scraping {idx}/{len(to_process)}: {title}...")
+
+                scraped_text, _ = await scrape_website(link)
+                if not scraped_text or "Failed to scrape" in scraped_text or "Scraping timed out" in scraped_text:
+                    summaries.append(f"**{title}**\nCould not scrape article: {link}\n")
+                    seen_ids.add(guid)
+                    continue
+
+                prompt = (
+                    f"Summarize the following article in 2-4 sentences. Focus on key facts.\n\n"
+                    f"Title: {title}\nURL: {link}\n\n{scraped_text[:config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT]}"
+                )
+
+                try:
+                    response = await llm_client_instance.chat.completions.create(
+                        model=config.FAST_LLM_MODEL,
+                        messages=[{"role": "user", "content": prompt}],
+                        max_tokens=250,
+                        temperature=0.3,
+                        stream=False,
+                    )
+                    summary = response.choices[0].message.content.strip() if response.choices else ""
+                except Exception as e_summ:
+                    logger.error(f"LLM summarization failed for {link}: {e_summ}")
+                    summary = "[LLM summarization failed]"
+
+                summaries.append(f"**{title}**\n{summary}\n{link}\n")
+                seen_ids.add(guid)
+
+            seen[feed_url] = list(seen_ids)
+            save_seen_entries(seen)
+
+            combined = "\n\n".join(summaries)
+            chunks = chunk_text(combined, config.EMBED_MAX_LENGTH)
+            for i, chunk in enumerate(chunks):
+                embed = discord.Embed(
+                    title=f"RSS Summaries for {feed_url}" + ("" if i == 0 else f" (cont. {i+1})"),
+                    description=chunk,
+                    color=config.EMBED_COLOR["complete"],
+                )
+                if i == 0:
+                    await interaction.edit_original_response(content=None, embed=embed)
+                else:
+                    await interaction.followup.send(embed=embed)
+
+        except Exception as e:
+            logger.error(f"Error in rss_slash_command for {feed_url}: {e}", exc_info=True)
+            await interaction.edit_original_response(content=f"Failed to process RSS feed. Error: {str(e)[:500]}", embed=None)
 
     @bot_instance.tree.command(name="gettweets", description="Fetches and summarizes recent tweets from a user.")
     @app_commands.describe(username="The X/Twitter username (without @).", limit="Number of tweets to fetch (max 50).")

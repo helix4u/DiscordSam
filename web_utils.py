@@ -506,3 +506,33 @@ async def fetch_youtube_transcript(url: str) -> Optional[str]:
         video_id_for_log = video_id_match.group(1) if 'video_id_match' in locals() and video_id_match else 'unknown_id_gen_err'
         logger.error(f"Failed to fetch YouTube transcript for {url} (ID: {video_id_for_log}): {e}", exc_info=True)
         return None
+
+async def fetch_rss_entries(feed_url: str) -> List[Dict[str, Any]]:
+    """Fetch and parse RSS feed entries."""
+    logger.info(f"Fetching RSS feed: {feed_url}")
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(feed_url, timeout=15) as resp:
+                resp.raise_for_status()
+                text = await resp.text()
+    except Exception as e:
+        logger.error(f"Failed to fetch RSS feed {feed_url}: {e}")
+        return []
+
+    try:
+        root = xml.etree.ElementTree.fromstring(text)
+        channel = root.find("channel") or root
+        items = channel.findall("item")
+        entries: List[Dict[str, Any]] = []
+        for it in items:
+            entries.append({
+                "title": it.findtext("title") or "",
+                "link": it.findtext("link") or "",
+                "guid": it.findtext("guid") or it.findtext("link") or "",
+                "pubDate": it.findtext("pubDate") or "",
+                "description": it.findtext("description") or "",
+            })
+        return entries
+    except Exception as e:
+        logger.error(f"Failed to parse RSS feed {feed_url}: {e}")
+        return []
