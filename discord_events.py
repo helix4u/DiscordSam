@@ -25,6 +25,7 @@ from rag_chroma_manager import (
 from utils import detect_urls, cleanup_playwright_processes
 from web_utils import scrape_website, fetch_youtube_transcript
 from audio_utils import transcribe_audio_file, send_tts_audio, load_whisper_model
+from timeline_pruner import prune_and_summarize
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +103,14 @@ def setup_events_and_tasks(bot: commands.Bot, llm_client_in: Any, bot_state_in: 
         else:
             logger.debug("Playwright cleanup task ran: No stray processes found or killed.")
 
+    @tasks.loop(hours=24)
+    async def timeline_pruner_task():
+        prune_days = getattr(config, 'TIMELINE_PRUNE_DAYS', 30)
+        try:
+            await prune_and_summarize(prune_days)
+        except Exception as e:
+            logger.error(f"Timeline pruner task failed: {e}", exc_info=True)
+
 
     @bot_instance.event # type: ignore
     async def on_ready():
@@ -132,6 +141,10 @@ def setup_events_and_tasks(bot: commands.Bot, llm_client_in: Any, bot_state_in: 
         if not cleanup_playwright_task.is_running():
             cleanup_playwright_task.start()
             logger.info("Playwright cleanup task started.")
+
+        if not timeline_pruner_task.is_running():
+            timeline_pruner_task.start()
+            logger.info("Timeline pruner task started.")
 
         await bot_instance.change_presence(activity=discord.Game(name="with /commands | Ask me anything!"))
         logger.info("Bot presence updated.")
