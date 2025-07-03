@@ -81,7 +81,7 @@ def setup_events_and_tasks(bot: commands.Bot, llm_client_in: Any, bot_state_in: 
             return
 
         last_usage = await bot_state_instance.get_last_playwright_usage_time()
-        cleanup_threshold_minutes = config.PLAYWRIGHT_IDLE_CLEANUP_THRESHOLD_MINUTES if hasattr(config, 'PLAYWRIGHT_IDLE_CLEANUP_THRESHOLD_MINUTES') else 10 # Default to 10 min
+        cleanup_threshold_minutes = config.PLAYWRIGHT_IDLE_CLEANUP_THRESHOLD_MINUTES if hasattr(config, 'PLAYWRIGHT_IDLE_CLEANUP_THRESHOLD_MINUTES') else 5 # Default to 5 min
 
         if last_usage:
             idle_time = datetime.now() - last_usage
