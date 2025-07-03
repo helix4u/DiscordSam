@@ -37,6 +37,18 @@ from rss_cache import load_seen_entries, save_seen_entries
 
 logger = logging.getLogger(__name__)
 
+# Default RSS feeds users can choose from with the /rss command
+DEFAULT_RSS_FEEDS = [
+    ("CBS Main", "https://www.cbsnews.com/latest/rss/main"),
+    ("CBS U.S.", "https://www.cbsnews.com/latest/rss/us"),
+    ("CBS World", "https://www.cbsnews.com/latest/rss/world"),
+    ("CBS Health", "https://www.cbsnews.com/latest/rss/health"),
+    ("CBS MoneyWatch", "https://www.cbsnews.com/latest/rss/moneywatch"),
+    ("CBS Science", "https://www.cbsnews.com/latest/rss/science"),
+    ("CBS Technology", "https://www.cbsnews.com/latest/rss/technology"),
+    ("CBS Entertainment", "https://www.cbsnews.com/latest/rss/entertainment"),
+]
+
 # Module-level globals to store instances passed from main_bot.py
 bot_instance: Optional[commands.Bot] = None
 llm_client_instance: Optional[Any] = None
@@ -543,6 +555,12 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
 
     @bot_instance.tree.command(name="rss", description="Fetches new entries from an RSS feed and summarizes them.")
     @app_commands.describe(feed_url="The RSS feed URL.", limit="Number of new entries to fetch (max 10).")
+    @app_commands.choices(
+        feed_url=[
+            app_commands.Choice(name=name, value=url)
+            for name, url in DEFAULT_RSS_FEEDS
+        ]
+    )
     async def rss_slash_command(
         interaction: discord.Interaction,
         feed_url: str,
