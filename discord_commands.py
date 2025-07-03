@@ -55,6 +55,15 @@ DEFAULT_RSS_FEEDS = [
     ("NPR Education", "http://www.npr.org/rss/rss.php?id=1013"),
     ("NPR Technology", "http://www.npr.org/rss/rss.php?id=1019"),
     ("Surfing the Net with Kids", "http://feeds.surfnetkids.com/SurfingTheNetWithKids"),
+    ("Hacker News", "https://news.ycombinator.com/rss"),
+    ("World News - The Guardian", "https://www.theguardian.com/world/rss"),
+    ("US News - The Guardian", "https://www.theguardian.com/us/rss"),
+    ("Gizmodo", "https://gizmodo.com/feed"),
+    ("Lifehacker", "https://lifehacker.com/feed/rss"),
+    ("Huffpost Politics", "https://chaski.huffpost.com/us/auto/vertical/politics"),
+    ("Huffpost US News", "https://chaski.huffpost.com/us/auto/vertical/us-news"),
+    ("Fox News Politics", "https://moxie.foxnews.com/google-publisher/politics.xml"),
+    ("Fox News World", "https://moxie.foxnews.com/google-publisher/world.xml"),
 ]
 
 # Default Twitter users for the /gettweets command dropdown
