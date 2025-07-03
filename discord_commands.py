@@ -47,7 +47,7 @@ DEFAULT_RSS_FEEDS = [
     ("CBS Science", "https://www.cbsnews.com/latest/rss/science"),
     ("CBS Technology", "https://www.cbsnews.com/latest/rss/technology"),
     ("CBS Entertainment", "https://www.cbsnews.com/latest/rss/entertainment"),
-    # Additional verified feeds
+    ("Google News", "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en"),
     ("CNN Top Stories", "http://rss.cnn.com/rss/cnn_topstories.rss"),
     ("NPR News", "http://www.npr.org/rss/rss.php?id=1001"),
     ("BBC Americas", "http://feeds.bbci.co.uk/news/world/us_and_canada/rss.xml?edition=int"),
