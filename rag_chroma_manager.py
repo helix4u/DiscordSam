@@ -162,7 +162,7 @@ Do not include any explanations or conversational text outside the JSON object.
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            max_tokens=2048, # Increased max_tokens for potentially larger JSON outputs
+            max_tokens=4096, # Increased max_tokens for potentially larger JSON outputs
             temperature=0.2,
             stream=False,
             **response_format_arg
@@ -283,18 +283,18 @@ async def synthesize_retrieved_contexts_llm(llm_client: Any, retrieved_full_text
 
     formatted_snippets = ""
     for i, text in enumerate(retrieved_full_texts):
-        formatted_snippets += f"--- Memory {i+1} ---\n{text[:2500]}\n\n"
+        formatted_snippets += f"--- Memory {i+1} ---\n{text[:2000]}\n\n"
 
     prompt = (
         "You are a master context synthesizer. Below are several retrieved conversation snippets (refer to these as memories) that "
         "might be relevant to the user's current query. Your task is to read all of them and synthesize "
-        "a single, concise and detailed paragraph that captures the most relevant information from these memories "
+        "a single, concise yet detailed paragraph that captures the most relevant information from these memories "
         "as it pertains to the user's query. This synthesized paragraph will be used to give an AI "
         "assistant context. Do not answer the user's query. Focus on extracting and combining relevant "
         "facts and discussion points from the snippets. If no snippets are truly relevant, create "
         "a generisized context that will assist the AI persona in creating a better informed response for the user "
         "(unless doing timeline summaries, then ignore the above instruction and use the summary prompt). "
-        "Be detailed and personal. Do not use <think> tags or metacognition for this.\n\n"
+        "Be detailed and personal. Include a list of 4 memories from the context. Do not use <think> tags or metacognition for this.\n\n"
         f"USER'S CURRENT QUERY:\n---\n{current_query}\n---\n\n"
         f"RETRIEVED SNIPPETS(MEMORIES):\n---\n{formatted_snippets}---\n\n"
         "SYNTHESIZED CONTEXT PARAGRAPH (3-8 sentences ideally. Do not use <think> tags or metacognition for this.):"
@@ -307,8 +307,8 @@ async def synthesize_retrieved_contexts_llm(llm_client: Any, retrieved_full_text
                 {"role": "system", "content": "You are an expert context synthesizer."},
                 {"role": "user", "content": prompt}
             ],
-            max_tokens=2048,
-            temperature=0.5,
+            max_tokens=3072,
+            temperature=0.6,
             stream=False
         )
         if response.choices and response.choices[0].message and response.choices[0].message.content:
