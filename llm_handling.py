@@ -421,39 +421,92 @@ async def stream_llm_response_to_interaction(
             bot_user_id=bot_user_id,
         )
 
+    assistant_response_node = None
+    chroma_ingest_history_with_response = []
+
     if channel_lock:
         async with channel_lock:
             full_response_content, final_prompt_for_rag = await _run_stream()
+
+            if not full_response_content.strip():
+                logger.info(
+                    f"No actual content in LLM response for interaction '{title}'. Skipping history, RAG, TTS."
+                )
+                return
+
+            channel_id = interaction.channel_id
+            if channel_id is None:
+                logger.error(
+                    f"Interaction {interaction.id} has no channel_id for history/RAG after stream."
+                )
+                return
+
+            await bot_state.append_history(
+                channel_id, user_msg_node, config.MAX_MESSAGE_HISTORY
+            )
+            assistant_response_node = MsgNode(
+                role="assistant",
+                content=full_response_content,
+                name=str(bot_user_id) if bot_user_id else None,
+            )
+            await bot_state.append_history(
+                channel_id, assistant_response_node, config.MAX_MESSAGE_HISTORY
+            )
+
+            tts_base_id = str(interaction.id)
+            if initial_msg_for_handler:
+                tts_base_id = str(initial_msg_for_handler.id)
+
+            await send_tts_audio(
+                interaction, full_response_content, f"interaction_{tts_base_id}"
+            )
+
+            chroma_ingest_history_with_response = list(final_prompt_for_rag)
+            chroma_ingest_history_with_response.append(assistant_response_node)
     else:
         full_response_content, final_prompt_for_rag = await _run_stream()
 
-    if full_response_content.strip():
-        channel_id = interaction.channel_id
-        if channel_id is None:
-            logger.error(f"Interaction {interaction.id} has no channel_id for history/RAG after stream.")
+        if not full_response_content.strip():
+            logger.info(
+                f"No actual content in LLM response for interaction '{title}'. Skipping history, RAG, TTS."
+            )
             return
 
-        await bot_state.append_history(channel_id, user_msg_node, config.MAX_MESSAGE_HISTORY)
-        assistant_response_node = MsgNode(role="assistant", content=full_response_content, name=str(bot_user_id) if bot_user_id else None)
-        await bot_state.append_history(channel_id, assistant_response_node, config.MAX_MESSAGE_HISTORY)
+        channel_id = interaction.channel_id
+        if channel_id is None:
+            logger.error(
+                f"Interaction {interaction.id} has no channel_id for history/RAG after stream."
+            )
+            return
 
-        # --- MODIFIED ORDER: Start TTS earlier and make it non-blocking ---
+        await bot_state.append_history(
+            channel_id, user_msg_node, config.MAX_MESSAGE_HISTORY
+        )
+        assistant_response_node = MsgNode(
+            role="assistant",
+            content=full_response_content,
+            name=str(bot_user_id) if bot_user_id else None,
+        )
+        await bot_state.append_history(
+            channel_id, assistant_response_node, config.MAX_MESSAGE_HISTORY
+        )
+
         tts_base_id = str(interaction.id)
         if initial_msg_for_handler:
             tts_base_id = str(initial_msg_for_handler.id)
 
-        # Create a task for TTS so it can run in the background
-        # Error handling within send_tts_audio is assumed.
-        asyncio.create_task(send_tts_audio(interaction, full_response_content, f"interaction_{tts_base_id}"))
-        logger.info(f"TTS task created for interaction '{title}'. Chroma ingestion will proceed concurrently.")
-        # --- END MODIFIED ORDER ---
+        await send_tts_audio(interaction, full_response_content, f"interaction_{tts_base_id}")
 
         chroma_ingest_history_with_response = list(final_prompt_for_rag)
         chroma_ingest_history_with_response.append(assistant_response_node)
-        await ingest_conversation_to_chromadb(llm_client, channel_id, interaction.user.id, chroma_ingest_history_with_response)
 
-    elif not full_response_content.strip():
-        logger.info(f"No actual content in LLM response for interaction '{title}'. Skipping history, RAG, TTS.")
+    if assistant_response_node:
+        await ingest_conversation_to_chromadb(
+            llm_client,
+            channel_id,
+            interaction.user.id,
+            chroma_ingest_history_with_response,
+        )
 
 
 async def stream_llm_response_to_message(
@@ -491,28 +544,47 @@ async def stream_llm_response_to_message(
             bot_user_id=bot_user_id,
         )
 
+    assistant_response_node = None
+    chroma_ingest_history_with_response = []
+
     async with channel_lock:
         full_response_content, final_prompt_for_rag = await _run_stream()
 
-    if full_response_content.strip():
-        channel_id = target_message.channel.id
-        await bot_state.append_history(channel_id, user_msg_node, config.MAX_MESSAGE_HISTORY)
-        assistant_response_node = MsgNode(role="assistant", content=full_response_content, name=str(bot_user_id) if bot_user_id else None)
-        await bot_state.append_history(channel_id, assistant_response_node, config.MAX_MESSAGE_HISTORY)
+        if not full_response_content.strip():
+            logger.info(
+                f"No actual content in LLM response for message '{title}'. Skipping history, RAG, TTS."
+            )
+            return
 
-        # --- MODIFIED ORDER: Start TTS earlier and make it non-blocking ---
-        # Create a task for TTS so it can run in the background
-        # Error handling within send_tts_audio is assumed.
-        asyncio.create_task(send_tts_audio(target_message.channel, full_response_content, base_filename=f"message_{target_message.id}"))
-        logger.info(f"TTS task created for message '{title}'. Chroma ingestion will proceed concurrently.")
-        # --- END MODIFIED ORDER ---
+        channel_id = target_message.channel.id
+        await bot_state.append_history(
+            channel_id, user_msg_node, config.MAX_MESSAGE_HISTORY
+        )
+        assistant_response_node = MsgNode(
+            role="assistant",
+            content=full_response_content,
+            name=str(bot_user_id) if bot_user_id else None,
+        )
+        await bot_state.append_history(
+            channel_id, assistant_response_node, config.MAX_MESSAGE_HISTORY
+        )
+
+        await send_tts_audio(
+            target_message.channel,
+            full_response_content,
+            base_filename=f"message_{target_message.id}",
+        )
 
         chroma_ingest_history_with_response = list(final_prompt_for_rag)
         chroma_ingest_history_with_response.append(assistant_response_node)
-        await ingest_conversation_to_chromadb(llm_client, channel_id, target_message.author.id, chroma_ingest_history_with_response)
 
-    elif not full_response_content.strip():
-        logger.info(f"No actual content in LLM response for message '{title}'. Skipping history, RAG, TTS.")
+    if assistant_response_node:
+        await ingest_conversation_to_chromadb(
+            llm_client,
+            channel_id,
+            target_message.author.id,
+            chroma_ingest_history_with_response,
+        )
 
 
 async def get_description_for_image(llm_client: Any, image_path: str) -> str:
