@@ -47,6 +47,7 @@ DEFAULT_RSS_FEEDS = [
     ("DoD News", "https://www.defense.gov/DesktopModules/ArticleCS/RSS.ashx?max=10&ContentType=1&Site=945"),
     ("DoD Releases", "https://www.defense.gov/DesktopModules/ArticleCS/RSS.ashx?ContentType=9&Site=945&max=10"),
     ("CBP Media Releases", "https://www.cbp.gov/rss/newsroom/media-releases"),
+    ("NBC News", "https://feeds.nbcnews.com/nbcnews/public/news"),
     ("CBS Entertainment", "https://www.cbsnews.com/latest/rss/entertainment"),
     ("Google News", "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en"),
     ("CNN Top Stories", "http://rss.cnn.com/rss/cnn_topstories.rss"),
