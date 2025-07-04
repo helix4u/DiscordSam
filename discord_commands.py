@@ -764,29 +764,46 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             try:
                 await interaction.edit_original_response(content=message)
             except discord.HTTPException as e_prog:
-                # Log if the original message edit fails, especially if it's due to interaction expiry
                 logger.warning(f"Failed to send progress update for gettweets (edit original): {e_prog}")
             except Exception as e_unexp:
                  logger.error(f"Unexpected error in send_progress for gettweets: {e_unexp}", exc_info=True)
 
+        # Ensure bot_state_instance is available before trying to get the lock
+        if not bot_state_instance:
+            logger.error("gettweets_slash_command: bot_state_instance is None. Cannot acquire scrape_lock.")
+            await interaction.edit_original_response(content="Bot state not available. Cannot process tweets.", embed=None)
+            return
+
+        scrape_lock = bot_state_instance.get_scrape_lock()
+        acquired_lock = False # Flag to track if lock was acquired
 
         try:
+            # Try to acquire the lock with a timeout to prevent indefinite waiting if another command holds it too long.
+            # Send a message if waiting for the lock.
+            await send_progress(f"Waiting for other scraping tasks to complete before fetching tweets for @{user_to_fetch.lstrip('@')}...")
+            try:
+                await asyncio.wait_for(scrape_lock.acquire(), timeout=config.SCRAPE_LOCK_TIMEOUT_SECONDS)
+                acquired_lock = True
+                # Update progress message now that lock is acquired
+                await send_progress(f"Scraping tweets for @{user_to_fetch.lstrip('@')} (up to {limit})...")
+            except asyncio.TimeoutError:
+                logger.warning(f"Timeout acquiring scrape_lock for /gettweets @{user_to_fetch.lstrip('@')}. Another task may be holding it too long.")
+                await interaction.edit_original_response(content=f"Could not acquire scrape lock for @{user_to_fetch.lstrip('@')} at this time. Please try again shortly.", embed=None)
+                return
+
             clean_username = user_to_fetch.lstrip('@')
 
-            if bot_state_instance and hasattr(bot_state_instance, 'update_last_playwright_usage_time'):
-                await bot_state_instance.update_last_playwright_usage_time()  # Made awaitable
+            if hasattr(bot_state_instance, 'update_last_playwright_usage_time'): # Check attribute existence
+                await bot_state_instance.update_last_playwright_usage_time()
                 logger.debug(
                     f"Updated last_playwright_usage_time via bot_state_instance for /gettweets @{clean_username}"
                 )
 
-            # Initial message is already sent above. send_progress will now update it.
             tweets = await scrape_latest_tweets(clean_username, limit=limit, progress_callback=send_progress)
 
             if not tweets:
                 final_content_message = f"Finished scraping for @{clean_username}. No tweets found or profile might be private/inaccessible."
-                await interaction.edit_original_response(content=final_content_message, embed=None) # Ensure embed is cleared
-                # Followup with a more user-friendly ephemeral message if needed, but primary is above.
-                # await interaction.followup.send(f"Could not fetch any recent tweets for @{clean_username}. The profile might be private, have no tweets, or there was an issue.", ephemeral=True)
+                await interaction.edit_original_response(content=final_content_message, embed=None)
                 return
 
             tweet_texts_for_display = []
@@ -825,9 +842,9 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                     color=config.EMBED_COLOR["complete"]
                 )
                 if i == 0:
-                    await interaction.edit_original_response(content=None, embed=embed) # Clear content text, show first embed
+                    await interaction.edit_original_response(content=None, embed=embed)
                 else:
-                    await interaction.followup.send(embed=embed) # New messages for subsequent chunks
+                    await interaction.followup.send(embed=embed)
 
             user_query_content_for_summary = (
                 f"Please analyze and summarize the main themes, topics discussed, and overall sentiment "
@@ -846,7 +863,6 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 user_id=str(interaction.user.id),
                 synthesized_rag_context_str=synthesized_rag_context
             )
-            # This will create a new message flow for the summary
             await stream_llm_response_to_interaction(
                 interaction, llm_client_instance, bot_state_instance, user_msg_node, prompt_nodes_summary,
                 title=f"Tweet Summary for @{clean_username}",
@@ -862,11 +878,20 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 f"My tweet-fetching antenna is bent! Failed for @{user_to_fetch}. Error: {str(e)[:500]}"
             )
             try:
-                await interaction.edit_original_response(content=error_content, embed=None)  # Clear embed
+                # Check if interaction is done before trying to edit.
+                # If it's already done (e.g. by an earlier error or timeout), use followup.
+                if interaction.response.is_done():
+                    await interaction.followup.send(content=error_content, ephemeral=True)
+                else:
+                    await interaction.edit_original_response(content=error_content, embed=None)
             except discord.HTTPException:
                 logger.warning(
-                    f"Could not send final error message (edit) for gettweets @{user_to_fetch} to user."
+                    f"Could not send final error message for gettweets @{user_to_fetch} to user (HTTPException)."
                 )
+        finally:
+            if acquired_lock: # Only release if it was acquired
+                scrape_lock.release()
+                logger.debug(f"Scrape lock released for /gettweets @{user_to_fetch.lstrip('@')}")
 
 
     @bot_instance.tree.command(name="ap", description="Describes an attached image with a creative AP Photo twist.")
