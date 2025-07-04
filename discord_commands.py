@@ -622,10 +622,10 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
         await interaction.response.defer(ephemeral=False)
         await interaction.edit_original_response(content=f"Fetching RSS feed: {feed_url}...")
 
-        seen = load_seen_entries()
-        seen_ids = set(seen.get(feed_url, []))
+        async def _process_rss() -> None:
+            seen = load_seen_entries()
+            seen_ids = set(seen.get(feed_url, []))
 
-        try:
             entries = await fetch_rss_entries(feed_url)
             new_entries = [e for e in entries if e.get("guid") not in seen_ids]
             if not new_entries:
@@ -686,9 +686,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                     await interaction.followup.send(embed=embed)
 
             # --- New: Postprocess like other responses ---
-            asyncio.create_task(
-                send_tts_audio(interaction, combined, base_filename=f"rss_{interaction.id}")
-            )
+            await send_tts_audio(interaction, combined, base_filename=f"rss_{interaction.id}")
             user_msg = MsgNode(
                 "user",
                 f"/rss {feed_url} (limit {limit})",
@@ -712,6 +710,10 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 [user_msg, assistant_msg],
             )
 
+        scrape_lock = bot_state_instance.get_scrape_lock()
+        try:
+            async with scrape_lock:
+                await _process_rss()
         except Exception as e:
             logger.error(f"Error in rss_slash_command for {feed_url}: {e}", exc_info=True)
             await interaction.edit_original_response(content=f"Failed to process RSS feed. Error: {str(e)[:500]}", embed=None)

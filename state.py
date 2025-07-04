@@ -15,6 +15,8 @@ class BotState:
         self.last_playwright_usage_time: Optional[datetime] = None
         # Locks to ensure only one LLM stream per channel at a time
         self.channel_locks = defaultdict(asyncio.Lock)
+        # Global lock to serialize scraping operations across commands
+        self.scrape_lock = asyncio.Lock()
 
     async def update_last_playwright_usage_time(self):
         """Updates the timestamp for the last Playwright usage."""
@@ -63,3 +65,7 @@ class BotState:
     def get_channel_lock(self, channel_id: int) -> asyncio.Lock:
         """Retrieve (or create) the asyncio.Lock for a specific channel."""
         return self.channel_locks[channel_id]
+
+    def get_scrape_lock(self) -> asyncio.Lock:
+        """Retrieve the global lock used for serializing scraping tasks."""
+        return self.scrape_lock
