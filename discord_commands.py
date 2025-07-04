@@ -59,7 +59,7 @@ DEFAULT_RSS_FEEDS = [
     ("Hacker News", "https://news.ycombinator.com/rss"),
     ("World News - The Guardian", "https://www.theguardian.com/world/rss"),
     ("US News - The Guardian", "https://www.theguardian.com/us/rss"),
-    ("Gizmodo", "https://gizmodo.com/feed"),
+
     ("Huffpost Politics", "https://chaski.huffpost.com/us/auto/vertical/politics"),
     ("Huffpost US News", "https://chaski.huffpost.com/us/auto/vertical/us-news"),
     ("Fox News Politics", "https://moxie.foxnews.com/google-publisher/politics.xml"),
@@ -848,7 +848,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
 
             user_query_content_for_summary = (
                 f"Please analyze and summarize the main themes, topics discussed, and overall sentiment "
-                f"from @{clean_username}'s recent tweets provided below. Extract key points and present a concise overview. "
+                f"from @{clean_username}'s recent tweets provided below. Extract key points and present a concise yet detailed overview of this snapshot in time. "
                 f"Do not just re-list the tweets.\n\nRecent Tweets:\n{raw_tweets_display_str[:config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT]}"
             )
             user_msg_node = MsgNode("user", user_query_content_for_summary, name=str(interaction.user.id))
@@ -925,13 +925,13 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             base64_image = base64.b64encode(image_bytes).decode('utf-8')
             image_url_for_llm = f"data:{image.content_type};base64,{base64_image}"
 
-            chosen_celebrity = random.choice(["Keanu Reeves", "Dwayne 'The Rock' Johnson", "Zendaya", "Tom Hanks", "Margot Robbie", "Ryan Reynolds", "Morgan Freeman", "Awkwafina"])
+            chosen_celebrity = random.choice(["Keanu Reeves", "Dwayne 'The Rock' Johnson", "Zendaya", "Tom Hanks", "Margot Robbie", "Ryan Reynolds", "Morgan Freeman", "Secret MAGA Man"])
 
             ap_task_prompt_text = (
                 f"You are an Associated Press (AP) photo caption writer with a quirky sense of humor. Your task is to describe the attached image in vivid detail, as if for someone who cannot see it. "
-                f"However, here's the twist: you must creatively and seamlessly replace the main subject or a prominent character in the image with the celebrity **{chosen_celebrity}**. "
-                f"Maintain a professional AP caption style (who, what, when, where, why - if inferable), but weave in {chosen_celebrity}'s presence naturally and humorously. "
-                f"Start your response with 'AP Photo: {chosen_celebrity}...' "
+                f"However, here's the twist: you must creatively and seamlessly replace the main subject or a prominent character in the image with the celebrity **{chosen_celebrity}** or celeb they are associated in some way, weaving that association into the description. "
+                f"Maintain a professional AP caption style (who, what, when, where, why - if inferable), but weave in {chosen_celebrity}'s or associate's presence naturally and humorously. "
+                f"Start your response with 'AP Photo: {chosen_celebrity}'s...' "
                 f"If the user provided an additional prompt, try to incorporate its theme or request into your {chosen_celebrity}-centric description: '{user_prompt if user_prompt else 'No additional user prompt.'}'"
             )
 
@@ -961,7 +961,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
 
             await stream_llm_response_to_interaction(
                 interaction, llm_client_instance, bot_state_instance, user_msg_node, final_prompt_nodes,
-                title=f"AP Photo Description ft. {chosen_celebrity}",
+                title=f"AP Photo Description ft. {chosen_celebrity} or someone associted with them.",
                 synthesized_rag_context_for_display=synthesized_rag_context,
                 bot_user_id=bot_instance.user.id
             )
