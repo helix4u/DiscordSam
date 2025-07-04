@@ -133,6 +133,8 @@ class Config:
         self.PLAYWRIGHT_CLEANUP_INTERVAL_MINUTES = _get_int("PLAYWRIGHT_CLEANUP_INTERVAL_MINUTES", 5) # How often the cleanup task runs
         self.PLAYWRIGHT_IDLE_CLEANUP_THRESHOLD_MINUTES = _get_int("PLAYWRIGHT_IDLE_CLEANUP_THRESHOLD_MINUTES", 10) # How long Playwright must be idle before cleanup
 
+        self.SCRAPE_LOCK_TIMEOUT_SECONDS = _get_int("SCRAPE_LOCK_TIMEOUT_SECONDS", 60) # Timeout for acquiring scrape lock
+
 
 # Global config instance
 config = Config()
