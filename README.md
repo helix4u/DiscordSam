@@ -472,3 +472,57 @@ Found a bug? Have a feature request? Want to contribute?
 *   If you'd like to contribute code, please **fork the repository** and submit a **pull request** with your changes. Ensure your code follows existing style conventions and consider adding tests for new features.
 
 We welcome contributions to improve and expand DiscordSam!
+
+---
+
+## 14. Utility Scripts
+
+This project may include utility scripts for various maintenance or data processing tasks.
+
+### Building a Knowledge Graph (`build_knowledge_graph.py`)
+
+This script allows you to generate a knowledge graph from the structured data (entities and relations) that DiscordSam extracts from conversations and stores in its ChromaDB instance.
+
+**Purpose:**
+
+*   To visualize the relationships and entities the bot has learned.
+*   For data analysis and understanding the bot's knowledge base.
+*   To potentially feed into other graph-based analysis tools.
+
+**Prerequisites:**
+
+*   Ensure you have run DiscordSam and it has processed some conversations, as this script relies on data in the `entities_collection` and `relations_collection` in ChromaDB.
+*   The necessary Python packages must be installed (including `networkx` and `chromadb`, which are in `requirements.txt`).
+
+**How to Run:**
+
+1.  Ensure your virtual environment is activated if you are using one.
+2.  Navigate to the root directory of the DiscordSam project.
+3.  Run the script from your terminal:
+
+    ```bash
+    python build_knowledge_graph.py [options]
+    ```
+
+**Command-Line Options:**
+
+*   `-o <filepath>`, `--output <filepath>`
+    *   Specifies the path and filename for the output graph file.
+    *   The graph is saved in GEXF format, which is compatible with graph visualization software like Gephi.
+    *   **Default:** `knowledge_graph.gexf` (saved in the current working directory).
+    *   Example: `python build_knowledge_graph.py -o ./graphs/my_bot_knowledge.gexf`
+
+**Output:**
+
+*   **A GEXF file:** This file contains the nodes (entities) and edges (relations) of the knowledge graph. You can open this file in tools like [Gephi](https://gephi.org/) to visualize and explore the graph.
+    *   **Nodes:** Represent entities extracted by the bot (e.g., "PersonA", "Python Programming", "ProjectX"). Node attributes include `entity_type` (e.g., "Person", "Concept", "Organization") and `source_doc_id` (linking back to the conversation source).
+    *   **Edges:** Represent relationships between entities (e.g., "PersonA" -_works_for_-> "OrganizationX"). Edge attributes include the `predicate` (the type of relationship, e.g., "works_for", "uses", "developed_by") and `context_phrase` (the sentence snippet from which the relation was inferred).
+*   **Console Logs:** The script will output logs to the console, indicating its progress, the number of entities and relations fetched, the number of nodes and edges added to the graph, and the final location of the saved GEXF file.
+
+**Interpreting the Graph:**
+
+*   When you open the GEXF file in a tool like Gephi:
+    *   You can use layout algorithms (e.g., ForceAtlas2, Fruchterman-Reingold) to arrange the nodes and edges visually.
+    *   Node labels will typically be the entity names. You can often color or size nodes by their `entity_type` attribute.
+    *   Edge labels can be set to display the `predicate` attribute, showing the nature of the relationships.
+    *   Analyzing the graph can reveal clusters of related entities, common relationships, and the overall structure of the bot's learned knowledge.
