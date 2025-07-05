@@ -41,11 +41,11 @@ logger = logging.getLogger(__name__)
 DEFAULT_RSS_FEEDS = [
     ("Google News", "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en"),
     ("CBS Main", "https://www.cbsnews.com/latest/rss/main"),
-    ("CBS U.S.", "https://www.cbsnews.com/latest/rss/us"),
-    ("CBS World", "https://www.cbsnews.com/latest/rss/world"),
+    ("WSJ World", "https://feeds.content.dowjones.io/public/rss/RSSWorldNews"),
+    ("WSJ US", "https://feeds.content.dowjones.io/public/rss/RSSUSnews"),
+    ("WSJ Politics", "https://feeds.content.dowjones.io/public/rss/socialpoliticsfeed"),
     ("Congressional Bills", "https://www.govinfo.gov/rss/bills.xml"),
     ("ABC Politics Headlines", "https://abcnews.go.com/abcnews/politicsheadlines"),
-    ("ABC Money Headlines", "https://abcnews.go.com/abcnews/moneyheadlines"),
     ("ABC US Headlines", "https://abcnews.go.com/abcnews/usheadlines"),
     ("DoD Releases", "https://www.defense.gov/DesktopModules/ArticleCS/RSS.ashx?ContentType=9&Site=945&max=10"),
     ("NYT Homepage", "https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml"),
@@ -55,7 +55,7 @@ DEFAULT_RSS_FEEDS = [
     ("NPR News", "http://www.npr.org/rss/rss.php?id=1001"),
     ("BBC Americas", "http://feeds.bbci.co.uk/news/world/us_and_canada/rss.xml?edition=int"),
     ("KSL Local Stories", "https://www.ksl.com/rss/news"),
-    ("Yahoo News", "https://news.yahoo.com/rss"),
+    ("Wired AI", "https://www.wired.com/feed/tag/ai/latest/rss"),
     ("Hacker News", "https://news.ycombinator.com/rss"),
     ("WAPO Politics", "https://www.washingtonpost.com/arcio/rss/category/politics/"),
     ("US News - The Guardian", "https://www.theguardian.com/us/rss"),
@@ -63,7 +63,6 @@ DEFAULT_RSS_FEEDS = [
     ("Huffpost US News", "https://chaski.huffpost.com/us/auto/vertical/us-news"),
     ("Fox Latest", "https://moxie.foxnews.com/google-publisher/latest.xml"),
     ("Fox News Politics", "https://moxie.foxnews.com/google-publisher/politics.xml"),
-    ("LA Times World", "https://www.latimes.com/world-nation/rss2.0.xml"),
 ]
 
 # Default Twitter users for the /gettweets command dropdown
