@@ -39,31 +39,31 @@ logger = logging.getLogger(__name__)
 
 # Default RSS feeds users can choose from with the /rss command
 DEFAULT_RSS_FEEDS = [
+    ("Google News", "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en"),
     ("CBS Main", "https://www.cbsnews.com/latest/rss/main"),
     ("CBS U.S.", "https://www.cbsnews.com/latest/rss/us"),
     ("CBS World", "https://www.cbsnews.com/latest/rss/world"),
     ("Congressional Bills", "https://www.govinfo.gov/rss/bills.xml"),
-    ("CBS MoneyWatch", "https://www.cbsnews.com/latest/rss/moneywatch"),
-    ("DoD News", "https://www.defense.gov/DesktopModules/ArticleCS/RSS.ashx?max=10&ContentType=1&Site=945"),
+    ("ABC Politics Headlines", "https://abcnews.go.com/abcnews/politicsheadlines"),
+    ("ABC Money Headlines", "https://abcnews.go.com/abcnews/moneyheadlines"),
+    ("ABC US Headlines", "https://abcnews.go.com/abcnews/usheadlines"),
     ("DoD Releases", "https://www.defense.gov/DesktopModules/ArticleCS/RSS.ashx?ContentType=9&Site=945&max=10"),
-    ("CBP Media Releases", "https://www.cbp.gov/rss/newsroom/media-releases"),
+    ("NYT Homepage", "https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml"),
     ("NBC News", "https://feeds.nbcnews.com/nbcnews/public/news"),
-    ("CBS Entertainment", "https://www.cbsnews.com/latest/rss/entertainment"),
-    ("Google News", "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en"),
-    ("CNN Top Stories", "http://rss.cnn.com/rss/cnn_topstories.rss"),
+    ("Washington Post Politics", "https://feeds.washingtonpost.com/rss/politics"),
+    ("Drude Report", "https://feeds.feedburner.com/DrudgeReportFeed"),
     ("NPR News", "http://www.npr.org/rss/rss.php?id=1001"),
     ("BBC Americas", "http://feeds.bbci.co.uk/news/world/us_and_canada/rss.xml?edition=int"),
     ("KSL Local Stories", "https://www.ksl.com/rss/news"),
-    ("NPR Education", "http://www.npr.org/rss/rss.php?id=1013"),
-    ("NPR Technology", "http://www.npr.org/rss/rss.php?id=1019"),
+    ("Yahoo News", "https://news.yahoo.com/rss"),
     ("Hacker News", "https://news.ycombinator.com/rss"),
-    ("World News - The Guardian", "https://www.theguardian.com/world/rss"),
+    ("WAPO Politics", "https://www.washingtonpost.com/arcio/rss/category/politics/"),
     ("US News - The Guardian", "https://www.theguardian.com/us/rss"),
-
     ("Huffpost Politics", "https://chaski.huffpost.com/us/auto/vertical/politics"),
     ("Huffpost US News", "https://chaski.huffpost.com/us/auto/vertical/us-news"),
+    ("Fox Latest", "https://moxie.foxnews.com/google-publisher/latest.xml"),
     ("Fox News Politics", "https://moxie.foxnews.com/google-publisher/politics.xml"),
-    ("Fox News World", "https://moxie.foxnews.com/google-publisher/world.xml"),
+    ("LA Times World", "https://www.latimes.com/world-nation/rss2.0.xml"),
 ]
 
 # Default Twitter users for the /gettweets command dropdown
@@ -649,7 +649,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                     continue
 
                 prompt = (
-                    f"It is 2025 and Donald Trump is the current president (Just an FYI. Maybe unrelated to context and omitted). Summarize the following article in 2-4 sentences. Focus on key facts. Present in a casual, blunt, honest and slightly profane tone. Do not start with 'So, '.\n\n"
+                    f"It is 2025 and Donald Trump is the current president (Just an FYI. Maybe unrelated to context and omitted). Do not use em dashes (—). Summarize the following article in 2-4 sentences. Focus on key facts. Present in a casual, blunt, honest and slightly profane tone. Do not start with 'So, '.\n\n"
                     f"Title: {title}\nURL: {link}\n\n{scraped_text[:config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT]}"
                 )
 
