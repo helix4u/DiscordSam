@@ -24,7 +24,7 @@ def load_whisper_model() -> Optional[Any]:
     if WHISPER_MODEL is None:
         try:
             logger.info("Loading Whisper model...")
-            WHISPER_MODEL = whisper.load_model("base") 
+            WHISPER_MODEL = whisper.load_model("large-v3-turbo") 
             logger.info("Whisper model loaded successfully.")
         except Exception as e:
             logger.critical(f"Failed to load Whisper model: {e}", exc_info=True)
