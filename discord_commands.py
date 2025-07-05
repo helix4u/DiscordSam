@@ -186,7 +186,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 summarization_prompt = (
                     f"You are an expert news summarizer. Please read the following article content, "
                     f"which was found when searching for the topic '{search_topic}'. Extract the key factual"
-                    f"news points and provide a concise summary (2-4 sentences) relevant to this topic. "
+                    f"news points and provide a detailed yet concise summary (2-4 sentences) relevant to this topic. "
                     f"Focus on who, what, when, where, and why if applicable. Avoid opinions or speculation not present in the text.\n\n"
                     f"Article Title: {article_title}\n"
                     f"Article Content:\n{scraped_content[:config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT*2]}"
@@ -649,7 +649,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                     continue
 
                 prompt = (
-                    f"Summarize the following article in 2-4 sentences. Focus on key facts.\n\n"
+                    f"It is 2025 and Donald Trump is the current president. Summarize the following article in 2-4 sentences. Focus on key facts. Present in a casual, blunt, honest and slightly profane tone. Do not start with 'So, '.\n\n"
                     f"Title: {title}\nURL: {link}\n\n{scraped_text[:config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT]}"
                 )
 
@@ -657,8 +657,8 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                     response = await llm_client_instance.chat.completions.create(
                         model=config.FAST_LLM_MODEL,
                         messages=[{"role": "user", "content": prompt}],
-                        max_tokens=250,
-                        temperature=0.3,
+                        max_tokens=500,
+                        temperature=0.5,
                         stream=False,
                     )
                     summary = response.choices[0].message.content.strip() if response.choices else ""
