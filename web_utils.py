@@ -147,9 +147,10 @@ async def scrape_website(
     progress_callback: Optional[Callable[[str], Awaitable[None]]] = None,
     screenshots_dir: Optional[str] = None
 ) -> Tuple[Optional[str], List[str]]:
-    if url.startswith("https://www.nytimes.com/"):
+    if url.startswith("https://www.nytimes.com/") or url.startswith("https://www.wsj.com/"):
+        archive_domain = "NYTimes" if "nytimes.com" in url else "WSJ"
         url = f"https://archive.is/newest/{url}"
-        logger.info(f"NYTimes URL detected. Using archive.is: {url}")
+        logger.info(f"{archive_domain} URL detected. Using archive.is: {url}")
     logger.info(f"Attempting to scrape website: {url}")
     screenshot_paths: List[str] = []
     if screenshots_dir:
