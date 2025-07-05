@@ -51,7 +51,7 @@ DEFAULT_RSS_FEEDS = [
     ("NYT Homepage", "https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml"),
     ("NBC News", "https://feeds.nbcnews.com/nbcnews/public/news"),
     ("Washington Post Politics", "https://feeds.washingtonpost.com/rss/politics"),
-    ("Drude Report", "https://feeds.feedburner.com/DrudgeReportFeed"),
+    ("Drudge Report", "https://feeds.feedburner.com/DrudgeReportFeed"),
     ("NPR News", "http://www.npr.org/rss/rss.php?id=1001"),
     ("BBC Americas", "http://feeds.bbci.co.uk/news/world/us_and_canada/rss.xml?edition=int"),
     ("KSL Local Stories", "https://www.ksl.com/rss/news"),
