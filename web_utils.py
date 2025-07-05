@@ -147,6 +147,9 @@ async def scrape_website(
     progress_callback: Optional[Callable[[str], Awaitable[None]]] = None,
     screenshots_dir: Optional[str] = None
 ) -> Tuple[Optional[str], List[str]]:
+    if url.startswith("https://www.nytimes.com/"):
+        url = f"https://archive.is/newest/{url}"
+        logger.info(f"NYTimes URL detected. Using archive.is: {url}")
     logger.info(f"Attempting to scrape website: {url}")
     screenshot_paths: List[str] = []
     if screenshots_dir:
