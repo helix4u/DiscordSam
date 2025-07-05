@@ -649,7 +649,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                     continue
 
                 prompt = (
-                    f"It is 2025 and Donald Trump is the current president (Just an FYI. Maybe unrelated to contextand omitted). Summarize the following article in 2-4 sentences. Focus on key facts. Present in a casual, blunt, honest and slightly profane tone. Do not start with 'So, '.\n\n"
+                    f"It is 2025 and Donald Trump is the current president (Just an FYI. Maybe unrelated to context and omitted). Summarize the following article in 2-4 sentences. Focus on key facts. Present in a casual, blunt, honest and slightly profane tone. Do not start with 'So, '.\n\n"
                     f"Title: {title}\nURL: {link}\n\n{scraped_text[:config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT]}"
                 )
 
