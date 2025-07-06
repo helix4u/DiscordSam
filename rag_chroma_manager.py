@@ -303,13 +303,18 @@ async def synthesize_retrieved_contexts_llm(llm_client: Any, retrieved_full_text
         "a single, concise yet detailed paragraph that captures the most relevant information from these memories "
         "as it pertains to the user's query. This synthesized paragraph will be used to give an AI "
         "assistant context. Do not answer the user's query. Focus on extracting and combining relevant "
-        "facts and discussion points from the snippets. If no snippets are truly relevant, create "
+        "facts and discussion points from the snippets.\n"
+        "IMPORTANT: Each memory snippet may start with a header like 'Conversation recorded at: [timestamp]' and 'Initiating User Question: [question]'. "
+        "When you incorporate information from a specific memory, you MUST explicitly state the approximate date (e.g., 'On {Month Day, Year}...' or '{X days/weeks/months ago}...') "
+        "derived from the 'Conversation recorded at' timestamp, and briefly mention the 'Initiating User Question' of that memory if it's distinct and relevant to the summarized point. "
+        "This provides crucial temporal and contextual grounding.\n"
+        "If no snippets are truly relevant, create "
         "a generisized context that will assist the AI persona in creating a better informed response for the user "
         "(unless doing timeline summaries, then ignore the above instruction and use the summary prompt). "
         "Be detailed and personal. Do not use <think> tags or metacognition for this.\n\n"
         f"USER'S CURRENT QUERY:\n---\n{current_query}\n---\n\n"
         f"RETRIEVED SNIPPETS(MEMORIES):\n---\n{formatted_snippets}---\n\n"
-        "SYNTHESIZED CONTEXT PARAGRAPH (3-8 sentences ideally. +  a list of 4 memories from the context. Do not use <think> tags or metacognition for this.):"
+        "SYNTHESIZED CONTEXT PARAGRAPH (3-8 sentences ideally. Include dates and initiating questions as instructed. + a list of 4 memories from the context. Do not use <think> tags or metacognition for this.):"
     )
     try:
         logger.debug(f"Requesting context synthesis from model {config.FAST_LLM_MODEL}.")
@@ -471,20 +476,43 @@ async def ingest_conversation_to_chromadb(
         logger.warning("One or more ChromaDB collections are not available. Skipping full ingestion pipeline.")
         return
 
+    timestamp_now = datetime.now() # Define earlier
+    str_user_id = str(user_id) # Define earlier
+
     can_do_focused_distillation = False
     if len(conversation_history_for_rag) >= 2:
         if conversation_history_for_rag[-2].role == 'user' and conversation_history_for_rag[-1].role == 'assistant':
             can_do_focused_distillation = True
 
+    initiating_user_question = "N/A"
+    if conversation_history_for_rag:
+        first_user_msg = next((msg for msg in conversation_history_for_rag if msg.role == 'user'), None)
+        if first_user_msg:
+            initiating_user_question = _format_msg_content_for_text(first_user_msg.content)
+        elif conversation_history_for_rag[0].role == 'user': # Fallback if no user role in later messages but first is user
+            initiating_user_question = _format_msg_content_for_text(conversation_history_for_rag[0].content)
+
+
+    header_text_parts = [
+        f"Conversation recorded at: {timestamp_now.isoformat()}",
+        f"Initiating User ID: {str_user_id}",
+        f"Initiating User Question: {initiating_user_question}",
+        "--- Message Log ---"
+    ]
+
     full_conversation_text_parts = []
     for msg in conversation_history_for_rag:
         msg_name_str = str(msg.name) if msg.name else "N/A"
         formatted_content = _format_msg_content_for_text(msg.content)
+        # Prepend timestamp to each message as well, for more granular context if needed later,
+        # though the main request is about the conversation's start date.
+        # For now, the main conversation timestamp is in the header.
         full_conversation_text_parts.append(f"{msg.role} (name: {msg_name_str}): {formatted_content}")
-    original_full_text_for_storage = "\n".join(full_conversation_text_parts)
 
-    if not original_full_text_for_storage.strip():
-        logger.info(f"Skipping ingestion of empty full conversation text. Channel: {channel_id}, User: {user_id}")
+    original_full_text_for_storage = "\n".join(header_text_parts + full_conversation_text_parts)
+
+    if not full_conversation_text_parts: # Check if there's any actual message content
+        logger.info(f"Skipping ingestion of conversation with no actual messages. Channel: {channel_id}, User: {user_id}")
         return
 
     timestamp_now = datetime.now()
