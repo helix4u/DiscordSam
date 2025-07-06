@@ -23,6 +23,7 @@ from rag_chroma_manager import (
     parse_chatgpt_export,
     store_chatgpt_conversations_in_chromadb,
     store_news_summary,
+    store_rss_summary, # New import
     ingest_conversation_to_chromadb,
 )
 from web_utils import (
@@ -34,6 +35,7 @@ from web_utils import (
 from audio_utils import send_tts_audio
 from utils import parse_time_string_to_delta, chunk_text
 from rss_cache import load_seen_entries, save_seen_entries
+from twitter_cache import load_seen_tweet_ids, save_seen_tweet_ids # New import
 
 logger = logging.getLogger(__name__)
 
@@ -661,6 +663,15 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                         stream=False,
                     )
                     summary = response.choices[0].message.content.strip() if response.choices else ""
+                    if summary and summary != "[LLM summarization failed]":
+                        # Store the successful summary in ChromaDB
+                        store_rss_summary(
+                            feed_url=feed_url,
+                            article_url=link,
+                            title=title,
+                            summary_text=summary,
+                            timestamp=datetime.now() #  ent.get("published_parsed") could be used if available and reliable
+                        )
                 except Exception as e_summ:
                     logger.error(f"LLM summarization failed for {link}: {e_summ}")
                     summary = "[LLM summarization failed]"
@@ -798,37 +809,77 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                     f"Updated last_playwright_usage_time via bot_state_instance for /gettweets @{clean_username}"
                 )
 
-            tweets = await scrape_latest_tweets(clean_username, limit=limit, progress_callback=send_progress)
+            all_seen_tweet_ids_cache = load_seen_tweet_ids()
+            user_seen_tweet_ids = all_seen_tweet_ids_cache.get(clean_username, set())
 
-            if not tweets:
+            # The scrape_latest_tweets function needs to return something with an ID.
+            # Let's assume it returns a list of dicts, and each dict has a 'tweet_id' or 'tweet_url' key.
+            # For this example, I'll assume 'tweet_url' is unique enough to serve as an ID.
+            # If `scrape_latest_tweets` is not returning IDs, it will need to be modified.
+            # For now, I'll proceed assuming 'tweet_url' is the unique identifier.
+
+            fetched_tweets_data = await scrape_latest_tweets(clean_username, limit=limit, progress_callback=send_progress)
+
+            if not fetched_tweets_data:
                 final_content_message = f"Finished scraping for @{clean_username}. No tweets found or profile might be private/inaccessible."
                 await interaction.edit_original_response(content=final_content_message, embed=None)
                 return
 
+            new_tweets_to_process = []
+            processed_tweet_ids_current_run = set()
+
+            for tweet_data in fetched_tweets_data:
+                # IMPORTANT: Adjust 'tweet_url' if the actual unique identifier is different
+                # (e.g., 'id_str', 'tweet_id', or a combination of fields).
+                # For robustness, a dedicated tweet ID from the platform is best if available.
+                tweet_identifier = tweet_data.get('tweet_url')
+                if not tweet_identifier:
+                    logger.warning(f"Tweet from @{clean_username} missing 'tweet_url' or suitable ID. Skipping. Data: {tweet_data}")
+                    continue
+
+                if tweet_identifier not in user_seen_tweet_ids:
+                    new_tweets_to_process.append(tweet_data)
+                    processed_tweet_ids_current_run.add(tweet_identifier)
+                else:
+                    logger.info(f"Skipping already seen tweet for @{clean_username}: {tweet_identifier}")
+
+            if not new_tweets_to_process:
+                final_content_message = f"No new tweets found for @{clean_username} since last check."
+                await interaction.edit_original_response(content=final_content_message, embed=None)
+                # Still save, in case the cache file didn't exist for this user yet.
+                all_seen_tweet_ids_cache[clean_username] = user_seen_tweet_ids.union(processed_tweet_ids_current_run)
+                save_seen_tweet_ids(all_seen_tweet_ids_cache)
+                return
+
             tweet_texts_for_display = []
-            for t in tweets:
-                ts_str = t.get('timestamp', 'N/A')
+            for t_data in new_tweets_to_process: # Iterate over new_tweets_to_process
+                ts_str = t_data.get('timestamp', 'N/A')
                 display_ts = ts_str
                 try:
                     dt_obj = datetime.fromisoformat(ts_str.replace("Z", "+00:00")) if ts_str != 'N/A' else None
                     display_ts = dt_obj.strftime("%Y-%m-%d %H:%M UTC") if dt_obj else ts_str
                 except ValueError: pass
 
-                author_display = t.get('username', clean_username)
-                content_display = discord.utils.escape_markdown(t.get('content', 'N/A'))
-                tweet_url_display = t.get('tweet_url', '')
+                author_display = t_data.get('username', clean_username)
+                content_display = discord.utils.escape_markdown(t_data.get('content', 'N/A'))
+                tweet_url_display = t_data.get('tweet_url', '') # This is our assumed ID
 
                 header = f"[{display_ts}] @{author_display}"
-                if t.get('is_repost') and t.get('reposted_by'):
-                    header = f"[{display_ts}] @{t.get('reposted_by')} reposted @{author_display}"
+                if t_data.get('is_repost') and t_data.get('reposted_by'):
+                    header = f"[{display_ts}] @{t_data.get('reposted_by')} reposted @{author_display}"
 
                 link_text = f" ([Link]({tweet_url_display}))" if tweet_url_display else ""
                 tweet_texts_for_display.append(f"**{header}**: {content_display}{link_text}")
 
             raw_tweets_display_str = "\n\n".join(tweet_texts_for_display)
-            if not raw_tweets_display_str: raw_tweets_display_str = "No tweet content could be formatted for display."
+            if not raw_tweets_display_str: raw_tweets_display_str = "No new tweet content could be formatted for display."
 
-            await send_progress(f"Formatting {len(tweets)} tweets for display...")
+            await send_progress(f"Formatting {len(new_tweets_to_process)} new tweets for display...")
+
+            # Update and save the cache with newly processed tweet IDs
+            all_seen_tweet_ids_cache[clean_username] = user_seen_tweet_ids.union(processed_tweet_ids_current_run)
+            save_seen_tweet_ids(all_seen_tweet_ids_cache)
+            logger.info(f"Updated and saved seen tweet IDs for @{clean_username}. Total seen: {len(all_seen_tweet_ids_cache[clean_username])}")
 
             embed_title = f"Recent Tweets from @{clean_username}"
             raw_tweet_chunks = chunk_text(raw_tweets_display_str, config.EMBED_MAX_LENGTH)
