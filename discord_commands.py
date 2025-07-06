@@ -606,7 +606,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
     async def rss_slash_command(
         interaction: discord.Interaction,
         feed_url: str,
-        limit: app_commands.Range[int, 1, 10] = 5,
+        limit: app_commands.Range[int, 1, 20] = 10,
     ):
         if not llm_client_instance or not bot_state_instance or not bot_instance or not bot_instance.user:
             logger.error("rss_slash_command: One or more bot components are None.")
