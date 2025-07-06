@@ -41,28 +41,28 @@ logger = logging.getLogger(__name__)
 DEFAULT_RSS_FEEDS = [
     ("Google News", "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en"),
     ("CBS Main", "https://www.cbsnews.com/latest/rss/main"),
-    ("WSJ World", "https://feeds.content.dowjones.io/public/rss/RSSWorldNews"),
     ("WSJ US", "https://feeds.content.dowjones.io/public/rss/RSSUSnews"),
     ("WSJ Politics", "https://feeds.content.dowjones.io/public/rss/socialpoliticsfeed"),
-    ("Congressional Bills", "https://www.govinfo.gov/rss/bills.xml"),
     ("ABC Politics Headlines", "https://abcnews.go.com/abcnews/politicsheadlines"),
     ("ABC US Headlines", "https://abcnews.go.com/abcnews/usheadlines"),
-    ("DoD Releases", "https://www.defense.gov/DesktopModules/ArticleCS/RSS.ashx?ContentType=9&Site=945&max=10"),
+    ("Washington Times", "https://www.washingtontimes.com/rss/headlines/news"),
     ("NYT Homepage", "https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml"),
     ("NBC News", "https://feeds.nbcnews.com/nbcnews/public/news"),
-    ("Washington Post Politics", "https://feeds.washingtonpost.com/rss/politics"),
+    ("NBC World", "https://feeds.nbcnews.com/nbcnews/public/world"),
     ("Drudge Report", "https://feeds.feedburner.com/DrudgeReportFeed"),
     ("NPR News", "http://www.npr.org/rss/rss.php?id=1001"),
     ("BBC Americas", "http://feeds.bbci.co.uk/news/world/us_and_canada/rss.xml?edition=int"),
     ("KSL Local Stories", "https://www.ksl.com/rss/news"),
-    ("Wired AI", "https://www.wired.com/feed/tag/ai/latest/rss"),
     ("Hacker News", "https://news.ycombinator.com/rss"),
     ("WAPO Politics", "https://www.washingtonpost.com/arcio/rss/category/politics/"),
     ("US News - The Guardian", "https://www.theguardian.com/us/rss"),
     ("Huffpost Politics", "https://chaski.huffpost.com/us/auto/vertical/politics"),
     ("Huffpost US News", "https://chaski.huffpost.com/us/auto/vertical/us-news"),
-    ("Fox Latest", "https://moxie.foxnews.com/google-publisher/latest.xml"),
     ("Fox News Politics", "https://moxie.foxnews.com/google-publisher/politics.xml"),
+    ("Breitbart", "https://feeds.feedburner.com/breitbart"),
+    ("The Intercept", "https://theintercept.com/feed/?lang=en"),
+    ("Mother Jones", "https://www.motherjones.com/feed/"),
+    ("Quartz", "https://qz.com/rss"),
 ]
 
 # Default Twitter users for the /gettweets command dropdown
@@ -596,7 +596,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             await interaction.edit_original_response(content=f"My political satire circuits just blew a fuse! Error: {str(e)[:1000]}", embed=None)
 
     @bot_instance.tree.command(name="rss", description="Fetches new entries from an RSS feed and summarizes them.")
-    @app_commands.describe(feed_url="The RSS feed URL.", limit="Number of new entries to fetch (max 10).")
+    @app_commands.describe(feed_url="The RSS feed URL.", limit="Number of new entries to fetch (max 20).")
     @app_commands.choices(
         feed_url=[
             app_commands.Choice(name=name, value=url)
