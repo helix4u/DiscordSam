@@ -24,11 +24,12 @@ timeline_summary_collection: Optional[chromadb.Collection] = None
 entity_collection: Optional[chromadb.Collection] = None
 relation_collection: Optional[chromadb.Collection] = None
 observation_collection: Optional[chromadb.Collection] = None
+tweets_collection: Optional[chromadb.Collection] = None # New collection for tweets
 
 def initialize_chromadb() -> bool:
     global chroma_client, chat_history_collection, distilled_chat_summary_collection, \
            news_summary_collection, rss_summary_collection, timeline_summary_collection, entity_collection, \
-           relation_collection, observation_collection # Added rss_summary_collection
+           relation_collection, observation_collection, tweets_collection # Added tweets_collection
 
     if chroma_client:
         logger.debug("ChromaDB already initialized.")
@@ -61,16 +62,20 @@ def initialize_chromadb() -> bool:
         logger.info(f"Getting or creating ChromaDB collection: {config.CHROMA_OBSERVATIONS_COLLECTION_NAME}")
         observation_collection = chroma_client.get_or_create_collection(name=config.CHROMA_OBSERVATIONS_COLLECTION_NAME)
 
+        logger.info(f"Getting or creating ChromaDB collection: {config.CHROMA_TWEETS_COLLECTION_NAME}") # New
+        tweets_collection = chroma_client.get_or_create_collection(name=config.CHROMA_TWEETS_COLLECTION_NAME) # New
+
         logger.info(
             f"ChromaDB initialized successfully. Collections: "
             f"'{config.CHROMA_COLLECTION_NAME}', "
             f"'{config.CHROMA_DISTILLED_COLLECTION_NAME}', "
             f"'{config.CHROMA_NEWS_SUMMARY_COLLECTION_NAME}', "
-             f"'{config.CHROMA_RSS_SUMMARY_COLLECTION_NAME}', " # New
+            f"'{config.CHROMA_RSS_SUMMARY_COLLECTION_NAME}', "
             f"'{config.CHROMA_TIMELINE_SUMMARY_COLLECTION_NAME}', "
             f"'{config.CHROMA_ENTITIES_COLLECTION_NAME}', "
             f"'{config.CHROMA_RELATIONS_COLLECTION_NAME}', "
-            f"'{config.CHROMA_OBSERVATIONS_COLLECTION_NAME}'."
+            f"'{config.CHROMA_OBSERVATIONS_COLLECTION_NAME}', "
+            f"'{config.CHROMA_TWEETS_COLLECTION_NAME}'." # New
         )
         return True
     except Exception as e:
@@ -79,11 +84,12 @@ def initialize_chromadb() -> bool:
         chat_history_collection = None
         distilled_chat_summary_collection = None
         news_summary_collection = None
-        rss_summary_collection = None # New
+        rss_summary_collection = None
         timeline_summary_collection = None
         entity_collection = None
         relation_collection = None
         observation_collection = None
+        tweets_collection = None # New
         return False
 
 async def extract_structured_data_llm(
@@ -391,13 +397,14 @@ async def retrieve_and_prepare_rag_context(llm_client: Any, query: str, n_result
             ("chat_history", chat_history_collection),
             ("timeline", timeline_summary_collection),
             ("news", news_summary_collection),
-            ("rss", rss_summary_collection), # New
+            ("rss", rss_summary_collection),
+            ("tweets", tweets_collection), # New
             ("entity", entity_collection),
             ("relation", relation_collection),
             ("observation", observation_collection),
         ]
 
-        for name, collection_obj in additional_collections: # Renamed 'collection' to 'collection_obj' to avoid conflict
+        for name, collection_obj in additional_collections:
             if not collection_obj:
                 logger.debug(f"RAG: Collection '{name}' is not available, skipping.")
                 continue
