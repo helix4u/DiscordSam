@@ -25,6 +25,7 @@ from rag_chroma_manager import (
     store_news_summary,
     store_rss_summary, # New import
     ingest_conversation_to_chromadb,
+    tweets_collection, # New import for tweets collection
 )
 from web_utils import (
     scrape_website,
@@ -880,6 +881,54 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             all_seen_tweet_ids_cache[clean_username] = user_seen_tweet_ids.union(processed_tweet_ids_current_run)
             save_seen_tweet_ids(all_seen_tweet_ids_cache)
             logger.info(f"Updated and saved seen tweet IDs for @{clean_username}. Total seen: {len(all_seen_tweet_ids_cache[clean_username])}")
+
+            # Store new tweets in ChromaDB
+            if new_tweets_to_process and tweets_collection:
+                tweet_docs_to_add = []
+                tweet_metadatas_to_add = []
+                tweet_ids_to_add = []
+                for t_data in new_tweets_to_process:
+                    tweet_identifier = t_data.get('tweet_url') # Assuming this is unique and suitable as an ID
+                    if not tweet_identifier:
+                        logger.warning(f"Skipping tweet storage for @{clean_username} due to missing 'tweet_url' or ID. Data: {t_data}")
+                        continue
+
+                    # Use the tweet URL as the document ID if it's guaranteed unique, otherwise generate one
+                    # For Chroma, IDs should be unique strings.
+                    doc_id = f"tweet_{clean_username}_{tweet_identifier.split('/')[-1] if '/' in tweet_identifier else tweet_identifier}"
+
+                    # The document itself will be the content of the tweet
+                    document_content = t_data.get('content', '')
+                    if not document_content.strip(): # Don't store empty tweets
+                        logger.info(f"Skipping empty tweet from @{clean_username}, ID: {doc_id}")
+                        continue
+
+                    metadata = {
+                        "username": clean_username,
+                        "tweet_url": tweet_identifier,
+                        "timestamp": t_data.get('timestamp', datetime.now().isoformat()),
+                        "is_repost": t_data.get('is_repost', False),
+                        "reposted_by": t_data.get('reposted_by', None),
+                        "source_command": "/gettweets",
+                        "raw_data_preview": str(t_data)[:200] # Store a snippet for quick reference
+                    }
+                    tweet_docs_to_add.append(document_content)
+                    tweet_metadatas_to_add.append(metadata)
+                    tweet_ids_to_add.append(doc_id)
+
+                if tweet_ids_to_add:
+                    try:
+                        tweets_collection.add(
+                            documents=tweet_docs_to_add,
+                            metadatas=tweet_metadatas_to_add,
+                            ids=tweet_ids_to_add
+                        )
+                        logger.info(f"Successfully stored {len(tweet_ids_to_add)} new tweets from @{clean_username} in ChromaDB.")
+                    except Exception as e_add_tweet:
+                        logger.error(f"Failed to store tweets for @{clean_username} in ChromaDB: {e_add_tweet}", exc_info=True)
+            elif not tweets_collection:
+                logger.warning(f"tweets_collection is not available. Skipping storage of tweets for @{clean_username}.")
+
 
             embed_title = f"Recent Tweets from @{clean_username}"
             raw_tweet_chunks = chunk_text(raw_tweets_display_str, config.EMBED_MAX_LENGTH)
