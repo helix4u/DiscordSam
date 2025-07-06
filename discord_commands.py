@@ -599,7 +599,11 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             await interaction.edit_original_response(content=f"My political satire circuits just blew a fuse! Error: {str(e)[:1000]}", embed=None)
 
     @bot_instance.tree.command(name="rss", description="Fetches new entries from an RSS feed and summarizes them.")
-    @app_commands.describe(feed_url="The RSS feed URL.", limit="Number of new entries to fetch (max 20).")
+    @app_commands.describe(
+        feed_url="Choose a preset RSS feed URL.",
+        feed_url_manual="Or, enter an RSS feed URL manually.",
+        limit="Number of new entries to fetch (max 20)."
+    )
     @app_commands.choices(
         feed_url=[
             app_commands.Choice(name=name, value=url)
@@ -608,7 +612,8 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
     )
     async def rss_slash_command(
         interaction: discord.Interaction,
-        feed_url: str,
+        feed_url: Optional[str] = None,  # Made optional
+        feed_url_manual: Optional[str] = None, # New manual field
         limit: app_commands.Range[int, 1, 20] = 10,
     ):
         if not llm_client_instance or not bot_state_instance or not bot_instance or not bot_instance.user:
@@ -616,19 +621,29 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             await interaction.response.send_message("Bot components not ready. Cannot fetch RSS.", ephemeral=True)
             return
 
-        logger.info(f"RSS command initiated by {interaction.user.name} for {feed_url}, limit {limit}.")
+        # Determine the final feed URL to use
+        final_feed_url = feed_url_manual if feed_url_manual else feed_url
+
+        if not final_feed_url:
+            await interaction.response.send_message(
+                "Please either select a preset RSS feed or manually enter a URL.",
+                ephemeral=True
+            )
+            return
+
+        logger.info(f"RSS command initiated by {interaction.user.name} for {final_feed_url}, limit {limit}.")
         if interaction.channel_id is None:
             await interaction.response.send_message("Error: This command must be used in a channel.", ephemeral=True)
             return
 
         await interaction.response.defer(ephemeral=False)
-        await interaction.edit_original_response(content=f"Fetching RSS feed: {feed_url}...")
+        await interaction.edit_original_response(content=f"Fetching RSS feed: {final_feed_url}...")
 
         async def _process_rss() -> None:
             seen = load_seen_entries()
-            seen_ids = set(seen.get(feed_url, []))
+            seen_ids = set(seen.get(final_feed_url, [])) # Use final_feed_url
 
-            entries = await fetch_rss_entries(feed_url)
+            entries = await fetch_rss_entries(final_feed_url) # Use final_feed_url
             new_entries = [e for e in entries if e.get("guid") not in seen_ids]
             if not new_entries:
                 await interaction.edit_original_response(content="No new entries found.")
@@ -667,7 +682,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                     if summary and summary != "[LLM summarization failed]":
                         # Store the successful summary in ChromaDB
                         store_rss_summary(
-                            feed_url=feed_url,
+                            feed_url=final_feed_url, # Use final_feed_url
                             article_url=link,
                             title=title,
                             summary_text=summary,
@@ -680,14 +695,14 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 summaries.append(f"**{title}**\n{summary}\n{link}\n")
                 seen_ids.add(guid)
 
-            seen[feed_url] = list(seen_ids)
+            seen[final_feed_url] = list(seen_ids) # Use final_feed_url
             save_seen_entries(seen)
 
             combined = "\n\n".join(summaries)
             chunks = chunk_text(combined, config.EMBED_MAX_LENGTH)
             for i, chunk in enumerate(chunks):
                 embed = discord.Embed(
-                    title=f"RSS Summaries for {feed_url}" + ("" if i == 0 else f" (cont. {i+1})"),
+                    title=f"RSS Summaries for {final_feed_url}" + ("" if i == 0 else f" (cont. {i+1})"), # Use final_feed_url
                     description=chunk,
                     color=config.EMBED_COLOR["complete"],
                 )
@@ -700,7 +715,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             await send_tts_audio(interaction, combined, base_filename=f"rss_{interaction.id}")
             user_msg = MsgNode(
                 "user",
-                f"/rss {feed_url} (limit {limit})",
+                f"/rss {final_feed_url} (limit {limit})", # Use final_feed_url
                 name=str(interaction.user.id),
             )
             assistant_msg = MsgNode(
@@ -726,7 +741,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             async with scrape_lock:
                 await _process_rss()
         except Exception as e:
-            logger.error(f"Error in rss_slash_command for {feed_url}: {e}", exc_info=True)
+            logger.error(f"Error in rss_slash_command for {final_feed_url}: {e}", exc_info=True) # Use final_feed_url
             await interaction.edit_original_response(content=f"Failed to process RSS feed. Error: {str(e)[:500]}", embed=None)
 
     @bot_instance.tree.command(name="gettweets", description="Fetches and summarizes recent tweets from a user.")
