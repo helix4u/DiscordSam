@@ -113,6 +113,7 @@ class Config:
         self.CHROMA_ENTITIES_COLLECTION_NAME = os.getenv("CHROMA_ENTITIES_COLLECTION_NAME", "entities_collection")
         self.CHROMA_RELATIONS_COLLECTION_NAME = os.getenv("CHROMA_RELATIONS_COLLECTION_NAME", "relations_collection")
         self.CHROMA_OBSERVATIONS_COLLECTION_NAME = os.getenv("CHROMA_OBSERVATIONS_COLLECTION_NAME", "observations_collection")
+        self.CHROMA_RSS_SUMMARY_COLLECTION_NAME = os.getenv("CHROMA_RSS_SUMMARY_COLLECTION_NAME", "rss_summaries") # New collection for RSS summaries
 
         self.USER_PROVIDED_CONTEXT = os.getenv("USER_PROVIDED_CONTEXT", "")
 

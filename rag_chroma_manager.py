@@ -19,6 +19,7 @@ chroma_client: Optional[chromadb.ClientAPI] = None
 chat_history_collection: Optional[chromadb.Collection] = None
 distilled_chat_summary_collection: Optional[chromadb.Collection] = None
 news_summary_collection: Optional[chromadb.Collection] = None
+rss_summary_collection: Optional[chromadb.Collection] = None # New collection for RSS summaries
 timeline_summary_collection: Optional[chromadb.Collection] = None
 entity_collection: Optional[chromadb.Collection] = None
 relation_collection: Optional[chromadb.Collection] = None
@@ -26,8 +27,8 @@ observation_collection: Optional[chromadb.Collection] = None
 
 def initialize_chromadb() -> bool:
     global chroma_client, chat_history_collection, distilled_chat_summary_collection, \
-           news_summary_collection, timeline_summary_collection, entity_collection, \
-           relation_collection, observation_collection
+           news_summary_collection, rss_summary_collection, timeline_summary_collection, entity_collection, \
+           relation_collection, observation_collection # Added rss_summary_collection
 
     if chroma_client:
         logger.debug("ChromaDB already initialized.")
@@ -44,6 +45,9 @@ def initialize_chromadb() -> bool:
 
         logger.info(f"Getting or creating ChromaDB collection: {config.CHROMA_NEWS_SUMMARY_COLLECTION_NAME}")
         news_summary_collection = chroma_client.get_or_create_collection(name=config.CHROMA_NEWS_SUMMARY_COLLECTION_NAME)
+
+        logger.info(f"Getting or creating ChromaDB collection: {config.CHROMA_RSS_SUMMARY_COLLECTION_NAME}") # New
+        rss_summary_collection = chroma_client.get_or_create_collection(name=config.CHROMA_RSS_SUMMARY_COLLECTION_NAME) # New
 
         logger.info(f"Getting or creating ChromaDB collection: {config.CHROMA_TIMELINE_SUMMARY_COLLECTION_NAME}")
         timeline_summary_collection = chroma_client.get_or_create_collection(name=config.CHROMA_TIMELINE_SUMMARY_COLLECTION_NAME)
@@ -62,6 +66,7 @@ def initialize_chromadb() -> bool:
             f"'{config.CHROMA_COLLECTION_NAME}', "
             f"'{config.CHROMA_DISTILLED_COLLECTION_NAME}', "
             f"'{config.CHROMA_NEWS_SUMMARY_COLLECTION_NAME}', "
+             f"'{config.CHROMA_RSS_SUMMARY_COLLECTION_NAME}', " # New
             f"'{config.CHROMA_TIMELINE_SUMMARY_COLLECTION_NAME}', "
             f"'{config.CHROMA_ENTITIES_COLLECTION_NAME}', "
             f"'{config.CHROMA_RELATIONS_COLLECTION_NAME}', "
@@ -74,6 +79,7 @@ def initialize_chromadb() -> bool:
         chat_history_collection = None
         distilled_chat_summary_collection = None
         news_summary_collection = None
+        rss_summary_collection = None # New
         timeline_summary_collection = None
         entity_collection = None
         relation_collection = None
@@ -385,6 +391,7 @@ async def retrieve_and_prepare_rag_context(llm_client: Any, query: str, n_result
             ("chat_history", chat_history_collection),
             ("timeline", timeline_summary_collection),
             ("news", news_summary_collection),
+            ("rss", rss_summary_collection), # New
             ("entity", entity_collection),
             ("relation", relation_collection),
             ("observation", observation_collection),
@@ -852,4 +859,40 @@ def store_news_summary(topic: str, url: str, summary_text: str, timestamp: Optio
         return True
     except Exception as e:
         logger.error(f"Failed to store news summary for {url}: {e}", exc_info=True)
+        return False
+
+def store_rss_summary(feed_url: str, article_url: str, title: str, summary_text: str, timestamp: Optional[datetime] = None) -> bool:
+    if not chroma_client or not rss_summary_collection:
+        logger.warning("ChromaDB RSS summary collection not available, skipping storage.")
+        return False
+
+    timestamp = timestamp or datetime.now()
+    # Create a unique ID that's still somewhat readable/relatable
+    # Hashing parts of URLs can lead to very long IDs if not careful, so using timestamp and random int.
+    # Using article_url to help ensure uniqueness if multiple feeds link to the same article around the same time.
+    # A simple hash of article_url might be too long or complex for an ID.
+    # Combining timestamp with a random int is a common pattern for unique enough IDs.
+    url_hash_part = uuid4().hex[:8] # Short hash part from article_url for some uniqueness
+    doc_id = f"rss_{int(timestamp.timestamp())}_{url_hash_part}_{random.randint(1000,9999)}"
+
+    metadata = {
+        "feed_url": feed_url,
+        "article_url": article_url,
+        "title": title,
+        "timestamp": timestamp.isoformat(),
+        "type": "rss_summary" # Explicitly type it
+    }
+
+    try:
+        rss_summary_collection.add(
+            documents=[summary_text],
+            metadatas=[metadata],
+            ids=[doc_id],
+        )
+        logger.info(
+            f"Stored RSS summary (ID: {doc_id}) for article '{title}' from feed '{feed_url}' (article URL: '{article_url}') in '{config.CHROMA_RSS_SUMMARY_COLLECTION_NAME}'."
+        )
+        return True
+    except Exception as e:
+        logger.error(f"Failed to store RSS summary for article {article_url} from feed {feed_url}: {e}", exc_info=True)
         return False
