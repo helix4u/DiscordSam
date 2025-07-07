@@ -71,7 +71,7 @@ async def _build_initial_prompt_messages(
             "The following are raw retrieved context snippets that might be relevant. Use them to augment your knowledge and provide a more detailed and accurate response. Prioritize information from these snippets if it conflicts with more general knowledge.\n"
         ]
         total_raw_snippet_char_length = 0
-        MAX_RAW_SNIPPET_CHARS = getattr(config, 'MAX_RAW_RAG_SNIPPET_CHARS_IN_PROMPT', 15000) # Default to 15k chars for raw snippets
+        MAX_RAW_SNIPPET_CHARS = getattr(config, 'MAX_RAW_RAG_SNIPPET_CHARS_IN_PROMPT', 120000) # Default to 120k chars for raw snippets
 
         for i, (snippet_text, snippet_source) in enumerate(raw_rag_snippets):
             # Truncate individual snippets if they are excessively long to prevent one snippet from dominating
