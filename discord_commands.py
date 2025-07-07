@@ -31,6 +31,7 @@ from web_utils import (
     scrape_website,
     query_searx,
     scrape_latest_tweets,
+    scrape_home_timeline,
     fetch_rss_entries
 )
 from audio_utils import send_tts_audio
@@ -1044,6 +1045,236 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             if acquired_lock: # Only release if it was acquired
                 scrape_lock.release()
                 logger.debug(f"Scrape lock released for /gettweets @{user_to_fetch.lstrip('@')}")
+
+
+    @bot_instance.tree.command(name="homefeed", description="Fetches and summarizes tweets from your home timeline.")
+    @app_commands.describe(
+        limit="Number of tweets to fetch (max 50)."
+    )
+    async def homefeed_slash_command(
+        interaction: discord.Interaction,
+        limit: app_commands.Range[int, 1, 50] = 20,
+    ):
+        if not llm_client_instance or not bot_state_instance or not bot_instance or not bot_instance.user:
+            logger.error("homefeed_slash_command: One or more bot components are None.")
+            await interaction.response.send_message("Bot components not ready. Cannot get home timeline tweets.", ephemeral=True)
+            return
+
+        logger.info(
+            f"Homefeed command initiated by {interaction.user.name}, limit {limit}."
+        )
+        if interaction.channel_id is None:
+            await interaction.response.send_message("Error: This command must be used in a channel.", ephemeral=True)
+            return
+
+        scrape_lock = bot_state_instance.get_scrape_lock()
+        queue_notice = scrape_lock.locked()
+        progress_message: discord.Message
+        acquired_lock = False
+        if queue_notice:
+            await interaction.response.send_message(
+                "Waiting for other scraping tasks to finish before fetching tweets...",
+                ephemeral=True,
+            )
+            try:
+                await asyncio.wait_for(scrape_lock.acquire(), timeout=config.SCRAPE_LOCK_TIMEOUT_SECONDS)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Timeout acquiring scrape_lock for /homefeed. Another task may be holding it too long."
+                )
+                await interaction.followup.send(
+                    content="Could not acquire scrape lock for home timeline at this time. Please try again shortly.",
+                    ephemeral=True,
+                )
+                return
+            acquired_lock = True
+            progress_message = await interaction.followup.send(
+                content=f"Scraping home timeline tweets (up to {limit})..."
+            )
+        else:
+            await scrape_lock.acquire()
+            acquired_lock = True
+            await interaction.response.defer(ephemeral=False)
+            progress_message = await interaction.edit_original_response(
+                content=f"Starting to scrape home timeline tweets (up to {limit})..."
+            )
+
+        async def send_progress(message: str) -> None:
+            try:
+                await progress_message.edit(content=message)
+            except discord.HTTPException as e_prog:
+                logger.warning(f"Failed to send progress update for homefeed (edit original): {e_prog}")
+            except Exception as e_unexp:
+                logger.error(f"Unexpected error in send_progress for homefeed: {e_unexp}", exc_info=True)
+
+        try:
+            if hasattr(bot_state_instance, 'update_last_playwright_usage_time'):
+                await bot_state_instance.update_last_playwright_usage_time()
+                logger.debug("Updated last_playwright_usage_time via bot_state_instance for /homefeed")
+
+            all_seen_tweet_ids_cache = load_seen_tweet_ids()
+            home_key = "__home__"
+            user_seen_tweet_ids = all_seen_tweet_ids_cache.get(home_key, set())
+
+            fetched_tweets_data = await scrape_home_timeline(limit=limit, progress_callback=send_progress)
+
+            if not fetched_tweets_data:
+                final_content_message = "Finished scraping home timeline. No tweets found or timeline inaccessible."
+                await progress_message.edit(content=final_content_message, embed=None)
+                return
+
+            new_tweets_to_process = []
+            processed_tweet_ids_current_run = set()
+
+            for tweet_data in fetched_tweets_data:
+                tweet_identifier = tweet_data.get('tweet_url')
+                if not tweet_identifier:
+                    logger.warning(f"Tweet from home timeline missing 'tweet_url' or suitable ID. Skipping. Data: {tweet_data}")
+                    continue
+
+                if tweet_identifier not in user_seen_tweet_ids:
+                    new_tweets_to_process.append(tweet_data)
+                    processed_tweet_ids_current_run.add(tweet_identifier)
+                else:
+                    logger.info(f"Skipping already seen home tweet: {tweet_identifier}")
+
+            if not new_tweets_to_process:
+                final_content_message = "No new tweets found in the home timeline since last check."
+                await progress_message.edit(content=final_content_message, embed=None)
+                all_seen_tweet_ids_cache[home_key] = user_seen_tweet_ids.union(processed_tweet_ids_current_run)
+                save_seen_tweet_ids(all_seen_tweet_ids_cache)
+                return
+
+            tweet_texts_for_display = []
+            for t_data in new_tweets_to_process:
+                ts_str = t_data.get('timestamp', 'N/A')
+                display_ts = ts_str
+                try:
+                    dt_obj = datetime.fromisoformat(ts_str.replace("Z", "+00:00")) if ts_str != 'N/A' else None
+                    display_ts = dt_obj.strftime("%Y-%m-%d %H:%M UTC") if dt_obj else ts_str
+                except ValueError:
+                    pass
+
+                author_display = t_data.get('username', 'unknown')
+                content_display = discord.utils.escape_markdown(t_data.get('content', 'N/A'))
+                tweet_url_display = t_data.get('tweet_url', '')
+
+                header = f"[{display_ts}] @{author_display}"
+                if t_data.get('is_repost') and t_data.get('reposted_by'):
+                    header = f"[{display_ts}] @{t_data.get('reposted_by')} reposted @{author_display}"
+
+                link_text = f" ([Link]({tweet_url_display}))" if tweet_url_display else ""
+                tweet_texts_for_display.append(f"**{header}**: {content_display}{link_text}")
+
+            raw_tweets_display_str = "\n\n".join(tweet_texts_for_display)
+            if not raw_tweets_display_str:
+                raw_tweets_display_str = "No new tweet content could be formatted for display."
+
+            await send_progress(f"Formatting {len(new_tweets_to_process)} new tweets for display...")
+
+            all_seen_tweet_ids_cache[home_key] = user_seen_tweet_ids.union(processed_tweet_ids_current_run)
+            save_seen_tweet_ids(all_seen_tweet_ids_cache)
+            logger.info(f"Updated and saved seen tweet IDs for home timeline. Total seen: {len(all_seen_tweet_ids_cache[home_key])}")
+
+            if new_tweets_to_process and rcm.tweets_collection:
+                tweet_docs_to_add = []
+                tweet_metadatas_to_add = []
+                tweet_ids_to_add = []
+                for t_data in new_tweets_to_process:
+                    tweet_identifier = t_data.get('tweet_url')
+                    if not tweet_identifier:
+                        logger.warning(f"Skipping tweet storage for home timeline due to missing 'tweet_url'. Data: {t_data}")
+                        continue
+
+                    doc_id = f"tweet_home_{tweet_identifier.split('/')[-1] if '/' in tweet_identifier else tweet_identifier}"
+
+                    document_content = t_data.get('content', '')
+                    if not document_content.strip():
+                        logger.info(f"Skipping empty tweet from home timeline, ID: {doc_id}")
+                        continue
+
+                    tweet_docs_to_add.append(document_content)
+                    tweet_metadatas_to_add.append({'username': t_data.get('username', 'unknown'), 'tweet_url': tweet_identifier})
+                    tweet_ids_to_add.append(doc_id)
+
+                if tweet_ids_to_add:
+                    try:
+                        rcm.tweets_collection.add(
+                            documents=tweet_docs_to_add,
+                            metadatas=tweet_metadatas_to_add,
+                            ids=tweet_ids_to_add
+                        )
+                        logger.info(
+                            f"Successfully stored {len(tweet_ids_to_add)} new tweets from home timeline in ChromaDB."
+                        )
+                    except Exception as e_add_tweet:
+                        logger.error(
+                            f"Failed to store tweets from home timeline in ChromaDB: {e_add_tweet}",
+                            exc_info=True,
+                        )
+            elif not rcm.tweets_collection:
+                logger.warning(
+                    "tweets_collection is not available. Skipping storage of home timeline tweets."
+                )
+
+            embed_title = "Recent Tweets from Home Timeline"
+            raw_tweet_chunks = chunk_text(raw_tweets_display_str, config.EMBED_MAX_LENGTH)
+
+            for i, chunk_content_part in enumerate(raw_tweet_chunks):
+                chunk_title = embed_title if i == 0 else f"{embed_title} (cont.)"
+                embed = discord.Embed(
+                    title=chunk_title,
+                    description=chunk_content_part,
+                    color=config.EMBED_COLOR["complete"]
+                )
+                if i == 0:
+                    await progress_message.edit(content=None, embed=embed)
+                else:
+                    await interaction.followup.send(embed=embed)
+
+            user_query_content_for_summary = (
+                "Please analyze and summarize the main themes, topics discussed, and overall sentiment "
+                f"from the recent tweets in my home timeline provided below. Extract key points and present a concise yet detailed overview. "
+                f"Do not just re-list the tweets.\n\nRecent Tweets:\n{raw_tweets_display_str[:config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT]}"
+            )
+            user_msg_node = MsgNode("user", user_query_content_for_summary, name=str(interaction.user.id))
+
+            rag_query_for_tweets_summary = "summary of recent tweets from Twitter home timeline"
+            synthesized_summary, raw_snippets = await retrieve_and_prepare_rag_context(llm_client_instance, rag_query_for_tweets_summary)
+
+            prompt_nodes_summary = await _build_initial_prompt_messages(
+                user_query_content=user_query_content_for_summary,
+                channel_id=interaction.channel_id,
+                bot_state=bot_state_instance,
+                user_id=str(interaction.user.id),
+                synthesized_rag_context_str=synthesized_summary,
+                raw_rag_snippets=raw_snippets
+            )
+            await stream_llm_response_to_interaction(
+                interaction, llm_client_instance, bot_state_instance, user_msg_node, prompt_nodes_summary,
+                title="Tweet Summary for Home Timeline",
+                force_new_followup_flow=True,
+                synthesized_rag_context_for_display=synthesized_summary,
+                bot_user_id=bot_instance.user.id
+            )
+        except Exception as e:
+            logger.error(
+                f"Error in homefeed_slash_command: {e}", exc_info=True
+            )
+            error_content = (
+                f"My tweet-fetching antenna is bent! Failed for home timeline. Error: {str(e)[:500]}"
+            )
+            try:
+                if interaction.response.is_done():
+                    await interaction.followup.send(content=error_content, ephemeral=True)
+                else:
+                    await progress_message.edit(content=error_content, embed=None)
+            except discord.HTTPException:
+                logger.warning("Could not send final error message for homefeed to user (HTTPException).")
+        finally:
+            if acquired_lock:
+                scrape_lock.release()
+                logger.debug("Scrape lock released for /homefeed")
 
 
     @bot_instance.tree.command(name="ap", description="Describes an attached image with a creative AP Photo twist.")
