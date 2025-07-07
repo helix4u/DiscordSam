@@ -414,7 +414,8 @@ def setup_events_and_tasks(bot: commands.Bot, llm_client_in: Any, bot_state_in: 
 
         rag_query_text = user_message_text_for_processing.strip() if user_message_text_for_processing.strip() else \
                          ("User sent an image/attachment" if image_added_to_prompt else "User sent a message with no textual content.")
-        synthesized_rag_context = await retrieve_and_prepare_rag_context(llm_client_instance, rag_query_text)
+
+        synthesized_rag_summary, raw_rag_snippets = await retrieve_and_prepare_rag_context(llm_client_instance, rag_query_text)
 
         user_msg_node_for_short_term_history = MsgNode("user", user_msg_node_content_final, name=str(message.author.id))
 
@@ -423,7 +424,8 @@ def setup_events_and_tasks(bot: commands.Bot, llm_client_in: Any, bot_state_in: 
             channel_id=channel_id,
             bot_state=bot_state_instance,
             user_id=str(message.author.id),
-            synthesized_rag_context_str=synthesized_rag_context
+            synthesized_rag_context_str=synthesized_rag_summary, # Pass the summary string
+            raw_rag_snippets=raw_rag_snippets # Pass the raw snippets
         )
 
         await stream_llm_response_to_message(
@@ -432,7 +434,7 @@ def setup_events_and_tasks(bot: commands.Bot, llm_client_in: Any, bot_state_in: 
             bot_state=bot_state_instance,
             user_msg_node=user_msg_node_for_short_term_history,
             prompt_messages=llm_prompt_for_current_turn,
-            synthesized_rag_context_for_display=synthesized_rag_context,
+            synthesized_rag_context_for_display=synthesized_rag_summary, # Display summary
             bot_user_id=bot_instance.user.id
         )
 

@@ -242,14 +242,15 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             user_msg_node_for_briefing = MsgNode("user", final_briefing_prompt_content, name=str(interaction.user.id))
 
             rag_query_for_briefing = f"news briefing about {topic}"
-            synthesized_rag_context_for_briefing = await retrieve_and_prepare_rag_context(llm_client_instance, rag_query_for_briefing)
+            synthesized_summary_for_briefing, raw_snippets_for_briefing = await retrieve_and_prepare_rag_context(llm_client_instance, rag_query_for_briefing)
 
             prompt_nodes_for_briefing = await _build_initial_prompt_messages(
                 user_query_content=final_briefing_prompt_content,
                 channel_id=interaction.channel_id,
                 bot_state=bot_state_instance,
                 user_id=str(interaction.user.id),
-                synthesized_rag_context_str=synthesized_rag_context_for_briefing,
+                synthesized_rag_context_str=synthesized_summary_for_briefing,
+                raw_rag_snippets=raw_snippets_for_briefing,
                 max_image_history_depth=0
             )
 
@@ -260,7 +261,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 user_msg_node=user_msg_node_for_briefing,
                 prompt_messages=prompt_nodes_for_briefing,
                 title=f"News Briefing: {topic}",
-                synthesized_rag_context_for_display=synthesized_rag_context_for_briefing,
+                synthesized_rag_context_for_display=synthesized_summary_for_briefing,
                 bot_user_id=bot_instance.user.id
             )
 
@@ -379,20 +380,21 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             user_msg_node = MsgNode("user", user_query_content, name=str(interaction.user.id))
 
             rag_query_for_roast = f"comedy roast of webpage content from URL: {url}"
-            synthesized_rag_context = await retrieve_and_prepare_rag_context(llm_client_instance, rag_query_for_roast)
+            synthesized_summary, raw_snippets = await retrieve_and_prepare_rag_context(llm_client_instance, rag_query_for_roast)
 
             prompt_nodes = await _build_initial_prompt_messages(
                 user_query_content=user_query_content,
                 channel_id=interaction.channel_id,
                 bot_state=bot_state_instance,
                 user_id=str(interaction.user.id),
-                synthesized_rag_context_str=synthesized_rag_context
+                synthesized_rag_context_str=synthesized_summary,
+                raw_rag_snippets=raw_snippets
             )
             # stream_llm_response_to_interaction will handle editing the original response
             await stream_llm_response_to_interaction(
                 interaction, llm_client_instance, bot_state_instance, user_msg_node, prompt_nodes,
                 title=f"Comedy Roast of {url}",
-                synthesized_rag_context_for_display=synthesized_rag_context,
+                synthesized_rag_context_for_display=synthesized_summary,
                 bot_user_id=bot_instance.user.id
             )
         except Exception as e:
@@ -520,22 +522,23 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             )
             user_msg_node = MsgNode("user", final_synthesis_prompt_content, name=str(interaction.user.id))
 
-            rag_query_for_search_summary = query 
-            synthesized_rag_context = await retrieve_and_prepare_rag_context(llm_client_instance, rag_query_for_search_summary)
+            rag_query_for_search_summary = query
+            synthesized_summary, raw_snippets = await retrieve_and_prepare_rag_context(llm_client_instance, rag_query_for_search_summary)
 
             prompt_nodes = await _build_initial_prompt_messages(
                 user_query_content=final_synthesis_prompt_content,
                 channel_id=interaction.channel_id,
                 bot_state=bot_state_instance,
                 user_id=str(interaction.user.id),
-                synthesized_rag_context_str=synthesized_rag_context
+                synthesized_rag_context_str=synthesized_summary,
+                raw_rag_snippets=raw_snippets
             )
             # stream_llm_response_to_interaction will send new followups for the summary
             await stream_llm_response_to_interaction(
                 interaction, llm_client_instance, bot_state_instance, user_msg_node, prompt_nodes,
                 title=f"Summary for Search: {query}",
                 force_new_followup_flow=True,
-                synthesized_rag_context_for_display=synthesized_rag_context,
+                synthesized_rag_context_for_display=synthesized_summary,
                 bot_user_id=bot_instance.user.id
             )
         except Exception as e:
@@ -569,14 +572,15 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             user_msg_node = MsgNode("user", user_query_content, name=str(interaction.user.id))
 
             rag_query_for_pol = statement
-            synthesized_rag_context = await retrieve_and_prepare_rag_context(llm_client_instance, rag_query_for_pol)
+            synthesized_summary, raw_snippets = await retrieve_and_prepare_rag_context(llm_client_instance, rag_query_for_pol)
 
             base_prompt_nodes = await _build_initial_prompt_messages(
                 user_query_content=user_query_content,
                 channel_id=interaction.channel_id,
                 bot_state=bot_state_instance,
                 user_id=str(interaction.user.id),
-                synthesized_rag_context_str=synthesized_rag_context
+                synthesized_rag_context_str=synthesized_summary,
+                raw_rag_snippets=raw_snippets
             )
 
             insert_idx = 0
@@ -591,7 +595,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             await stream_llm_response_to_interaction(
                 interaction, llm_client_instance, bot_state_instance, user_msg_node, final_prompt_nodes,
                 title="Sarcastic Political Commentary",
-                synthesized_rag_context_for_display=synthesized_rag_context,
+                synthesized_rag_context_for_display=synthesized_summary,
                 bot_user_id=bot_instance.user.id
             )
         except Exception as e:
@@ -1003,20 +1007,21 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             user_msg_node = MsgNode("user", user_query_content_for_summary, name=str(interaction.user.id))
 
             rag_query_for_tweets_summary = f"summary of recent tweets from Twitter user @{clean_username}"
-            synthesized_rag_context = await retrieve_and_prepare_rag_context(llm_client_instance, rag_query_for_tweets_summary)
+            synthesized_summary, raw_snippets = await retrieve_and_prepare_rag_context(llm_client_instance, rag_query_for_tweets_summary)
 
             prompt_nodes_summary = await _build_initial_prompt_messages(
                 user_query_content=user_query_content_for_summary,
                 channel_id=interaction.channel_id,
                 bot_state=bot_state_instance,
                 user_id=str(interaction.user.id),
-                synthesized_rag_context_str=synthesized_rag_context
+                synthesized_rag_context_str=synthesized_summary,
+                raw_rag_snippets=raw_snippets
             )
             await stream_llm_response_to_interaction(
                 interaction, llm_client_instance, bot_state_instance, user_msg_node, prompt_nodes_summary,
                 title=f"Tweet Summary for @{clean_username}",
                 force_new_followup_flow=True,
-                synthesized_rag_context_for_display=synthesized_rag_context,
+                synthesized_rag_context_for_display=synthesized_summary,
                 bot_user_id=bot_instance.user.id
             )
         except Exception as e:
@@ -1089,14 +1094,15 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             user_msg_node = MsgNode("user", user_content_for_ap_node, name=str(interaction.user.id))
 
             rag_query_for_ap = user_prompt if user_prompt else f"AP photo style description featuring {chosen_celebrity} for an image."
-            synthesized_rag_context = await retrieve_and_prepare_rag_context(llm_client_instance, rag_query_for_ap)
+            synthesized_summary, raw_snippets = await retrieve_and_prepare_rag_context(llm_client_instance, rag_query_for_ap)
 
             base_prompt_nodes = await _build_initial_prompt_messages(
                 user_query_content=user_content_for_ap_node,
                 channel_id=interaction.channel_id,
                 bot_state=bot_state_instance,
                 user_id=str(interaction.user.id),
-                synthesized_rag_context_str=synthesized_rag_context,
+                synthesized_rag_context_str=synthesized_summary,
+                raw_rag_snippets=raw_snippets,
                 max_image_history_depth=0
             )
 
@@ -1109,7 +1115,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             await stream_llm_response_to_interaction(
                 interaction, llm_client_instance, bot_state_instance, user_msg_node, final_prompt_nodes,
                 title=f"AP Photo Description ft. {chosen_celebrity} or someone associted with them.",
-                synthesized_rag_context_for_display=synthesized_rag_context,
+                synthesized_rag_context_for_display=synthesized_summary,
                 bot_user_id=bot_instance.user.id
             )
         except Exception as e:
