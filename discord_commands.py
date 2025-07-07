@@ -23,10 +23,10 @@ from rag_chroma_manager import (
     parse_chatgpt_export,
     store_chatgpt_conversations_in_chromadb,
     store_news_summary,
-    store_rss_summary, # New import
+    store_rss_summary,  # New import
     ingest_conversation_to_chromadb,
-    tweets_collection, # New import for tweets collection
 )
+import rag_chroma_manager as rcm
 from web_utils import (
     scrape_website,
     query_searx,
@@ -898,7 +898,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             logger.info(f"Updated and saved seen tweet IDs for @{clean_username}. Total seen: {len(all_seen_tweet_ids_cache[clean_username])}")
 
             # Store new tweets in ChromaDB
-            if new_tweets_to_process and tweets_collection:
+            if new_tweets_to_process and rcm.tweets_collection:
                 tweet_docs_to_add = []
                 tweet_metadatas_to_add = []
                 tweet_ids_to_add = []
@@ -933,16 +933,23 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
 
                 if tweet_ids_to_add:
                     try:
-                        tweets_collection.add(
+                        rcm.tweets_collection.add(
                             documents=tweet_docs_to_add,
                             metadatas=tweet_metadatas_to_add,
                             ids=tweet_ids_to_add
                         )
-                        logger.info(f"Successfully stored {len(tweet_ids_to_add)} new tweets from @{clean_username} in ChromaDB.")
+                        logger.info(
+                            f"Successfully stored {len(tweet_ids_to_add)} new tweets from @{clean_username} in ChromaDB."
+                        )
                     except Exception as e_add_tweet:
-                        logger.error(f"Failed to store tweets for @{clean_username} in ChromaDB: {e_add_tweet}", exc_info=True)
-            elif not tweets_collection:
-                logger.warning(f"tweets_collection is not available. Skipping storage of tweets for @{clean_username}.")
+                        logger.error(
+                            f"Failed to store tweets for @{clean_username} in ChromaDB: {e_add_tweet}",
+                            exc_info=True,
+                        )
+            elif not rcm.tweets_collection:
+                logger.warning(
+                    f"tweets_collection is not available. Skipping storage of tweets for @{clean_username}."
+                )
 
 
             embed_title = f"Recent Tweets from @{clean_username}"
