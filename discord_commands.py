@@ -636,17 +636,36 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             await interaction.response.send_message("Error: This command must be used in a channel.", ephemeral=True)
             return
 
-        await interaction.response.defer(ephemeral=False)
-        await interaction.edit_original_response(content=f"Fetching RSS feed: {final_feed_url}...")
+        scrape_lock = bot_state_instance.get_scrape_lock()
+        queue_notice = scrape_lock.locked()
+        progress_message: discord.Message
+        acquired_lock = False
+        if queue_notice:
+            await interaction.response.send_message(
+                "Waiting for other scraping tasks to finish before processing your RSS request...",
+                ephemeral=True,
+            )
+            await scrape_lock.acquire()
+            acquired_lock = True
+            progress_message = await interaction.followup.send(
+                content=f"Fetching RSS feed: {final_feed_url}...",
+            )
+        else:
+            await scrape_lock.acquire()
+            acquired_lock = True
+            await interaction.response.defer(ephemeral=False)
+            progress_message = await interaction.edit_original_response(
+                content=f"Fetching RSS feed: {final_feed_url}..."
+            )
 
-        async def _process_rss() -> None:
+        async def _process_rss(progress_msg: discord.Message) -> None:
             seen = load_seen_entries()
             seen_ids = set(seen.get(final_feed_url, [])) # Use final_feed_url
 
             entries = await fetch_rss_entries(final_feed_url) # Use final_feed_url
             new_entries = [e for e in entries if e.get("guid") not in seen_ids]
             if not new_entries:
-                await interaction.edit_original_response(content="No new entries found.")
+                await progress_msg.edit(content="No new entries found.")
                 return
 
             to_process = new_entries[:limit]
@@ -657,7 +676,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 link = ent.get("link") or ""
                 guid = ent.get("guid") or link
 
-                await interaction.edit_original_response(content=f"Scraping {idx}/{len(to_process)}: {title}...")
+                await progress_msg.edit(content=f"Scraping {idx}/{len(to_process)}: {title}...")
 
                 scraped_text, _ = await scrape_website(link)
                 if not scraped_text or "Failed to scrape" in scraped_text or "Scraping timed out" in scraped_text:
@@ -707,7 +726,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                     color=config.EMBED_COLOR["complete"],
                 )
                 if i == 0:
-                    await interaction.edit_original_response(content=None, embed=embed)
+                    await progress_msg.edit(content=None, embed=embed)
                 else:
                     await interaction.followup.send(embed=embed)
 
@@ -736,13 +755,14 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 [user_msg, assistant_msg],
             )
 
-        scrape_lock = bot_state_instance.get_scrape_lock()
         try:
-            async with scrape_lock:
-                await _process_rss()
+            await _process_rss(progress_message)
         except Exception as e:
             logger.error(f"Error in rss_slash_command for {final_feed_url}: {e}", exc_info=True) # Use final_feed_url
-            await interaction.edit_original_response(content=f"Failed to process RSS feed. Error: {str(e)[:500]}", embed=None)
+            await progress_message.edit(content=f"Failed to process RSS feed. Error: {str(e)[:500]}", embed=None)
+        finally:
+            if acquired_lock:
+                scrape_lock.release()
 
     @bot_instance.tree.command(name="gettweets", description="Fetches and summarizes recent tweets from a user.")
     @app_commands.describe(
@@ -779,44 +799,48 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             await interaction.response.send_message("Error: This command must be used in a channel.", ephemeral=True)
             return
 
-        await interaction.response.defer(ephemeral=False)
-        # Send initial message using edit_original_response, this will be updated by send_progress
-        clean_username_for_initial_message = user_to_fetch.lstrip('@')
-        await interaction.edit_original_response(
-            content=f"Starting to scrape tweets for @{clean_username_for_initial_message} (up to {limit})..."
-        )
-
-        async def send_progress(message: str):
+        scrape_lock = bot_state_instance.get_scrape_lock()
+        queue_notice = scrape_lock.locked()
+        progress_message: discord.Message
+        acquired_lock = False
+        if queue_notice:
+            await interaction.response.send_message(
+                "Waiting for other scraping tasks to finish before fetching tweets...",
+                ephemeral=True,
+            )
             try:
-                await interaction.edit_original_response(content=message)
+                await asyncio.wait_for(scrape_lock.acquire(), timeout=config.SCRAPE_LOCK_TIMEOUT_SECONDS)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    f"Timeout acquiring scrape_lock for /gettweets @{user_to_fetch.lstrip('@')}. Another task may be holding it too long."
+                )
+                await interaction.followup.send(
+                    content=f"Could not acquire scrape lock for @{user_to_fetch.lstrip('@')} at this time. Please try again shortly.",
+                    ephemeral=True,
+                )
+                return
+            acquired_lock = True
+            progress_message = await interaction.followup.send(
+                content=f"Scraping tweets for @{user_to_fetch.lstrip('@')} (up to {limit})..."
+            )
+        else:
+            await scrape_lock.acquire()
+            acquired_lock = True
+            await interaction.response.defer(ephemeral=False)
+            clean_username_for_initial_message = user_to_fetch.lstrip('@')
+            progress_message = await interaction.edit_original_response(
+                content=f"Starting to scrape tweets for @{clean_username_for_initial_message} (up to {limit})..."
+            )
+
+        async def send_progress(message: str) -> None:
+            try:
+                await progress_message.edit(content=message)
             except discord.HTTPException as e_prog:
                 logger.warning(f"Failed to send progress update for gettweets (edit original): {e_prog}")
             except Exception as e_unexp:
-                 logger.error(f"Unexpected error in send_progress for gettweets: {e_unexp}", exc_info=True)
-
-        # Ensure bot_state_instance is available before trying to get the lock
-        if not bot_state_instance:
-            logger.error("gettweets_slash_command: bot_state_instance is None. Cannot acquire scrape_lock.")
-            await interaction.edit_original_response(content="Bot state not available. Cannot process tweets.", embed=None)
-            return
-
-        scrape_lock = bot_state_instance.get_scrape_lock()
-        acquired_lock = False # Flag to track if lock was acquired
+                logger.error(f"Unexpected error in send_progress for gettweets: {e_unexp}", exc_info=True)
 
         try:
-            # Try to acquire the lock with a timeout to prevent indefinite waiting if another command holds it too long.
-            # Send a message if waiting for the lock.
-            await send_progress(f"Waiting for other scraping tasks to complete before fetching tweets for @{user_to_fetch.lstrip('@')}...")
-            try:
-                await asyncio.wait_for(scrape_lock.acquire(), timeout=config.SCRAPE_LOCK_TIMEOUT_SECONDS)
-                acquired_lock = True
-                # Update progress message now that lock is acquired
-                await send_progress(f"Scraping tweets for @{user_to_fetch.lstrip('@')} (up to {limit})...")
-            except asyncio.TimeoutError:
-                logger.warning(f"Timeout acquiring scrape_lock for /gettweets @{user_to_fetch.lstrip('@')}. Another task may be holding it too long.")
-                await interaction.edit_original_response(content=f"Could not acquire scrape lock for @{user_to_fetch.lstrip('@')} at this time. Please try again shortly.", embed=None)
-                return
-
             clean_username = user_to_fetch.lstrip('@')
 
             if hasattr(bot_state_instance, 'update_last_playwright_usage_time'): # Check attribute existence
@@ -837,8 +861,10 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             fetched_tweets_data = await scrape_latest_tweets(clean_username, limit=limit, progress_callback=send_progress)
 
             if not fetched_tweets_data:
-                final_content_message = f"Finished scraping for @{clean_username}. No tweets found or profile might be private/inaccessible."
-                await interaction.edit_original_response(content=final_content_message, embed=None)
+                final_content_message = (
+                    f"Finished scraping for @{clean_username}. No tweets found or profile might be private/inaccessible."
+                )
+                await progress_message.edit(content=final_content_message, embed=None)
                 return
 
             new_tweets_to_process = []
@@ -861,7 +887,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
 
             if not new_tweets_to_process:
                 final_content_message = f"No new tweets found for @{clean_username} since last check."
-                await interaction.edit_original_response(content=final_content_message, embed=None)
+                await progress_message.edit(content=final_content_message, embed=None)
                 # Still save, in case the cache file didn't exist for this user yet.
                 all_seen_tweet_ids_cache[clean_username] = user_seen_tweet_ids.union(processed_tweet_ids_current_run)
                 save_seen_tweet_ids(all_seen_tweet_ids_cache)
@@ -965,7 +991,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                     color=config.EMBED_COLOR["complete"]
                 )
                 if i == 0:
-                    await interaction.edit_original_response(content=None, embed=embed)
+                    await progress_message.edit(content=None, embed=embed)
                 else:
                     await interaction.followup.send(embed=embed)
 
@@ -1001,12 +1027,10 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 f"My tweet-fetching antenna is bent! Failed for @{user_to_fetch}. Error: {str(e)[:500]}"
             )
             try:
-                # Check if interaction is done before trying to edit.
-                # If it's already done (e.g. by an earlier error or timeout), use followup.
                 if interaction.response.is_done():
                     await interaction.followup.send(content=error_content, ephemeral=True)
                 else:
-                    await interaction.edit_original_response(content=error_content, embed=None)
+                    await progress_message.edit(content=error_content, embed=None)
             except discord.HTTPException:
                 logger.warning(
                     f"Could not send final error message for gettweets @{user_to_fetch} to user (HTTPException)."

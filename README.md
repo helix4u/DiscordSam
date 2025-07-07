@@ -73,7 +73,7 @@ DiscordSam is a modular Python application designed for extensibility and mainta
         *   Scheduled reminders.
         *   Timestamp of the last Playwright usage (for automated cleanup).
         *   Per-channel locks to prevent concurrent LLM streaming operations within the same channel.
-        *   A global scrape lock ensures web scraping tasks (e.g., RSS fetching) run one at a time, queuing subsequent requests until the previous one's TTS is delivered.
+        *   A global scrape lock ensures web scraping tasks (e.g., RSS fetching) run one at a time. If a command must wait for the lock, the bot now notifies the user with an ephemeral "queued" message before starting a new public response once scraping begins.
     *   Instances of `BotState` are passed to modules that need to access or modify this shared information (e.g., command handlers, event processors).
 
 4.  **Discord Event Handlers (`discord_events.py`)**:
