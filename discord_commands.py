@@ -933,6 +933,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 tweet_docs_to_add = []
                 tweet_metadatas_to_add = []
                 tweet_ids_to_add = []
+                seen_doc_ids: set[str] = set()
                 for t_data in new_tweets_to_process:
                     tweet_identifier = t_data.get('tweet_url') # Assuming this is unique and suitable as an ID
                     if not tweet_identifier:
@@ -941,7 +942,10 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
 
                     # Use the tweet URL as the document ID if it's guaranteed unique, otherwise generate one
                     # For Chroma, IDs should be unique strings.
-                    doc_id = f"tweet_{clean_username}_{tweet_identifier.split('/')[-1] if '/' in tweet_identifier else tweet_identifier}"
+                    tweet_id_val = str(t_data.get("id") or "")
+                    if not tweet_id_val:
+                        tweet_id_val = tweet_identifier.split("?")[0].split("/")[-1]
+                    doc_id = f"tweet_{clean_username}_{tweet_id_val}"
 
                     # The document itself will be the content of the tweet
                     document_content = t_data.get('content', '')
@@ -960,9 +964,14 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                     reposted_by_val = t_data.get("reposted_by")
                     if reposted_by_val:
                         metadata["reposted_by"] = str(reposted_by_val)
+                    if doc_id in seen_doc_ids:
+                        logger.debug(f"Duplicate tweet doc_id detected in batch: {doc_id}")
+                        continue
+
                     tweet_docs_to_add.append(document_content)
                     tweet_metadatas_to_add.append(metadata)
                     tweet_ids_to_add.append(doc_id)
+                    seen_doc_ids.add(doc_id)
 
                 if tweet_ids_to_add:
                     try:
@@ -1180,22 +1189,31 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 tweet_docs_to_add = []
                 tweet_metadatas_to_add = []
                 tweet_ids_to_add = []
+                seen_doc_ids: set[str] = set()
                 for t_data in new_tweets_to_process:
                     tweet_identifier = t_data.get('tweet_url')
                     if not tweet_identifier:
                         logger.warning(f"Skipping tweet storage for home timeline due to missing 'tweet_url'. Data: {t_data}")
                         continue
 
-                    doc_id = f"tweet_home_{tweet_identifier.split('/')[-1] if '/' in tweet_identifier else tweet_identifier}"
+                    tweet_id_val = str(t_data.get("id") or "")
+                    if not tweet_id_val:
+                        tweet_id_val = tweet_identifier.split("?")[0].split("/")[-1]
+                    doc_id = f"tweet_home_{tweet_id_val}"
 
                     document_content = t_data.get('content', '')
                     if not document_content.strip():
                         logger.info(f"Skipping empty tweet from home timeline, ID: {doc_id}")
                         continue
 
+                    if doc_id in seen_doc_ids:
+                        logger.debug(f"Duplicate tweet doc_id detected in batch: {doc_id}")
+                        continue
+
                     tweet_docs_to_add.append(document_content)
                     tweet_metadatas_to_add.append({'username': t_data.get('username', 'unknown'), 'tweet_url': tweet_identifier})
                     tweet_ids_to_add.append(doc_id)
+                    seen_doc_ids.add(doc_id)
 
                 if tweet_ids_to_add:
                     try:
