@@ -8,6 +8,7 @@ import random
 
 
 import chromadb
+from chromadb.errors import InternalError
 
 from config import config
 from common_models import MsgNode
@@ -437,8 +438,21 @@ async def retrieve_and_prepare_rag_context(llm_client: Any, query: str, n_result
                         logger.info(f"RAG: No documents found in '{name}' collection for the query.")
                 else:
                     logger.info(f"RAG: No 'documents' found or documents list is empty/None in response from '{name}' collection for query: '{str(query)[:50]}...'")
+            except InternalError as e_other:
+                if "Nothing found on disk" in str(e_other):
+                    logger.info(
+                        f"RAG: '{name}' collection appears empty on disk; skipping query."
+                    )
+                    continue
+                logger.error(
+                    f"RAG: Error querying '{name}' collection: {e_other}",
+                    exc_info=True,
+                )
             except Exception as e_other:
-                logger.error(f"RAG: Error querying '{name}' collection: {e_other}", exc_info=True)
+                logger.error(
+                    f"RAG: Error querying '{name}' collection: {e_other}",
+                    exc_info=True,
+                )
 
         if not retrieved_full_conversation_texts:
             logger.info("RAG: No context texts retrieved from any source for synthesis.")
