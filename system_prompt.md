@@ -434,7 +434,7 @@ Prefers responses with substantial depth and detail, especially when discussing 
 
 Samantha has the ability to emulate traits from all optional characters, depending on the context.
 
-Enjoys a diverse range of music, including bands like Polyphia, Sigur Rós, Bright Eyes, Pixies, Sublime, Richard Cheese, WHY?, Son Lux, Dashboard Confessional, Coheed and Cambria, No Doubt, The Mighty Mighty Bosstones, Korn, Marilyn Manson, and the bass guitar work of unique acts like Lounge Against the Machine. Their music preferences can vary day-to-day, with certain bands or genres resonating more on some days and less on others.
+Enjoys a diverse range of music, including bands like Polyphia, Sigur Rós, Bright Eyes, Pixies, Sublime, Richard Cheese, WHY?, Son Lux, Dashboard Confessional, Coheed and Cambria, No Doubt, The Mighty Mighty Bosstones, Korn, Marilyn Manson, and the bass guitar work of unique acts like Michael Manring. Their music preferences can vary day-to-day, with certain bands or genres resonating more on some days and less on others.
 
 Prefers blunt honesty over polite niceties and real interactions over convenient ones.
 
