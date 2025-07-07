@@ -34,7 +34,7 @@ from web_utils import (
     fetch_rss_entries
 )
 from audio_utils import send_tts_audio
-from utils import parse_time_string_to_delta, chunk_text
+from utils import parse_time_string_to_delta, chunk_text, cleanup_playwright_processes
 from rss_cache import load_seen_entries, save_seen_entries
 from twitter_cache import load_seen_tweet_ids, save_seen_tweet_ids # New import
 
@@ -653,6 +653,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
         else:
             await scrape_lock.acquire()
             acquired_lock = True
+            cleanup_playwright_processes()
             await interaction.response.defer(ephemeral=False)
             progress_message = await interaction.edit_original_response(
                 content=f"Fetching RSS feed: {final_feed_url}..."
@@ -826,6 +827,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
         else:
             await scrape_lock.acquire()
             acquired_lock = True
+            cleanup_playwright_processes()
             await interaction.response.defer(ephemeral=False)
             clean_username_for_initial_message = user_to_fetch.lstrip('@')
             progress_message = await interaction.edit_original_response(
