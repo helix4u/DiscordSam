@@ -921,12 +921,14 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                     metadata = {
                         "username": clean_username,
                         "tweet_url": tweet_identifier,
-                        "timestamp": t_data.get('timestamp', datetime.now().isoformat()),
-                        "is_repost": t_data.get('is_repost', False),
-                        "reposted_by": t_data.get('reposted_by', None),
+                        "timestamp": t_data.get("timestamp", datetime.now().isoformat()),
+                        "is_repost": bool(t_data.get("is_repost", False)),
                         "source_command": "/gettweets",
-                        "raw_data_preview": str(t_data)[:200] # Store a snippet for quick reference
+                        "raw_data_preview": str(t_data)[:200],  # Store a snippet for quick reference
                     }
+                    reposted_by_val = t_data.get("reposted_by")
+                    if reposted_by_val:
+                        metadata["reposted_by"] = str(reposted_by_val)
                     tweet_docs_to_add.append(document_content)
                     tweet_metadatas_to_add.append(metadata)
                     tweet_ids_to_add.append(doc_id)
