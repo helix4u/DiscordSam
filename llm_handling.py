@@ -46,6 +46,7 @@ async def _build_initial_prompt_messages(
     bot_state: BotState,
     user_id: Optional[str] = None,
     synthesized_rag_context_str: Optional[str] = None,
+    raw_rag_snippets: Optional[List[Tuple[str, str]]] = None, # New parameter
     max_image_history_depth: int = 1
 ) -> List[MsgNode]:
     prompt_list: List[MsgNode] = [get_system_prompt()]
@@ -53,6 +54,7 @@ async def _build_initial_prompt_messages(
     if config.USER_PROVIDED_CONTEXT:
         prompt_list.append(MsgNode(role="system", content=f"User-Set Global Context:\n{config.USER_PROVIDED_CONTEXT}"))
 
+    # Add synthesized RAG context summary (existing logic)
     if synthesized_rag_context_str:
         context_text_for_prompt = (
             "The following is a synthesized summary of potentially relevant past conversations, "
@@ -62,6 +64,44 @@ async def _build_initial_prompt_messages(
             "\n--- End Synthesized Context ---"
         )
         prompt_list.append(MsgNode(role="system", content=context_text_for_prompt))
+
+    # Add raw RAG snippets (new logic)
+    if raw_rag_snippets:
+        raw_snippets_text_parts = [
+            "The following are raw retrieved context snippets that might be relevant. Use them to augment your knowledge and provide a more detailed and accurate response. Prioritize information from these snippets if it conflicts with more general knowledge.\n"
+        ]
+        total_raw_snippet_char_length = 0
+        MAX_RAW_SNIPPET_CHARS = getattr(config, 'MAX_RAW_RAG_SNIPPET_CHARS_IN_PROMPT', 15000) # Default to 15k chars for raw snippets
+
+        for i, (snippet_text, snippet_source) in enumerate(raw_rag_snippets):
+            # Truncate individual snippets if they are excessively long to prevent one snippet from dominating
+            # MAX_CHARS_PER_SNIPPET = MAX_RAW_SNIPPET_CHARS // (len(raw_rag_snippets) if len(raw_rag_snippets) > 0 else 1) # Evenly distribute, roughly
+            # Truncate individual snippets to a fixed reasonable length to allow more snippets.
+            MAX_CHARS_PER_SNIPPET = getattr(config, 'MAX_CHARS_PER_INDIVIDUAL_RAG_SNIPPET', 3000) # Default to 3k chars per snippet
+
+            truncated_snippet_text = snippet_text[:MAX_CHARS_PER_SNIPPET]
+            if len(snippet_text) > MAX_CHARS_PER_SNIPPET:
+                truncated_snippet_text += " [Snippet Truncated]"
+
+            current_snippet_formatted = f"\n--- Raw Snippet {i+1} (Source: {snippet_source}) ---\n{truncated_snippet_text}\n"
+
+            if total_raw_snippet_char_length + len(current_snippet_formatted) > MAX_RAW_SNIPPET_CHARS:
+                logger.warning(f"Max character limit ({MAX_RAW_SNIPPET_CHARS}) for raw RAG snippets reached. Stopping at snippet {i}.")
+                raw_snippets_text_parts.append("\n[More raw snippets available but omitted due to length constraints]")
+                break
+
+            raw_snippets_text_parts.append(current_snippet_formatted)
+            total_raw_snippet_char_length += len(current_snippet_formatted)
+
+        raw_snippets_text_parts.append("\n--- End Raw Retrieved Context Snippets ---")
+
+        if len(raw_snippets_text_parts) > 2: # Header and Footer means at least one snippet was added
+            full_raw_context_message = "".join(raw_snippets_text_parts)
+            prompt_list.append(MsgNode(role="system", content=full_raw_context_message))
+            logger.info(f"Added {len(raw_rag_snippets)} raw RAG snippets to prompt, total char length approx {total_raw_snippet_char_length}.")
+        elif raw_rag_snippets: # Snippets were available but perhaps all too long or filtered out
+            logger.info("Raw RAG snippets were provided but none were added to the prompt (possibly due to length constraints or empty after formatting).")
+
 
     raw_history: List[MsgNode] = []
     if channel_id is not None:
