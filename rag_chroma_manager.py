@@ -289,14 +289,14 @@ async def distill_conversation_to_sentence_llm(llm_client: Any, text_to_distill:
         logger.error(f"Failed to distill focused exchange: {e}", exc_info=True)
         return None
 
-async def synthesize_retrieved_contexts_llm(llm_client: Any, retrieved_full_texts: List[str], current_query: str) -> Optional[str]:
-    if not retrieved_full_texts:
-        logger.debug("Context synthesis skipped: no retrieved_full_texts provided.")
+async def synthesize_retrieved_contexts_llm(llm_client: Any, retrieved_contexts: List[Tuple[str, str]], current_query: str) -> Optional[str]:
+    if not retrieved_contexts:
+        logger.debug("Context synthesis skipped: no retrieved_contexts provided.")
         return None
 
     formatted_snippets = ""
-    for i, text in enumerate(retrieved_full_texts):
-        formatted_snippets += f"--- Memory {i+1} ---\n{text[:2000]}\n\n"
+    for i, (text, source_name) in enumerate(retrieved_contexts):
+        formatted_snippets += f"--- Memory {i+1} (from: {source_name}) ---\n{text[:2000]}\n\n"
 
     prompt = (
         "You are a master context synthesizer. Below are several retrieved conversation snippets (refer to these as memories) that "
@@ -352,15 +352,16 @@ async def retrieve_and_prepare_rag_context(llm_client: Any, query: str, n_result
             include=["metadatas", "documents"]
         )
 
-        if not results or not results.get('ids') or not results['ids'][0]:
-            logger.info(f"RAG: No relevant distilled sentences found for query: '{str(query)[:50]}...'")
-            return None
-
-        retrieved_full_conversation_texts: List[str] = []
+        # Stores tuples of (document_text, source_collection_name)
+        retrieved_contexts: List[Tuple[str, str]] = []
         retrieved_distilled_sentences_for_log: List[str] = []
         full_convo_ids_to_fetch = []
 
-        query_result_ids = results['ids'][0]
+        if not results or not results.get('ids') or not results['ids'][0]:
+            logger.info(f"RAG: No relevant distilled sentences found for query: '{str(query)[:50]}...'")
+            # No return here, proceed to other collections
+        else:
+            query_result_ids = results['ids'][0]
         query_result_metadatas = results['metadatas'][0] if results['metadatas'] and results['metadatas'][0] else [{} for _ in query_result_ids]
         query_result_documents = results['documents'][0] if results['documents'] and results['documents'][0] else ["[Distilled sentence not found]" for _ in query_result_ids]
 
@@ -391,8 +392,10 @@ async def retrieve_and_prepare_rag_context(llm_client: Any, query: str, n_result
                 full_convo_docs_result = chat_history_collection.get(ids=unique_full_convo_ids_to_fetch, include=["documents"])
                 if full_convo_docs_result and full_convo_docs_result.get('documents'):
                     valid_docs = [doc for doc in full_convo_docs_result['documents'] if isinstance(doc, str)]
-                    retrieved_full_conversation_texts.extend(valid_docs)
-                    logger.info(f"RAG: Retrieved {len(valid_docs)} full conversation texts.")
+                    for doc_text in valid_docs:
+                        # The source here is the original full conversation, identified via distilled sentences
+                        retrieved_contexts.append((doc_text, "chat_history_via_distilled"))
+                    logger.info(f"RAG: Retrieved {len(valid_docs)} full conversation texts via distilled sentences.")
                 else:
                     logger.warning(f"RAG: Could not retrieve some/all full conversation documents for IDs: {unique_full_convo_ids_to_fetch}. Result: {full_convo_docs_result}")
             except Exception as e_get_full:
@@ -432,7 +435,8 @@ async def retrieve_and_prepare_rag_context(llm_client: Any, query: str, n_result
                     # Ensure that res["documents"][0] is a list of strings
                     docs_from_collection = [doc for doc in res["documents"][0] if isinstance(doc, str)]
                     if docs_from_collection:
-                        retrieved_full_conversation_texts.extend(docs_from_collection)
+                        for doc_text in docs_from_collection:
+                            retrieved_contexts.append((doc_text, name)) # Use collection 'name' as source
                         logger.info(f"RAG: Retrieved {len(docs_from_collection)} documents from '{name}' collection.")
                     else:
                         logger.info(f"RAG: No documents found in '{name}' collection for the query.")
@@ -454,11 +458,12 @@ async def retrieve_and_prepare_rag_context(llm_client: Any, query: str, n_result
                     exc_info=True,
                 )
 
-        if not retrieved_full_conversation_texts:
+        if not retrieved_contexts: # Check the new list name
             logger.info("RAG: No context texts retrieved from any source for synthesis.")
             return None
 
-        synthesized_context = await synthesize_retrieved_contexts_llm(llm_client, retrieved_full_conversation_texts, query)
+        # Pass the list of tuples to the synthesis function
+        synthesized_context = await synthesize_retrieved_contexts_llm(llm_client, retrieved_contexts, query)
         return synthesized_context
 
     except Exception as e:
