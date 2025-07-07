@@ -614,7 +614,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
         interaction: discord.Interaction,
         feed_url: Optional[str] = None,  # Made optional
         feed_url_manual: Optional[str] = None, # New manual field
-        limit: app_commands.Range[int, 1, 20] = 10,
+        limit: app_commands.Range[int, 1, 20] = 15,
     ):
         if not llm_client_instance or not bot_state_instance or not bot_instance or not bot_instance.user:
             logger.error("rss_slash_command: One or more bot components are None.")
@@ -757,7 +757,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
         interaction: discord.Interaction,
         username: str = "",
         preset_user: str = "",
-        limit: app_commands.Range[int, 1, 50] = 10,
+        limit: app_commands.Range[int, 1, 50] = 30,
     ):
         if not llm_client_instance or not bot_state_instance or not bot_instance or not bot_instance.user:
             logger.error("gettweets_slash_command: One or more bot components are None.")
