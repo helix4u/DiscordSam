@@ -380,6 +380,7 @@ DiscordSam offers a variety of slash commands for diverse functionalities. Here'
         3.  Sends the text of these tweets to the LLM with a prompt to analyze and summarize the main themes, topics, and overall sentiment.
         4.  Streams this summary back to the Discord channel as a new message flow.
         5.  Provides TTS for the summary if enabled.
+        6.  Stores newly fetched tweets in the `CHROMA_TWEETS_COLLECTION_NAME` collection for future retrieval.
     *   **Output:**
         *   Embed(s) containing the raw fetched tweets.
         *   A new set of messages (embeds) containing the LLM-generated summary of the tweets. Progress updates are sent during scraping.
