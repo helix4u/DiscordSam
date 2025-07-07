@@ -206,6 +206,7 @@ Below is a comprehensive list of environment variables used by DiscordSam, along
 *   `SCRAPE_SCROLL_ATTEMPTS` (Default: `3`): How many times the bot will attempt to scroll down a webpage when scraping to load dynamically loaded content.
 *   `PLAYWRIGHT_CLEANUP_INTERVAL_MINUTES` (Default: `5`): How often the background task runs to check for and clean up idle Playwright processes.
 *   `PLAYWRIGHT_IDLE_CLEANUP_THRESHOLD_MINUTES` (Default: `10`): How long Playwright must be idle (no scraping activity) before the cleanup task will terminate its processes.
+*   `SCRAPE_LOCK_TIMEOUT_SECONDS` (Default: `60`): How long to wait when acquiring the scraping lock before giving up.
 
 **ChromaDB (RAG & Long-Term Memory):**
 
@@ -213,7 +214,9 @@ Below is a comprehensive list of environment variables used by DiscordSam, along
 *   `CHROMA_COLLECTION_NAME` (Default: `long_term_memory`): Name of the ChromaDB collection for storing full conversation logs.
 *   `CHROMA_DISTILLED_COLLECTION_NAME` (Default: `distilled_chat_summaries`): Name of the collection for storing concise, keyword-rich distilled summaries of conversations (used for primary RAG retrieval).
 *   `CHROMA_NEWS_SUMMARY_COLLECTION_NAME` (Default: `news_summaries`): Collection for storing summaries of news articles processed by the `/news` command.
+*   `CHROMA_RSS_SUMMARY_COLLECTION_NAME` (Default: `rss_summaries`): Collection for storing summaries of RSS feed items processed by the `/rss` command.
 *   `CHROMA_TIMELINE_SUMMARY_COLLECTION_NAME` (Default: `timeline_summaries`): Collection for storing summaries of pruned, older chat history.
+*   `CHROMA_TWEETS_COLLECTION_NAME` (Default: `tweets_collection`): Collection for storing tweets fetched for summarization.
 *   `CHROMA_ENTITIES_COLLECTION_NAME` (Default: `entities_collection`): Collection for storing extracted entities (persons, organizations, etc.) from conversations.
 *   `CHROMA_RELATIONS_COLLECTION_NAME` (Default: `relations_collection`): Collection for storing extracted relationships between entities.
 *   `CHROMA_OBSERVATIONS_COLLECTION_NAME` (Default: `observations_collection`): Collection for storing extracted key observations or facts.
