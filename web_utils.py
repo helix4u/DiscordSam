@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 PLAYWRIGHT_SEM = asyncio.Semaphore(config.PLAYWRIGHT_MAX_CONCURRENCY)
 
-async def _graceful_close_playwright(page: Optional[Any], context: Optional[Any], browser: Optional[Any], profile_dir_usable: bool, timeout: float = 3.0) -> None:
+async def _graceful_close_playwright(page: Optional[Any], context: Optional[Any], browser: Optional[Any], profile_dir_usable: bool, timeout: float = 1.0) -> None:
     """Attempt to close Playwright objects; kill lingering processes if they remain."""
     if page and not getattr(page, "is_closed", lambda: True)():
         try:
