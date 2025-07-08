@@ -17,10 +17,7 @@ from utils import clean_text_for_tts
 
 logger = logging.getLogger(__name__)
 
-# Global lock to ensure TTS requests are processed sequentially.
-TTS_LOCK = asyncio.Lock()
-
-WHISPER_MODEL: Optional[Any] = None
+WHISPER_MODEL: Optional[Any] = None 
 
 def load_whisper_model() -> Optional[Any]: 
     global WHISPER_MODEL
@@ -112,37 +109,29 @@ async def _send_audio_segment(
     else:
         logger.warning(f"TTS request failed for '{filename_suffix}' segment, no audio data received.")
 
-async def send_tts_audio(
-    destination: Union[discord.abc.Messageable, discord.Interaction, discord.Message],
-    text_to_speak: str,
+async def send_tts_audio( # Ensure this function is defined at the module level
+    destination: Union[discord.abc.Messageable, discord.Interaction, discord.Message], 
+    text_to_speak: str, 
     base_filename: str = "response"
-) -> None:
-    """Generate TTS audio and send it to the given destination.
-
-    The global ``TTS_LOCK`` ensures that only one TTS request is processed at a
-    time so audio playback doesn't overlap when multiple commands trigger TTS
-    concurrently.
-    """
+):
     if not config.TTS_ENABLED_DEFAULT or not text_to_speak:
         return
 
-    # Serialize TTS processing so audio messages don't overlap
-    async with TTS_LOCK:
-        think_pattern = re.compile(r"<think>(.*?)</think>", re.DOTALL | re.IGNORECASE)
-        match = think_pattern.search(text_to_speak)
+    think_pattern = re.compile(r"<think>(.*?)</think>", re.DOTALL | re.IGNORECASE) # 're' is now imported
+    match = think_pattern.search(text_to_speak)
 
-        if match:
-            thought_text = match.group(1).strip()
-            response_text = think_pattern.sub('', text_to_speak).strip()
-
-            logger.info("Found <think> tags. Processing thoughts and response separately for TTS.")
-            await _send_audio_segment(destination, thought_text, "thoughts", is_thought=True, base_filename=base_filename)
-            await asyncio.sleep(0.5)
-            if response_text:
-                await _send_audio_segment(destination, response_text, "main_response", is_thought=False, base_filename=base_filename)
-        else:
-            logger.info("No <think> tags found. Processing full text for TTS.")
-            await _send_audio_segment(destination, text_to_speak, "full", is_thought=False, base_filename=base_filename)
+    if match:
+        thought_text = match.group(1).strip()
+        response_text = think_pattern.sub('', text_to_speak).strip() 
+        
+        logger.info("Found <think> tags. Processing thoughts and response separately for TTS.")
+        await _send_audio_segment(destination, thought_text, "thoughts", is_thought=True, base_filename=base_filename)
+        await asyncio.sleep(0.5) 
+        if response_text: 
+            await _send_audio_segment(destination, response_text, "main_response", is_thought=False, base_filename=base_filename)
+    else:
+        logger.info("No <think> tags found. Processing full text for TTS.")
+        await _send_audio_segment(destination, text_to_speak, "full", is_thought=False, base_filename=base_filename)
 
 def transcribe_audio_file(file_path: str) -> Optional[str]:
     if not os.path.exists(file_path):
