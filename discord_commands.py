@@ -145,6 +145,7 @@ async def process_rss_feed(
 
     for idx, ent in enumerate(to_process, 1):
         title = ent.get("title") or "Untitled"
+        pub_date = ent.get("pubDate") or ""
         link = ent.get("link") or ""
         guid = ent.get("guid") or link
 
@@ -154,7 +155,7 @@ async def process_rss_feed(
 
         scraped_text, _ = await scrape_website(link)
         if not scraped_text or "Failed to scrape" in scraped_text or "Scraping timed out" in scraped_text:
-            summaries.append(f"**{title}**\nCould not scrape article: {link}\n")
+            summaries.append(f"**{title}**\n{pub_date}\n{link}\nCould not scrape article\n")
             seen_ids.add(guid)
             continue
 
@@ -186,7 +187,7 @@ async def process_rss_feed(
             logger.error(f"LLM summarization failed for {link}: {e_summ}")
             summary = "[LLM summarization failed]"
 
-        summaries.append(f"**{title}**\n{summary}\n{link}\n")
+        summaries.append(f"**{title}**\n{pub_date}\n{link}\n{summary}\n")
         seen_ids.add(guid)
 
     seen[feed_url] = list(seen_ids)
