@@ -17,10 +17,35 @@ import xml.etree.ElementTree
 
 # Assuming config is imported from config.py
 from config import config
+from utils import cleanup_playwright_processes
 
 logger = logging.getLogger(__name__)
 
 PLAYWRIGHT_SEM = asyncio.Semaphore(config.PLAYWRIGHT_MAX_CONCURRENCY)
+
+async def _graceful_close_playwright(page: Optional[Any], context: Optional[Any], browser: Optional[Any], profile_dir_usable: bool, timeout: float = 3.0) -> None:
+    """Attempt to close Playwright objects; kill lingering processes if they remain."""
+    if page and not getattr(page, "is_closed", lambda: True)():
+        try:
+            await asyncio.wait_for(page.close(), timeout=timeout)
+        except Exception as e:
+            logger.debug(f"Error closing page: {e}")
+    if context:
+        try:
+            await asyncio.wait_for(context.close(), timeout=timeout)
+        except Exception as e_ctx:
+            if "Target page, context or browser has been closed" not in str(e_ctx):
+                logger.debug(f"Error closing context: {e_ctx}")
+    if browser and not profile_dir_usable:
+        try:
+            await asyncio.wait_for(browser.close(), timeout=timeout)
+        except Exception as e_browser:
+            logger.debug(f"Error closing browser: {e_browser}")
+    await asyncio.sleep(timeout)
+    killed = cleanup_playwright_processes()
+    if killed:
+        logger.info(f"Force killed {killed} lingering Playwright processes.")
+
 
 JS_EXPAND_SHOWMORE_TWITTER = """
 (maxClicks) => {
@@ -289,17 +314,7 @@ async def scrape_website(
             await progress_callback(f"Failed to scrape {url} due to an error.")
         return "Failed to scrape the website due to an unexpected error.", screenshot_paths # Return collected paths on error
     finally:
-        if page and not page.is_closed():
-            try: await page.close()
-            except Exception: pass
-        if context_manager:
-            try: await context_manager.close()
-            except Exception as e_ctx:
-                if "Target page, context or browser has been closed" not in str(e_ctx):
-                    logger.debug(f"Ignoring error during context closure for {url}: {e_ctx}")
-        if browser_instance_sw and not profile_dir_usable:
-            try: await browser_instance_sw.close()
-            except Exception: pass
+        await _graceful_close_playwright(page, context_manager, browser_instance_sw, profile_dir_usable)
 
 async def scrape_latest_tweets(username_queried: str, limit: int = 10, progress_callback: Optional[Callable[[str], Awaitable[None]]] = None) -> List[Dict[str, Any]]:
     logger.info(f"Scraping last {limit} tweets for @{username_queried} (profile page, with replies) using Playwright JS execution.")
@@ -419,17 +434,12 @@ async def scrape_latest_tweets(username_queried: str, limit: int = 10, progress_
         if progress_callback:
             await progress_callback(f"An unexpected error occurred while scraping tweets for @{username_queried}. Collected {len(tweets_collected)}.")
     finally:
-        if page and not page.is_closed():
-            try: await page.close()
-            except Exception as e_page_close_final: logger.debug(f"Ignoring error closing page (final) for @{username_queried}: {e_page_close_final}")
-        if context_manager:
-            try: await context_manager.close()
-            except Exception as e_ctx_final:
-                if "Target page, context or browser has been closed" not in str(e_ctx_final):
-                    logger.debug(f"Error closing context (final) for @{username_queried}: {e_ctx_final}")
-        if browser_instance_st and not profile_dir_usable:
-            try: await browser_instance_st.close()
-            except Exception as e_browser_final: logger.debug(f"Ignoring error closing browser (final) for @{username_queried}: {e_browser_final}")
+        await _graceful_close_playwright(
+            page,
+            context_manager,
+            browser_instance_st,
+            profile_dir_usable,
+        )
 
     tweets_collected.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
     logger.info(f"Finished scraping. Collected {len(tweets_collected)} unique tweets for @{username_queried}.")
@@ -567,22 +577,12 @@ async def scrape_home_timeline(limit: int = 10, progress_callback: Optional[Call
                 f"An unexpected error occurred while scraping tweets for home timeline. Collected {len(tweets_collected)}."
             )
     finally:
-        if page and not page.is_closed():
-            try:
-                await page.close()
-            except Exception as e_page_close_final:
-                logger.debug(f"Ignoring error closing page (final) for home timeline: {e_page_close_final}")
-        if context_manager:
-            try:
-                await context_manager.close()
-            except Exception as e_ctx_final:
-                if "Target page, context or browser has been closed" not in str(e_ctx_final):
-                    logger.debug(f"Error closing context (final) for home timeline: {e_ctx_final}")
-        if browser_instance_st and not profile_dir_usable:
-            try:
-                await browser_instance_st.close()
-            except Exception as e_browser_final:
-                logger.debug(f"Ignoring error closing browser (final) for home timeline: {e_browser_final}")
+        await _graceful_close_playwright(
+            page,
+            context_manager,
+            browser_instance_st,
+            profile_dir_usable,
+        )
 
     tweets_collected.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
     logger.info(f"Finished scraping. Collected {len(tweets_collected)} unique tweets from home timeline.")
