@@ -35,7 +35,12 @@ from web_utils import (
     fetch_rss_entries
 )
 from audio_utils import send_tts_audio
-from utils import parse_time_string_to_delta, chunk_text
+from utils import (
+    parse_time_string_to_delta,
+    chunk_text,
+    safe_followup_send,
+    safe_message_edit,
+)
 from rss_cache import load_seen_entries, save_seen_entries
 from twitter_cache import load_seen_tweet_ids, save_seen_tweet_ids # New import
 
@@ -123,7 +128,8 @@ async def process_rss_feed(
         ``True`` if any new entries were processed, ``False`` otherwise.
     """
 
-    progress_message = await interaction.followup.send(
+    progress_message = await safe_followup_send(
+        interaction,
         content=f"Fetching RSS feed: {feed_url}..."
     )
 
@@ -133,8 +139,15 @@ async def process_rss_feed(
     entries = await fetch_rss_entries(feed_url)
     new_entries = [e for e in entries if e.get("guid") not in seen_ids]
     if not new_entries:
-        await progress_message.delete()
-        await interaction.followup.send(
+        try:
+            await progress_message.delete()
+        except discord.HTTPException as e:
+            if e.status == 401 and getattr(e, "code", None) == 50027:
+                logger.warning("Webhook token expired; could not delete progress message")
+            else:
+                raise
+        await safe_followup_send(
+            interaction,
             content=f"No new entries found for {feed_url}.",
             ephemeral=True,
         )
@@ -149,7 +162,9 @@ async def process_rss_feed(
         link = ent.get("link") or ""
         guid = ent.get("guid") or link
 
-        await progress_message.edit(
+        progress_message = await safe_message_edit(
+            progress_message,
+            interaction.channel,
             content=f"Scraping {idx}/{len(to_process)}: {title}..."
         )
 
@@ -202,9 +217,14 @@ async def process_rss_feed(
             color=config.EMBED_COLOR["complete"],
         )
         if i == 0:
-            await progress_message.edit(content=None, embed=embed)
+            progress_message = await safe_message_edit(
+                progress_message,
+                interaction.channel,
+                content=None,
+                embed=embed,
+            )
         else:
-            await interaction.followup.send(embed=embed)
+            await safe_followup_send(interaction, embed=embed)
 
     await send_tts_audio(interaction, combined, base_filename=f"rss_{interaction.id}")
 

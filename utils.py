@@ -2,6 +2,10 @@ import re
 from datetime import timedelta
 from typing import List, Optional, Tuple
 import psutil
+import logging
+import discord
+
+logger = logging.getLogger(__name__)
 
 # Assuming config is imported from config.py where it's defined
 # from .config import config # If in a package
@@ -91,3 +95,35 @@ def cleanup_playwright_processes() -> int:
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue
     return killed
+
+
+async def safe_followup_send(
+    interaction: discord.Interaction, *, error_hint: str = "", **kwargs
+) -> discord.Message:
+    """Send a followup message with fallback to channel.send if the token expired."""
+    try:
+        return await interaction.followup.send(**kwargs)
+    except discord.HTTPException as e:
+        if e.status == 401 and getattr(e, "code", None) == 50027:
+            logger.warning(
+                "Interaction token expired%s; falling back to channel.send", " " + error_hint if error_hint else ""
+            )
+            if interaction.channel:
+                return await interaction.channel.send(**kwargs)
+        raise
+
+
+async def safe_message_edit(
+    message: discord.Message,
+    channel: discord.abc.Messageable,
+    **kwargs,
+) -> discord.Message:
+    """Edit a message, or send a new one if the webhook token expired."""
+    try:
+        await message.edit(**kwargs)
+        return message
+    except discord.HTTPException as e:
+        if e.status == 401 and getattr(e, "code", None) == 50027:
+            logger.warning("Webhook token expired during edit; sending new message")
+            return await channel.send(**kwargs)
+        raise
