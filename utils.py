@@ -109,7 +109,9 @@ async def safe_followup_send(
                 "Interaction token expired%s; falling back to channel.send", " " + error_hint if error_hint else ""
             )
             if interaction.channel:
-                return await interaction.channel.send(**kwargs)
+                kwargs_no_ephemeral = dict(kwargs)
+                kwargs_no_ephemeral.pop("ephemeral", None)
+                return await interaction.channel.send(**kwargs_no_ephemeral)
         raise
 
 
