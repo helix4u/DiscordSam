@@ -25,6 +25,7 @@ DiscordSam is an advanced, context-aware Discord bot designed to provide intelli
 *   **Text-to-Speech (TTS):**
     *   Voice responses for bot messages via an OpenAI TTS API compatible server.
     *   Separate TTS for "thoughts" (content within `<think>...</think>` tags) vs. main response if configured.
+    *   TTS operations are queued so only one audio clip plays at a time.
 *   **Slash Commands:** A comprehensive suite of commands for various functionalities (detailed in section 8).
 *   **High Configurability:** Most settings are managed via a `.env` file, allowing for easy customization of LLM endpoints, API keys, and bot behavior.
 *   **Modular Codebase:** Refactored into multiple Python files for better organization, maintainability, and scalability.
@@ -355,7 +356,7 @@ DiscordSam offers a variety of slash commands for diverse functionalities. Here'
     *   **Purpose:** Fetches new entries from a specified RSS feed, scrapes the linked articles, summarizes them, and displays the summaries.
     *   **Arguments:**
         *   `feed_url` (Required): The URL of the RSS feed. Can be selected from a preset list or provided directly.
-        *   `limit` (Optional, Default: 5): The maximum number of new entries to fetch and process (max 10).
+        *   `limit` (Optional, Default: 15): The maximum number of new entries to fetch and process (max 20).
     *   **Behavior:**
         1.  Fetches the RSS feed using `web_utils.fetch_rss_entries`.
         2.  Compares entries against a local cache (`rss_seen.json`) to identify new ones.
@@ -366,7 +367,18 @@ DiscordSam offers a variety of slash commands for diverse functionalities. Here'
         5.  Updates the `rss_seen.json` cache.
         6.  Provides TTS for the combined summaries if enabled.
         7.  The user's command and the bot's full summarized response are added to short-term history and ingested into ChromaDB.
+        8.  If no new entries are found, the bot replies with an ephemeral message instead of posting publicly.
     *   **Output:** One or more embed messages containing summaries of new RSS feed entries.
+
+*   **`/allrss [limit]`**
+    *   **Purpose:** Sequentially processes all default RSS feeds, fetching new entries in batches until no unseen items remain.
+    *   **Arguments:**
+        *   `limit` (Optional, Default: 15): Number of new entries to fetch from each feed per batch (max 20).
+    *   **Behavior:**
+        1.  Iterates over every feed available in the `/rss` command's preset list.
+        2.  For each feed, repeatedly fetches up to `limit` unseen entries, scrapes and summarizes them like `/rss`.
+        3.  Continues processing a feed until it reports "No new entries found." before moving to the next one. When this happens, the bot notifies the user with an ephemeral message.
+    *   **Output:** Embeds containing summaries for each batch of articles across all feeds until all are up to date.
 
 *   **`/gettweets [username] [preset_user] [limit]`**
     *   **Purpose:** Fetches and summarizes recent tweets from a specified X/Twitter user.
