@@ -363,12 +363,12 @@ DiscordSam offers a variety of slash commands for diverse functionalities. Here'
         3.  For each new entry (up to `limit`):
             *   Scrapes the content of the article linked in the entry.
             *   Uses a fast LLM (`FAST_LLM_MODEL`) to summarize the scraped article.
-        4.  Displays the summaries (title, summary, link) in Discord embeds. If the content is long, it's chunked into multiple embeds.
+        4.  Displays the summaries (title, publication date, link, summary) in Discord embeds. If the content is long, it's chunked into multiple embeds.
         5.  Updates the `rss_seen.json` cache.
         6.  Provides TTS for the combined summaries if enabled.
         7.  The user's command and the bot's full summarized response are added to short-term history and ingested into ChromaDB.
         8.  If no new entries are found, the bot replies with an ephemeral message instead of posting publicly.
-    *   **Output:** One or more embed messages containing summaries of new RSS feed entries.
+    *   **Output:** One or more embed messages containing summaries of new RSS feed entries, with each entry showing the title, publication date, link, and summary.
 
 *   **`/allrss [limit]`**
     *   **Purpose:** Sequentially processes all default RSS feeds, fetching new entries in batches until no unseen items remain.
