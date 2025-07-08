@@ -177,6 +177,7 @@ async def prune_and_summarize(prune_days: int = PRUNE_DAYS):
                     block_key_for_id = f"{block_start_dt.strftime('%Y%m%d%H%M%S')}_{block_end_dt.strftime('%Y%m%d%H%M%S')}"
                     
                     texts = [item["document"] for item in current_block_items]
+                    text_pairs = [(t, "timeline_block") for t in texts]
                     query = (
                         f"Summarize the included chat history that took place from "
                         f"{block_start_dt.strftime('%Y-%m-%d %H:%M:%S')} to "
@@ -185,7 +186,9 @@ async def prune_and_summarize(prune_days: int = PRUNE_DAYS):
                         f"Do not state anything about or reference the word snippet, conversation, retrieved, etc. "
                         f"This is for a RAG db. Keep it clean, but keep all pertinant detail."
                     )
-                    summary = await rcm.synthesize_retrieved_contexts_llm(llm_client, texts, query)
+                    summary = await rcm.synthesize_retrieved_contexts_llm(
+                        llm_client, text_pairs, query
+                    )
                     
                     if summary:
                         ids_to_prune = [item["id"] for item in current_block_items]
@@ -212,6 +215,7 @@ async def prune_and_summarize(prune_days: int = PRUNE_DAYS):
         block_key_for_id = f"{block_start_dt.strftime('%Y%m%d%H%M%S')}_{block_end_dt.strftime('%Y%m%d%H%M%S')}"
 
         texts = [item["document"] for item in current_block_items]
+        text_pairs = [(t, "timeline_block") for t in texts]
         query = (
             f"Summarize the included chat history that took place from "
             f"{block_start_dt.strftime('%Y-%m-%d %H:%M:%S')} to "
@@ -220,7 +224,9 @@ async def prune_and_summarize(prune_days: int = PRUNE_DAYS):
             f"Do not state anything about the reference the word snippet, conversation, retrieved, etc. "
             f"This is for a RAG db. Keep it clean."
         )
-        summary = await rcm.synthesize_retrieved_contexts_llm(llm_client, texts, query)
+        summary = await rcm.synthesize_retrieved_contexts_llm(
+            llm_client, text_pairs, query
+        )
 
         if summary:
             ids_to_prune = [item["id"] for item in current_block_items]
