@@ -101,115 +101,6 @@ llm_client_instance: Optional[Any] = None
 bot_state_instance: Optional[BotState] = None
 
 
-async def process_rss_feed(
-    interaction: discord.Interaction,
-    feed_url: str,
-    limit: int,
-) -> bool:
-    """Fetch, summarize and display new entries from a single RSS feed.
-
-    Parameters
-    ----------
-    interaction : discord.Interaction
-        The originating interaction for responding and context.
-    feed_url : str
-        RSS feed URL to process.
-    limit : int
-        Maximum number of new entries to process in this batch.
-
-    Returns
-    -------
-    bool
-        ``True`` if any new entries were processed, ``False`` otherwise.
-    """
-
-    await interaction.followup.send(content=f"Fetching RSS feed: {feed_url}...")
-
-    seen = load_seen_entries()
-    seen_ids = set(seen.get(feed_url, []))
-
-    entries = await fetch_rss_entries(feed_url)
-    new_entries = [e for e in entries if e.get("guid") not in seen_ids]
-    if not new_entries:
-        await interaction.followup.send(content=f"No new entries found for {feed_url}.")
-        return False
-
-    to_process = new_entries[:limit]
-    summaries: List[str] = []
-
-    for idx, ent in enumerate(to_process, 1):
-        title = ent.get("title") or "Untitled"
-        link = ent.get("link") or ""
-        guid = ent.get("guid") or link
-
-        await interaction.followup.send(content=f"Scraping {idx}/{len(to_process)}: {title}...")
-
-        scraped_text, _ = await scrape_website(link)
-        if not scraped_text or "Failed to scrape" in scraped_text or "Scraping timed out" in scraped_text:
-            summaries.append(f"**{title}**\nCould not scrape article: {link}\n")
-            seen_ids.add(guid)
-            continue
-
-        prompt = (
-            "It is 2025 and Donald Trump is the current president (Just an FYI. Maybe unrelated to context and omitted). "
-            "Do not use em dashes, favoring commas or regular dashes. Summarize the following article in 2-4 sentences. "
-            "Focus on key facts. Present in a casual, blunt, honest and slightly profane tone. Do not start with 'So, '.\n\n"
-            f"Title: {title}\nURL: {link}\n\n{scraped_text[:config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT]}"
-        )
-
-        try:
-            response = await llm_client_instance.chat.completions.create(
-                model=config.FAST_LLM_MODEL,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=500,
-                temperature=0.5,
-                stream=False,
-            )
-            summary = response.choices[0].message.content.strip() if response.choices else ""
-            if summary and summary != "[LLM summarization failed]":
-                store_rss_summary(
-                    feed_url=feed_url,
-                    article_url=link,
-                    title=title,
-                    summary_text=summary,
-                    timestamp=datetime.now(),
-                )
-        except Exception as e_summ:
-            logger.error(f"LLM summarization failed for {link}: {e_summ}")
-            summary = "[LLM summarization failed]"
-
-        summaries.append(f"**{title}**\n{summary}\n{link}\n")
-        seen_ids.add(guid)
-
-    seen[feed_url] = list(seen_ids)
-    save_seen_entries(seen)
-
-    combined = "\n\n".join(summaries)
-    chunks = chunk_text(combined, config.EMBED_MAX_LENGTH)
-    for i, chunk in enumerate(chunks):
-        embed = discord.Embed(
-            title=f"RSS Summaries for {feed_url}" + ("" if i == 0 else f" (cont. {i+1})"),
-            description=chunk,
-            color=config.EMBED_COLOR["complete"],
-        )
-        await interaction.followup.send(embed=embed)
-
-    await send_tts_audio(interaction, combined, base_filename=f"rss_{interaction.id}")
-
-    user_msg = MsgNode("user", f"/rss {feed_url} (limit {limit})", name=str(interaction.user.id))
-    assistant_msg = MsgNode("assistant", combined, name=str(bot_instance.user.id))
-    await bot_state_instance.append_history(interaction.channel_id, user_msg, config.MAX_MESSAGE_HISTORY)
-    await bot_state_instance.append_history(interaction.channel_id, assistant_msg, config.MAX_MESSAGE_HISTORY)
-    await ingest_conversation_to_chromadb(
-        llm_client_instance,
-        interaction.channel_id,
-        interaction.user.id,
-        [user_msg, assistant_msg],
-    )
-
-    return True
-
-
 def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState):
     global bot_instance, llm_client_instance, bot_state_instance
     bot_instance = bot
@@ -752,6 +643,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
 
         scrape_lock = bot_state_instance.get_scrape_lock()
         queue_notice = scrape_lock.locked()
+        progress_message: discord.Message
         acquired_lock = False
         if queue_notice:
             await interaction.response.send_message(
@@ -760,70 +652,119 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             )
             await scrape_lock.acquire()
             acquired_lock = True
-            await interaction.followup.send(
+            progress_message = await interaction.followup.send(
                 content=f"Fetching RSS feed: {final_feed_url}...",
             )
         else:
             await scrape_lock.acquire()
             acquired_lock = True
             await interaction.response.defer(ephemeral=False)
-            await interaction.followup.send(
+            progress_message = await interaction.edit_original_response(
                 content=f"Fetching RSS feed: {final_feed_url}..."
             )
 
-        try:
-            await process_rss_feed(interaction, final_feed_url, limit)
-        except Exception as e:
-            logger.error(f"Error in rss_slash_command for {final_feed_url}: {e}", exc_info=True)
-            await interaction.followup.send(content=f"Failed to process RSS feed. Error: {str(e)[:500]}")
-        finally:
-            if acquired_lock:
-                scrape_lock.release()
+        async def _process_rss(progress_msg: discord.Message) -> None:
+            seen = load_seen_entries()
+            seen_ids = set(seen.get(final_feed_url, [])) # Use final_feed_url
 
-    @bot_instance.tree.command(name="allrss", description="Fetches new entries from all default RSS feeds until up to date.")
-    @app_commands.describe(
-        limit="Number of new entries per feed to fetch at a time (max 20)."
-    )
-    async def allrss_slash_command(
-        interaction: discord.Interaction,
-        limit: app_commands.Range[int, 1, 20] = 15,
-    ) -> None:
-        if not llm_client_instance or not bot_state_instance or not bot_instance or not bot_instance.user:
-            logger.error("allrss_slash_command: One or more bot components are None.")
-            await interaction.response.send_message("Bot components not ready. Cannot fetch RSS.", ephemeral=True)
-            return
+            entries = await fetch_rss_entries(final_feed_url) # Use final_feed_url
+            new_entries = [e for e in entries if e.get("guid") not in seen_ids]
+            if not new_entries:
+                await progress_msg.edit(content="No new entries found.")
+                return
 
-        if interaction.channel_id is None:
-            await interaction.response.send_message("Error: This command must be used in a channel.", ephemeral=True)
-            return
+            to_process = new_entries[:limit]
+            summaries: List[str] = []
 
-        scrape_lock = bot_state_instance.get_scrape_lock()
-        queue_notice = scrape_lock.locked()
-        acquired_lock = False
-        if queue_notice:
-            await interaction.response.send_message(
-                "Waiting for other scraping tasks to finish before processing all RSS feeds...",
-                ephemeral=True,
+            for idx, ent in enumerate(to_process, 1):
+                title = ent.get("title") or "Untitled"
+                link = ent.get("link") or ""
+                guid = ent.get("guid") or link
+
+                await progress_msg.edit(content=f"Scraping {idx}/{len(to_process)}: {title}...")
+
+                scraped_text, _ = await scrape_website(link)
+                if not scraped_text or "Failed to scrape" in scraped_text or "Scraping timed out" in scraped_text:
+                    summaries.append(f"**{title}**\nCould not scrape article: {link}\n")
+                    seen_ids.add(guid)
+                    continue
+
+                prompt = (
+                    f"It is 2025 and Donald Trump is the current president (Just an FYI. Maybe unrelated to context and omitted). Do not use em dashes, favoring commas or regular dashes. Summarize the following article in 2-4 sentences. Focus on key facts. Present in a casual, blunt, honest and slightly profane tone. Do not start with 'So, '.\n\n"
+                    f"Title: {title}\nURL: {link}\n\n{scraped_text[:config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT]}"
+                )
+
+                try:
+                    response = await llm_client_instance.chat.completions.create(
+                        model=config.FAST_LLM_MODEL,
+                        messages=[{"role": "user", "content": prompt}],
+                        max_tokens=500,
+                        temperature=0.5,
+                        stream=False,
+                    )
+                    summary = response.choices[0].message.content.strip() if response.choices else ""
+                    if summary and summary != "[LLM summarization failed]":
+                        # Store the successful summary in ChromaDB
+                        store_rss_summary(
+                            feed_url=final_feed_url, # Use final_feed_url
+                            article_url=link,
+                            title=title,
+                            summary_text=summary,
+                            timestamp=datetime.now() #  ent.get("published_parsed") could be used if available and reliable
+                        )
+                except Exception as e_summ:
+                    logger.error(f"LLM summarization failed for {link}: {e_summ}")
+                    summary = "[LLM summarization failed]"
+
+                summaries.append(f"**{title}**\n{summary}\n{link}\n")
+                seen_ids.add(guid)
+
+            seen[final_feed_url] = list(seen_ids) # Use final_feed_url
+            save_seen_entries(seen)
+
+            combined = "\n\n".join(summaries)
+            chunks = chunk_text(combined, config.EMBED_MAX_LENGTH)
+            for i, chunk in enumerate(chunks):
+                embed = discord.Embed(
+                    title=f"RSS Summaries for {final_feed_url}" + ("" if i == 0 else f" (cont. {i+1})"), # Use final_feed_url
+                    description=chunk,
+                    color=config.EMBED_COLOR["complete"],
+                )
+                if i == 0:
+                    await progress_msg.edit(content=None, embed=embed)
+                else:
+                    await interaction.followup.send(embed=embed)
+
+            # --- New: Postprocess like other responses ---
+            await send_tts_audio(interaction, combined, base_filename=f"rss_{interaction.id}")
+            user_msg = MsgNode(
+                "user",
+                f"/rss {final_feed_url} (limit {limit})", # Use final_feed_url
+                name=str(interaction.user.id),
             )
-            await scrape_lock.acquire()
-            acquired_lock = True
-            await interaction.followup.send(content="Starting RSS feed processing...")
-        else:
-            await scrape_lock.acquire()
-            acquired_lock = True
-            await interaction.response.defer(ephemeral=False)
-            await interaction.followup.send(content="Starting RSS feed processing...")
+            assistant_msg = MsgNode(
+                "assistant",
+                combined,
+                name=str(bot_instance.user.id),
+            )
+            await bot_state_instance.append_history(
+                interaction.channel_id, user_msg, config.MAX_MESSAGE_HISTORY
+            )
+            await bot_state_instance.append_history(
+                interaction.channel_id, assistant_msg, config.MAX_MESSAGE_HISTORY
+            )
+            await ingest_conversation_to_chromadb(
+                llm_client_instance,
+                interaction.channel_id,
+                interaction.user.id,
+                [user_msg, assistant_msg],
+            )
 
         try:
-            for name, feed_url in DEFAULT_RSS_FEEDS:
-                await interaction.followup.send(content=f"Processing feed: {name}...")
-                while True:
-                    processed = await process_rss_feed(interaction, feed_url, limit)
-                    if not processed:
-                        break
+            await _process_rss(progress_message)
         except Exception as e:
-            logger.error(f"Error in allrss_slash_command: {e}", exc_info=True)
-            await interaction.followup.send(content=f"Failed to process RSS feeds. Error: {str(e)[:500]}")
+            logger.error(f"Error in rss_slash_command for {final_feed_url}: {e}", exc_info=True) # Use final_feed_url
+            await progress_message.edit(content=f"Failed to process RSS feed. Error: {str(e)[:500]}", embed=None)
         finally:
             if acquired_lock:
                 scrape_lock.release()
