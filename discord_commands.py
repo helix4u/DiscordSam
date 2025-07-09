@@ -69,7 +69,7 @@ DEFAULT_RSS_FEEDS = [
     ("Huffpost US News", "https://chaski.huffpost.com/us/auto/vertical/us-news"),
     ("Fox News Politics", "https://moxie.foxnews.com/google-publisher/politics.xml"),
     ("Time", "https://time.com/feed/"),
-    ("The Intercept", "https://theintercept.com/feed/?lang=en"),
+    ("Google News - Ground News", "https://news.google.com/rss/search?q=news+site:ground.news&hl=en-US&gl=US&ceid=US:en"),
     ("Mother Jones", "https://www.motherjones.com/feed/"),
     ("Quartz", "https://qz.com/rss"),
 ]
