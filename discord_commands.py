@@ -63,7 +63,7 @@ DEFAULT_RSS_FEEDS = [
     ("BBC Americas", "http://feeds.bbci.co.uk/news/world/us_and_canada/rss.xml?edition=int"),
     ("KSL Local Stories", "https://www.ksl.com/rss/news"),
     ("Hacker News", "https://news.ycombinator.com/rss"),
-    ("WAPO Politics", "https://www.washingtonpost.com/arcio/rss/category/politics/"),
+    ("Sky News - US", "https://feeds.skynews.com/feeds/rss/us.xml"),
     ("US News - The Guardian", "https://www.theguardian.com/us/rss"),
     ("Huffpost Politics", "https://chaski.huffpost.com/us/auto/vertical/politics"),
     ("Huffpost US News", "https://chaski.huffpost.com/us/auto/vertical/us-news"),
