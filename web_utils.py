@@ -235,9 +235,16 @@ async def scrape_website(
                     logger.info(
                         f"Scrolling page up to {config.SCRAPE_SCROLL_ATTEMPTS} times to load dynamic content."
                     )
-                    last_height = await page.evaluate("document.body.scrollHeight")
+                    try:
+                        last_height = await page.evaluate("document.body.scrollHeight")
+                    except Exception as e_eval:
+                        logger.warning(f"Could not get initial scroll height for {url}: {e_eval}")
+                        last_height = 0
                     for scroll_attempt in range(config.SCRAPE_SCROLL_ATTEMPTS):
-                        if screenshots_dir and page:
+                        if page.is_closed():
+                            logger.warning(f"Playwright page closed unexpectedly while scrolling {url}.")
+                            break
+                        if screenshots_dir:
                             try:
                                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
                                 screenshot_filename = f"screenshot_scroll_{scroll_attempt + 1}_{timestamp}.png"
@@ -248,9 +255,17 @@ async def scrape_website(
                             except Exception as e_ss:
                                 logger.error(f"Failed to take screenshot: {e_ss}")
 
-                        await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                        await asyncio.sleep(1.5) # Wait for content to load after scroll
-                        new_height = await page.evaluate("document.body.scrollHeight")
+                        try:
+                            await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                        except Exception as e_scroll:
+                            logger.warning(f"Error scrolling page {url}: {e_scroll}")
+                            break
+                        await asyncio.sleep(1.5)  # Wait for content to load after scroll
+                        try:
+                            new_height = await page.evaluate("document.body.scrollHeight")
+                        except Exception as e_eval:
+                            logger.warning(f"Could not get updated scroll height for {url}: {e_eval}")
+                            break
                         if new_height == last_height:
                             break
                         last_height = new_height
