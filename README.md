@@ -105,7 +105,7 @@ DiscordSam is a modular Python application designed for extensibility and mainta
 7.  **RAG and ChromaDB Management (`rag_chroma_manager.py`)**:
     *   Manages the Retrieval Augmented Generation pipeline and all interactions with the ChromaDB vector store.
     *   `initialize_chromadb()`: Sets up connections to various data collections (raw history, distilled summaries, news, timeline summaries, entities, relations, observations).
-    *   `ingest_conversation_to_chromadb()`: Stores new conversations, extracts structured data (entities, relations, observations), distills key sentences, and saves them for future retrieval.
+    *   `ingest_conversation_to_chromadb()`: Stores new conversations, extracts structured data (entities, relations, observations), distills key sentences, and saves them for future retrieval. Distilled summaries now include a `Conversation recorded at:` header so timestamps persist when memories are merged.
     *   `retrieve_and_prepare_rag_context()`: Given a query, searches relevant collections for pertinent information and synthesizes it into a context string for the LLM. The synthesis step now receives the current date so it can express how long ago memories occurred.
     *   `update_retrieved_memories()`: Merges retrieved memory snippets with the latest conversation summary and stores updated memories for future use. The merge prompt now includes both the snippet's original date and the current date, giving the LLM clearer temporal context.
     *   Includes functions for importing data (e.g., ChatGPT exports) and storing specific data types (e.g., news summaries).
@@ -300,7 +300,7 @@ DiscordSam offers a variety of slash commands for diverse functionalities. Here'
         1.  Parses the `conversations.json` file.
         2.  For each conversation, it stores the full text in the main chat history collection (`CHROMA_COLLECTION_NAME`).
         3.  It then distills each conversation (typically the last user/assistant turn, or full text as fallback) into keyword-rich sentences using an LLM.
-        4.  These distilled sentences are stored in `CHROMA_DISTILLED_COLLECTION_NAME` and linked to the full conversation document, enabling RAG.
+        4.  These distilled sentences are stored in `CHROMA_DISTILLED_COLLECTION_NAME` (prefixed with a `Conversation recorded at:` timestamp) and linked to the full conversation document, enabling RAG.
     *   **Output:** An ephemeral message confirming the number of conversations successfully processed and stored.
 
 *   **`/remindme <time_duration> <reminder_message>`**
