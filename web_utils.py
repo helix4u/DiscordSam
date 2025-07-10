@@ -681,7 +681,11 @@ async def fetch_youtube_transcript(url: str) -> Optional[str]:
         return None
 
 async def fetch_rss_entries(feed_url: str) -> List[Dict[str, Any]]:
-    """Fetch and parse RSS feed entries."""
+    """Fetch and parse RSS feed entries.
+
+    Each returned entry includes ``pubDate_dt`` as a timezone-aware
+    ``datetime`` for easier sorting and display.
+    """
     logger.info(f"Fetching RSS feed: {feed_url}")
     try:
         async with aiohttp.ClientSession() as session:
@@ -717,6 +721,7 @@ async def fetch_rss_entries(feed_url: str) -> List[Dict[str, Any]]:
                 "link": it.findtext("link") or "",
                 "guid": it.findtext("guid") or it.findtext("link") or "",
                 "pubDate": pub_date_str,
+                "pubDate_dt": pub_date_dt,
                 "description": it.findtext("description") or "",
             })
         return entries

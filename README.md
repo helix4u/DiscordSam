@@ -364,22 +364,22 @@ DiscordSam offers a variety of slash commands for diverse functionalities. Here'
         3.  For each new entry (up to `limit`):
             *   Scrapes the content of the article linked in the entry.
             *   Uses a fast LLM (`FAST_LLM_MODEL`) to summarize the scraped article.
-        4.  Displays the summaries (title, publication date, link, summary) in Discord embeds. If the content is long, it's chunked into multiple embeds.
+        4.  Displays the summaries (title, publication date in your local time, link, summary) in Discord embeds. If the content is long, it's chunked into multiple embeds.
         5.  Updates the `rss_seen.json` cache.
         6.  Provides TTS for the combined summaries if enabled.
         7.  The user's command and the bot's full summarized response are added to short-term history and ingested into ChromaDB.
         8.  If no new entries are found, the bot replies with an ephemeral message instead of posting publicly.
-    *   **Output:** One or more embed messages containing summaries of new RSS feed entries, with each entry showing the title, publication date, link, and summary.
+    *   **Output:** One or more embed messages containing summaries of new RSS feed entries, each showing the title, local publication date, link, and summary.
 
 *   **`/allrss [limit]`**
-    *   **Purpose:** Sequentially processes all default RSS feeds, fetching new entries in batches until no unseen items remain.
+    *   **Purpose:** Fetches recent articles from all default RSS feeds in chronological order.
     *   **Arguments:**
-        *   `limit` (Optional, Default: 15): Number of new entries to fetch from each feed per batch (max 20).
+        *   `limit` (Optional, Default: 15): Maximum number of entries to pull from each feed (max 20).
     *   **Behavior:**
-        1.  Iterates over every feed available in the `/rss` command's preset list.
-        2.  For each feed, repeatedly fetches up to `limit` unseen entries, scrapes and summarizes them like `/rss`.
-        3.  Continues processing a feed until it reports "No new entries found." before moving to the next one. When this happens, the bot notifies the user with an ephemeral message.
-    *   **Output:** Embeds containing summaries for each batch of articles across all feeds until all are up to date.
+        1.  Prefetches entries from every preset RSS feed (up to `limit` per feed) from the last 24 hours.
+        2.  Combines and sorts all new entries by publication time using the user's local timezone.
+        3.  Processes the sorted list of articles, scraping and summarizing each just like `/rss`.
+    *   **Output:** A single chronological digest of summaries across all feeds.
 
 *   **`/gettweets [username] [preset_user] [limit]`**
     *   **Purpose:** Fetches and summarizes recent tweets from a specified X/Twitter user.

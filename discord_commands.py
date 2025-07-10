@@ -7,7 +7,8 @@ import base64
 import random
 import asyncio
 from typing import Any, Optional, List  # Keep existing imports
-from datetime import datetime
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 
 # Bot services and utilities
 from config import config
@@ -158,7 +159,21 @@ async def process_rss_feed(
 
     for idx, ent in enumerate(to_process, 1):
         title = ent.get("title") or "Untitled"
-        pub_date = ent.get("pubDate") or ""
+        pub_date_dt: Optional[datetime] = ent.get("pubDate_dt")
+        if not pub_date_dt:
+            pub_date_str = ent.get("pubDate")
+            if pub_date_str:
+                try:
+                    pub_date_dt = parsedate_to_datetime(pub_date_str)
+                    if pub_date_dt.tzinfo is None:
+                        pub_date_dt = pub_date_dt.replace(tzinfo=timezone.utc)
+                except Exception:
+                    pub_date_dt = None
+        pub_date = (
+            pub_date_dt.astimezone().strftime("%Y-%m-%d %H:%M %Z")
+            if pub_date_dt
+            else (ent.get("pubDate") or "")
+        )
         link = ent.get("link") or ""
         guid = ent.get("guid") or link
 
@@ -846,12 +861,136 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             await interaction.followup.send(content="Starting RSS feed processing...")
 
         try:
+            progress_message = await safe_followup_send(
+                interaction,
+                content="Fetching RSS feeds...",
+            )
+
+            seen = load_seen_entries()
+            all_entries: List[dict] = []
+
             for name, feed_url in DEFAULT_RSS_FEEDS:
-                logger.info(f"Processing RSS feed: {name} ({feed_url})")
-                while True:
-                    processed = await process_rss_feed(interaction, feed_url, limit)
-                    if not processed:
-                        break
+                logger.info(f"Fetching entries for {name} ({feed_url})")
+                feed_entries = await fetch_rss_entries(feed_url)
+                seen_ids = set(seen.get(feed_url, []))
+                new_entries = [e for e in feed_entries if e.get("guid") not in seen_ids][:limit]
+                for ent in new_entries:
+                    ent["feed_url"] = feed_url
+                    all_entries.append(ent)
+
+            if not all_entries:
+                try:
+                    await progress_message.delete()
+                except discord.HTTPException:
+                    pass
+                await safe_followup_send(
+                    interaction,
+                    content="No new entries found across all feeds.",
+                    ephemeral=True,
+                )
+                return
+
+            for ent in all_entries:
+                pub_dt = ent.get("pubDate_dt")
+                if not pub_dt and ent.get("pubDate"):
+                    try:
+                        pub_dt = parsedate_to_datetime(ent["pubDate"])
+                        if pub_dt.tzinfo is None:
+                            pub_dt = pub_dt.replace(tzinfo=timezone.utc)
+                    except Exception:
+                        pub_dt = None
+                ent["pubDate_dt"] = pub_dt
+
+            all_entries.sort(key=lambda x: x.get("pubDate_dt") or datetime.min)
+
+            summaries: List[str] = []
+            total = len(all_entries)
+
+            for idx, ent in enumerate(all_entries, 1):
+                title = ent.get("title") or "Untitled"
+                link = ent.get("link") or ""
+                guid = ent.get("guid") or link
+                pub_dt = ent.get("pubDate_dt")
+                pub_date = (
+                    pub_dt.astimezone().strftime("%Y-%m-%d %H:%M %Z") if pub_dt else (ent.get("pubDate") or "")
+                )
+
+                progress_message = await safe_message_edit(
+                    progress_message,
+                    interaction.channel,
+                    content=f"Scraping {idx}/{total}: {title}...",
+                )
+
+                scraped_text, _ = await scrape_website(link)
+                if not scraped_text or "Failed to scrape" in scraped_text or "Scraping timed out" in scraped_text:
+                    summaries.append(f"**{title}**\n{pub_date}\n{link}\nCould not scrape article\n")
+                    seen.setdefault(ent["feed_url"], []).append(guid)
+                    continue
+
+                prompt = (
+                    "[It is currently 2025 and Donald Trump is the current president. Biden IS NOT THE CURRENT PRESIDENT!] (Just an FYI. Maybe unrelated to context and omitted). "
+                    "Do not use em dashes. Summarize the following article in 2-4 sentences. "
+                    "Focus on key facts. Present in a casual, blunt, honest and slightly profane tone. Do NOT start with 'So, ' or end with 'Basically, '. Do not state things like 'This article describes', etc. Present is as a person would if they were talking to you about the article.\n\n"
+                    f"Title: {title}\nURL: {link}\n\n{scraped_text[:config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT]}"
+                )
+
+                try:
+                    response = await llm_client_instance.chat.completions.create(
+                        model=config.FAST_LLM_MODEL,
+                        messages=[{"role": "user", "content": prompt}],
+                        max_tokens=500,
+                        temperature=0.5,
+                        stream=False,
+                    )
+                    summary = response.choices[0].message.content.strip() if response.choices else ""
+                    if summary and summary != "[LLM summarization failed]":
+                        store_rss_summary(
+                            feed_url=ent["feed_url"],
+                            article_url=link,
+                            title=title,
+                            summary_text=summary,
+                            timestamp=datetime.now(),
+                        )
+                except Exception as e_summ:
+                    logger.error(f"LLM summarization failed for {link}: {e_summ}")
+                    summary = "[LLM summarization failed]"
+
+                summaries.append(f"**{title}**\n{pub_date}\n{link}\n{summary}\n")
+                seen.setdefault(ent["feed_url"], []).append(guid)
+
+            save_seen_entries(seen)
+
+            combined = "\n\n".join(summaries)
+            chunks = chunk_text(combined, config.EMBED_MAX_LENGTH)
+            for i, chunk in enumerate(chunks):
+                embed = discord.Embed(
+                    title="RSS Summaries" + ("" if i == 0 else f" (cont. {i+1})"),
+                    description=chunk,
+                    color=config.EMBED_COLOR["complete"],
+                )
+                if i == 0:
+                    progress_message = await safe_message_edit(
+                        progress_message,
+                        interaction.channel,
+                        content=None,
+                        embed=embed,
+                    )
+                else:
+                    await safe_followup_send(interaction, embed=embed)
+
+            await send_tts_audio(interaction, combined, base_filename=f"rss_{interaction.id}")
+
+            user_msg = MsgNode("user", f"/allrss (limit {limit})", name=str(interaction.user.id))
+            assistant_msg = MsgNode("assistant", combined, name=str(bot_instance.user.id))
+            await bot_state_instance.append_history(interaction.channel_id, user_msg, config.MAX_MESSAGE_HISTORY)
+            await bot_state_instance.append_history(interaction.channel_id, assistant_msg, config.MAX_MESSAGE_HISTORY)
+            await ingest_conversation_to_chromadb(
+                llm_client_instance,
+                interaction.channel_id,
+                interaction.user.id,
+                [user_msg, assistant_msg],
+                None,
+            )
         except Exception as e:
             logger.error(f"Error in allrss_slash_command: {e}", exc_info=True)
             await interaction.followup.send(content=f"Failed to process RSS feeds. Error: {str(e)[:500]}")
