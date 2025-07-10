@@ -781,8 +781,9 @@ async def ingest_conversation_to_chromadb(
             logger.info(
                 f"Ingested distilled sentence (ID: {distilled_doc_id}, linked to {full_convo_doc_id}) into '{config.CHROMA_DISTILLED_COLLECTION_NAME}'."
             )
-            # After storing the distilled summary, update retrieved memories if provided
-            await update_retrieved_memories(llm_client, retrieved_snippets, distilled_sentence)
+            # Optionally merge retrieved snippets with the new summary for long-term consolidation
+            if config.ENABLE_MEMORY_MERGE:
+                await update_retrieved_memories(llm_client, retrieved_snippets, distilled_sentence)
         except Exception as e_add_distilled:
             logger.error(
                 f"Failed to add distilled sentence (ID: {distilled_doc_id}) to ChromaDB: {e_add_distilled}",

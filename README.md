@@ -107,7 +107,7 @@ DiscordSam is a modular Python application designed for extensibility and mainta
     *   `initialize_chromadb()`: Sets up connections to various data collections (raw history, distilled summaries, news, timeline summaries, entities, relations, observations).
     *   `ingest_conversation_to_chromadb()`: Stores new conversations, extracts structured data (entities, relations, observations), distills key sentences, and saves them for future retrieval. Distilled summaries now include a `Conversation recorded at:` header so timestamps persist when memories are merged.
     *   `retrieve_and_prepare_rag_context()`: Given a query, searches relevant collections for pertinent information and synthesizes it into a context string for the LLM. The synthesis step now receives the current date so it can express how long ago memories occurred.
-    *   `update_retrieved_memories()`: Merges retrieved memory snippets with the latest conversation summary and stores updated memories for future use. The merge prompt now includes both the snippet's original date and the current date, giving the LLM clearer temporal context.
+    *   `update_retrieved_memories()`: Merges retrieved memory snippets with the latest conversation summary and stores updated memories for future use. The merge prompt now includes both the snippet's original date and the current date, giving the LLM clearer temporal context. This behavior can be disabled via the `ENABLE_MEMORY_MERGE` setting.
     *   Includes functions for importing data (e.g., ChatGPT exports) and storing specific data types (e.g., news summaries).
 
 8.  **Utility Modules**:
@@ -224,6 +224,7 @@ Below is a comprehensive list of environment variables used by DiscordSam, along
 *   `CHROMA_OBSERVATIONS_COLLECTION_NAME` (Default: `observations_collection`): Collection for storing extracted key observations or facts.
 *   `RAG_NUM_DISTILLED_SENTENCES_TO_FETCH` (Default: `3`): How many relevant distilled sentences/summaries to fetch from `CHROMA_DISTILLED_COLLECTION_NAME` for RAG context.
 *   `RAG_NUM_COLLECTION_DOCS_TO_FETCH` (Default: `3`): How many relevant documents to fetch from other ChromaDB collections (news, timeline, entities, etc.) for RAG context.
+*   `ENABLE_MEMORY_MERGE` (Default: `false`): Set to `true` to merge retrieved memory snippets with new conversation summaries after each response.
 *   `TIMELINE_PRUNE_DAYS` (Default: `30`): How many days of chat history to retain in the main `CHROMA_COLLECTION_NAME` before the daily `timeline_pruner_task` summarizes and moves it to `CHROMA_TIMELINE_SUMMARY_COLLECTION_NAME`.
 
 **Discord Embed & Streaming Settings:**
