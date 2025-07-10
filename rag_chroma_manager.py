@@ -374,7 +374,7 @@ async def merge_memory_snippet_with_summary_llm(
                 {"role": "system", "content": "You are a memory consolidation assistant."},
                 {"role": "user", "content": user_text},
             ],
-            max_tokens=512,
+            max_tokens=2048,
             temperature=0.4,
             stream=False,
         )
