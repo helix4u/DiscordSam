@@ -298,7 +298,10 @@ async def synthesize_retrieved_contexts_llm(llm_client: Any, retrieved_contexts:
     for i, (text, source_name) in enumerate(retrieved_contexts):
         formatted_snippets += f"--- Memory {i+1} (from: {source_name}) ---\n{text[:2000]}\n\n"
 
+    current_date_str = datetime.now().isoformat()
+
     prompt = (
+        f"CURRENT DATE: {current_date_str}\n"
         "You are a master context synthesizer. Below are several retrieved conversation snippets (refer to these as memories) that "
         "might be relevant to the user's current query. Your task is to read all of them and synthesize "
         "a single, concise yet detailed paragraph that captures the most relevant information from these memories "
@@ -354,8 +357,14 @@ async def merge_memory_snippet_with_summary_llm(
         "Return 1-3 concise sentences that preserve important older details and incorporate the new information." 
     )
 
+    timestamp_match = re.search(r"Conversation recorded at:\s*(.+)", old_memory)
+    old_date_str = timestamp_match.group(1).strip() if timestamp_match else "unknown"
+    current_date_str = datetime.now().isoformat()
+
     user_text = (
-        f"EXISTING MEMORY:\n{old_memory}\n\nNEW CONVERSATION SUMMARY:\n{new_summary}\n\nUPDATED MEMORY:" 
+        f"OLD MEMORY DATE: {old_date_str}\n"
+        f"CURRENT DATE: {current_date_str}\n"
+        f"EXISTING MEMORY:\n{old_memory}\n\nNEW CONVERSATION SUMMARY:\n{new_summary}\n\nUPDATED MEMORY:"
     )
 
     try:
