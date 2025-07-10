@@ -372,14 +372,14 @@ DiscordSam offers a variety of slash commands for diverse functionalities. Here'
     *   **Output:** One or more embed messages containing summaries of new RSS feed entries, with each entry showing the title, publication date, link, and summary.
 
 *   **`/allrss [limit]`**
-    *   **Purpose:** Collects all articles from the default RSS feeds published in the last 24 hours.
+    *   **Purpose:** Sequentially processes all default RSS feeds, fetching new entries in batches until no unseen items remain.
     *   **Arguments:**
-        *   `limit` (Optional, Default: 15): Maximum entries to pull from each feed (max 20).
+        *   `limit` (Optional, Default: 15): Number of new entries to fetch from each feed per batch (max 20).
     *   **Behavior:**
-        1.  Fetches recent entries from every preset RSS feed.
-        2.  Gathers their URLs and publication dates, converting dates to the user's local time.
-        3.  Displays the combined list sorted by publish time rather than by feed order.
-    *   **Output:** A set of embeds listing article titles, local publish times, and links for all feeds.
+        1.  Iterates over every feed available in the `/rss` command's preset list.
+        2.  For each feed, repeatedly fetches up to `limit` unseen entries, scrapes and summarizes them like `/rss`.
+        3.  Continues processing a feed until it reports "No new entries found." before moving to the next one. When this happens, the bot notifies the user with an ephemeral message.
+    *   **Output:** Embeds containing summaries for each batch of articles across all feeds until all are up to date.
 
 *   **`/gettweets [username] [preset_user] [limit]`**
     *   **Purpose:** Fetches and summarizes recent tweets from a specified X/Twitter user.

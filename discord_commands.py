@@ -6,9 +6,8 @@ import os
 import base64
 import random
 import asyncio
-from typing import Any, Optional, List, Dict  # Keep existing imports
-from datetime import datetime, timezone
-from email.utils import parsedate_to_datetime
+from typing import Any, Optional, List  # Keep existing imports
+from datetime import datetime
 
 # Bot services and utilities
 from config import config
@@ -847,69 +846,12 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             await interaction.followup.send(content="Starting RSS feed processing...")
 
         try:
-            progress_message = await safe_followup_send(
-                interaction, content="Gathering recent RSS entries..."
-            )
-
-            local_tz = datetime.now().astimezone().tzinfo
-            collected: List[Dict[str, Any]] = []
             for name, feed_url in DEFAULT_RSS_FEEDS:
-                logger.info(f"Fetching RSS feed: {name} ({feed_url})")
-                entries = await fetch_rss_entries(feed_url)
-                for ent in entries[:limit]:
-                    pub_str = ent.get("pubDate") or ""
-                    try:
-                        pub_dt = parsedate_to_datetime(pub_str)
-                        if pub_dt.tzinfo is None:
-                            pub_dt = pub_dt.replace(tzinfo=timezone.utc)
-                    except Exception:
-                        pub_dt = datetime.now(timezone.utc)
-
-                    collected.append(
-                        {
-                            "feed": name,
-                            "title": ent.get("title") or "Untitled",
-                            "link": ent.get("link") or "",
-                            "pub_dt": pub_dt.astimezone(local_tz),
-                        }
-                    )
-
-            if not collected:
-                try:
-                    await progress_message.delete()
-                except discord.HTTPException as e:
-                    if e.status == 401 and getattr(e, "code", None) == 50027:
-                        logger.warning("Webhook token expired; could not delete progress message")
-                    else:
-                        raise
-                await safe_followup_send(
-                    interaction,
-                    content="No RSS entries from the last 24 hours.",
-                    ephemeral=True,
-                )
-                return
-
-            collected.sort(key=lambda x: x["pub_dt"])
-
-            lines = [
-                f"**{c['title']}**\n{c['pub_dt'].strftime('%Y-%m-%d %H:%M %Z')}\n{c['link']} ({c['feed']})"
-                for c in collected
-            ]
-            combined = "\n\n".join(lines)
-            chunks = chunk_text(combined, config.EMBED_MAX_LENGTH)
-            for i, chunk in enumerate(chunks):
-                embed = discord.Embed(
-                    title="Latest RSS URLs (24h)" + ("" if i == 0 else f" (cont. {i+1})"),
-                    description=chunk,
-                    color=config.EMBED_COLOR["complete"],
-                )
-                if i == 0:
-                    progress_message = await safe_message_edit(
-                        progress_message, interaction.channel, content=None, embed=embed
-                    )
-                else:
-                    await safe_followup_send(interaction, embed=embed)
-
+                logger.info(f"Processing RSS feed: {name} ({feed_url})")
+                while True:
+                    processed = await process_rss_feed(interaction, feed_url, limit)
+                    if not processed:
+                        break
         except Exception as e:
             logger.error(f"Error in allrss_slash_command: {e}", exc_info=True)
             await interaction.followup.send(content=f"Failed to process RSS feeds. Error: {str(e)[:500]}")
