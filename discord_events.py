@@ -435,7 +435,8 @@ def setup_events_and_tasks(bot: commands.Bot, llm_client_in: Any, bot_state_in: 
             user_msg_node=user_msg_node_for_short_term_history,
             prompt_messages=llm_prompt_for_current_turn,
             synthesized_rag_context_for_display=synthesized_rag_summary, # Display summary
-            bot_user_id=bot_instance.user.id
+            bot_user_id=bot_instance.user.id,
+            retrieved_snippets=raw_rag_snippets,
         )
 
     # ... (on_raw_reaction_add, on_app_command_error, on_command_error remain the same)

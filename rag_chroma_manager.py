@@ -339,6 +339,71 @@ async def synthesize_retrieved_contexts_llm(llm_client: Any, retrieved_contexts:
         logger.error(f"Failed to synthesize RAG context: {e}", exc_info=True)
         return None
 
+
+async def merge_memory_snippet_with_summary_llm(
+    llm_client: Any, old_memory: str, new_summary: str
+) -> Optional[str]:
+    """Merge an existing memory snippet with a summary of a new conversation."""
+    if not old_memory.strip() or not new_summary.strip():
+        logger.debug("merge_memory_snippet_with_summary_llm: Missing text to merge.")
+        return None
+
+    prompt = (
+        "You maintain long-term memories for an AI assistant. "
+        "Update the existing memory using details from the new conversation summary. "
+        "Return 1-3 concise sentences that preserve important older details and incorporate the new information." 
+    )
+
+    user_text = (
+        f"EXISTING MEMORY:\n{old_memory}\n\nNEW CONVERSATION SUMMARY:\n{new_summary}\n\nUPDATED MEMORY:" 
+    )
+
+    try:
+        response = await llm_client.chat.completions.create(
+            model=config.FAST_LLM_MODEL,
+            messages=[
+                {"role": "system", "content": "You are a memory consolidation assistant."},
+                {"role": "user", "content": user_text},
+            ],
+            max_tokens=512,
+            temperature=0.4,
+            stream=False,
+        )
+        if response.choices and response.choices[0].message and response.choices[0].message.content:
+            return response.choices[0].message.content.strip()
+        logger.warning("merge_memory_snippet_with_summary_llm: LLM returned no content.")
+        return None
+    except Exception as e:
+        logger.error(f"merge_memory_snippet_with_summary_llm: Failed to merge memory: {e}", exc_info=True)
+        return None
+
+
+async def update_retrieved_memories(
+    llm_client: Any, retrieved_snippets: Optional[List[Tuple[str, str]]], new_summary: str
+) -> None:
+    """Create updated memory snippets by merging retrieved ones with a new summary."""
+    if not retrieved_snippets:
+        return
+    if not distilled_chat_summary_collection:
+        logger.warning("update_retrieved_memories: distilled_chat_summary_collection unavailable.")
+        return
+
+    for snippet_text, source_name in retrieved_snippets:
+        merged = await merge_memory_snippet_with_summary_llm(llm_client, snippet_text, new_summary)
+        if not merged:
+            continue
+        doc_id = f"updated_{uuid4().hex}"
+        metadata = {
+            "source": source_name,
+            "timestamp": datetime.now().isoformat(),
+            "type": "merged_memory_update",
+        }
+        try:
+            distilled_chat_summary_collection.add(documents=[merged], metadatas=[metadata], ids=[doc_id])
+            logger.info(f"Stored merged memory update {doc_id} from source {source_name}.")
+        except Exception as e_add:
+            logger.error(f"Failed to store merged memory update {doc_id}: {e_add}", exc_info=True)
+
 async def retrieve_and_prepare_rag_context(llm_client: Any, query: str, n_results_sentences: int = config.RAG_NUM_DISTILLED_SENTENCES_TO_FETCH) -> Tuple[Optional[str], Optional[List[Tuple[str, str]]]]:
     if not chroma_client or not distilled_chat_summary_collection or not chat_history_collection:
         logger.warning("ChromaDB collections not available, skipping RAG context retrieval.")
@@ -492,7 +557,8 @@ async def ingest_conversation_to_chromadb(
     llm_client: Any,
     channel_id: int,
     user_id: Union[int, str],
-    conversation_history_for_rag: List[MsgNode]
+    conversation_history_for_rag: List[MsgNode],
+    retrieved_snippets: Optional[List[Tuple[str, str]]] = None
 ):
     # Check if essential collections are available
     if not all([chroma_client, chat_history_collection, distilled_chat_summary_collection,
@@ -697,6 +763,8 @@ async def ingest_conversation_to_chromadb(
                 ids=[distilled_doc_id]
             )
             logger.info(f"Ingested distilled sentence (ID: {distilled_doc_id}, linked to {full_convo_doc_id}) into '{config.CHROMA_DISTILLED_COLLECTION_NAME}'.")
+            # After storing the distilled summary, update retrieved memories if provided
+            await update_retrieved_memories(llm_client, retrieved_snippets, distilled_sentence)
         except Exception as e_add_distilled:
             logger.error(f"Failed to add distilled sentence (ID: {distilled_doc_id}) to ChromaDB: {e_add_distilled}", exc_info=True)
     else:

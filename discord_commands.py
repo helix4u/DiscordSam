@@ -237,6 +237,7 @@ async def process_rss_feed(
         interaction.channel_id,
         interaction.user.id,
         [user_msg, assistant_msg],
+        None,
     )
 
     return True
@@ -404,7 +405,8 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 prompt_messages=prompt_nodes_for_briefing,
                 title=f"News Briefing: {topic}",
                 synthesized_rag_context_for_display=synthesized_summary_for_briefing,
-                bot_user_id=bot_instance.user.id
+                bot_user_id=bot_instance.user.id,
+                retrieved_snippets=raw_snippets_for_briefing,
             )
 
         except Exception as e:
@@ -537,7 +539,8 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 interaction, llm_client_instance, bot_state_instance, user_msg_node, prompt_nodes,
                 title=f"Comedy Roast of {url}",
                 synthesized_rag_context_for_display=synthesized_summary,
-                bot_user_id=bot_instance.user.id
+                bot_user_id=bot_instance.user.id,
+                retrieved_snippets=raw_snippets
             )
         except Exception as e:
             logger.error(f"Error in roast_slash_command for URL '{url}': {e}", exc_info=True)
@@ -681,7 +684,8 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 title=f"Summary for Search: {query}",
                 force_new_followup_flow=True,
                 synthesized_rag_context_for_display=synthesized_summary,
-                bot_user_id=bot_instance.user.id
+                bot_user_id=bot_instance.user.id,
+                retrieved_snippets=raw_snippets
             )
         except Exception as e:
             logger.error(f"Error in search_slash_command for query '{query}': {e}", exc_info=True)
@@ -738,7 +742,8 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 interaction, llm_client_instance, bot_state_instance, user_msg_node, final_prompt_nodes,
                 title="Sarcastic Political Commentary",
                 synthesized_rag_context_for_display=synthesized_summary,
-                bot_user_id=bot_instance.user.id
+                bot_user_id=bot_instance.user.id,
+                retrieved_snippets=raw_snippets
             )
         except Exception as e:
             logger.error(f"Error in pol_slash_command for statement '{statement[:50]}...': {e}", exc_info=True)
@@ -1117,7 +1122,8 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 title=f"Tweet Summary for @{clean_username}",
                 force_new_followup_flow=True,
                 synthesized_rag_context_for_display=synthesized_summary,
-                bot_user_id=bot_instance.user.id
+                bot_user_id=bot_instance.user.id,
+                retrieved_snippets=raw_snippets
             )
         except Exception as e:
             logger.error(
@@ -1358,7 +1364,8 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 title="Tweet Summary for Home Timeline",
                 force_new_followup_flow=True,
                 synthesized_rag_context_for_display=synthesized_summary,
-                bot_user_id=bot_instance.user.id
+                bot_user_id=bot_instance.user.id,
+                retrieved_snippets=raw_snippets
             )
         except Exception as e:
             logger.error(
@@ -1450,7 +1457,8 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 interaction, llm_client_instance, bot_state_instance, user_msg_node, final_prompt_nodes,
                 title=f"AP Photo Description ft. {chosen_celebrity} or someone associted with them.",
                 synthesized_rag_context_for_display=synthesized_summary,
-                bot_user_id=bot_instance.user.id
+                bot_user_id=bot_instance.user.id,
+                retrieved_snippets=raw_snippets,
             )
         except Exception as e:
             logger.error(f"Error in ap_slash_command for image '{image.filename}': {e}", exc_info=True)
