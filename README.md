@@ -377,10 +377,11 @@ DiscordSam offers a variety of slash commands for diverse functionalities. Here'
     *   **Arguments:**
         *   `limit` (Optional, Default: 15): Maximum number of entries to pull from each feed (max 20).
     *   **Behavior:**
-        1.  Prefetches entries from every preset RSS feed (up to `limit` per feed) from the last 24 hours.
+        1.  Prefetches entries from every preset RSS feed (up to `limit` per feed).
         2.  Combines and sorts all new entries by publication time using the user's local timezone.
-        3.  Processes the sorted list of articles, scraping and summarizing each just like `/rss`.
-    *   **Output:** A single chronological digest of summaries across all feeds.
+        3.  Processes articles in batches of `limit`, scraping and summarizing each just like `/rss`.
+        4.  After each batch, sends an embed with the summaries and optional TTS before moving to the next batch.
+    *   **Output:** Summaries are delivered in batches of `limit` entries until all new articles are processed.
 
 *   **`/gettweets [username] [preset_user] [limit]`**
     *   **Purpose:** Fetches and summarizes recent tweets from a specified X/Twitter user.
