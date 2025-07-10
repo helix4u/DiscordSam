@@ -54,7 +54,7 @@ DEFAULT_RSS_FEEDS = [
     ("WSJ Politics", "https://feeds.content.dowjones.io/public/rss/socialpoliticsfeed"),
     ("ABC Politics Headlines", "https://abcnews.go.com/abcnews/politicsheadlines"),
     ("ABC US Headlines", "https://abcnews.go.com/abcnews/usheadlines"),
-    ("Washington Times", "https://www.washingtontimes.com/rss/headlines/news"),
+    ("SAN", "https://san.com/feed/"),
     ("NYT Homepage", "https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml"),
     ("NBC News", "https://feeds.nbcnews.com/nbcnews/public/news"),
     ("NBC World", "https://feeds.nbcnews.com/nbcnews/public/world"),
