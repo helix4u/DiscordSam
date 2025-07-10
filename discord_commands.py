@@ -903,85 +903,101 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
 
             all_entries.sort(key=lambda x: x.get("pubDate_dt") or datetime.min)
 
-            summaries: List[str] = []
             total = len(all_entries)
+            batch_summaries: List[str] = []
 
-            for idx, ent in enumerate(all_entries, 1):
-                title = ent.get("title") or "Untitled"
-                link = ent.get("link") or ""
-                guid = ent.get("guid") or link
-                pub_dt = ent.get("pubDate_dt")
-                pub_date = (
-                    pub_dt.astimezone().strftime("%Y-%m-%d %H:%M %Z") if pub_dt else (ent.get("pubDate") or "")
-                )
+            for batch_start in range(0, total, limit):
+                batch_entries = all_entries[batch_start : batch_start + limit]
+                summaries: List[str] = []
 
-                progress_message = await safe_message_edit(
-                    progress_message,
-                    interaction.channel,
-                    content=f"Scraping {idx}/{total}: {title}...",
-                )
-
-                scraped_text, _ = await scrape_website(link)
-                if not scraped_text or "Failed to scrape" in scraped_text or "Scraping timed out" in scraped_text:
-                    summaries.append(f"**{title}**\n{pub_date}\n{link}\nCould not scrape article\n")
-                    seen.setdefault(ent["feed_url"], []).append(guid)
-                    continue
-
-                prompt = (
-                    "[It is currently 2025 and Donald Trump is the current president. Biden IS NOT THE CURRENT PRESIDENT!] (Just an FYI. Maybe unrelated to context and omitted). "
-                    "Do not use em dashes. Summarize the following article in 2-4 sentences. "
-                    "Focus on key facts. Present in a casual, blunt, honest and slightly profane tone. Do NOT start with 'So, ' or end with 'Basically, '. Do not state things like 'This article describes', etc. Present is as a person would if they were talking to you about the article.\n\n"
-                    f"Title: {title}\nURL: {link}\n\n{scraped_text[:config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT]}"
-                )
-
-                try:
-                    response = await llm_client_instance.chat.completions.create(
-                        model=config.FAST_LLM_MODEL,
-                        messages=[{"role": "user", "content": prompt}],
-                        max_tokens=500,
-                        temperature=0.5,
-                        stream=False,
+                for idx, ent in enumerate(batch_entries, start=batch_start + 1):
+                    title = ent.get("title") or "Untitled"
+                    link = ent.get("link") or ""
+                    guid = ent.get("guid") or link
+                    pub_dt = ent.get("pubDate_dt")
+                    pub_date = (
+                        pub_dt.astimezone().strftime("%Y-%m-%d %H:%M %Z") if pub_dt else (ent.get("pubDate") or "")
                     )
-                    summary = response.choices[0].message.content.strip() if response.choices else ""
-                    if summary and summary != "[LLM summarization failed]":
-                        store_rss_summary(
-                            feed_url=ent["feed_url"],
-                            article_url=link,
-                            title=title,
-                            summary_text=summary,
-                            timestamp=datetime.now(),
-                        )
-                except Exception as e_summ:
-                    logger.error(f"LLM summarization failed for {link}: {e_summ}")
-                    summary = "[LLM summarization failed]"
 
-                summaries.append(f"**{title}**\n{pub_date}\n{link}\n{summary}\n")
-                seen.setdefault(ent["feed_url"], []).append(guid)
-
-            save_seen_entries(seen)
-
-            combined = "\n\n".join(summaries)
-            chunks = chunk_text(combined, config.EMBED_MAX_LENGTH)
-            for i, chunk in enumerate(chunks):
-                embed = discord.Embed(
-                    title="RSS Summaries" + ("" if i == 0 else f" (cont. {i+1})"),
-                    description=chunk,
-                    color=config.EMBED_COLOR["complete"],
-                )
-                if i == 0:
                     progress_message = await safe_message_edit(
                         progress_message,
                         interaction.channel,
-                        content=None,
-                        embed=embed,
+                        content=f"Scraping {idx}/{total}: {title}...",
                     )
-                else:
-                    await safe_followup_send(interaction, embed=embed)
 
-            await send_tts_audio(interaction, combined, base_filename=f"rss_{interaction.id}")
+                    scraped_text, _ = await scrape_website(link)
+                    if not scraped_text or "Failed to scrape" in scraped_text or "Scraping timed out" in scraped_text:
+                        summaries.append(f"**{title}**\n{pub_date}\n{link}\nCould not scrape article\n")
+                        seen.setdefault(ent["feed_url"], []).append(guid)
+                        continue
+
+                    prompt = (
+                        "[It is currently 2025 and Donald Trump is the current president. Biden IS NOT THE CURRENT PRESIDENT!] (Just an FYI. Maybe unrelated to context and omitted). "
+                        "Do not use em dashes. Summarize the following article in 2-4 sentences. "
+                        "Focus on key facts. Present in a casual, blunt, honest and slightly profane tone. Do NOT start with 'So, ' or end with 'Basically, '. Do not state things like 'This article describes', etc. Present is as a person would if they were talking to you about the article.\n\n"
+                        f"Title: {title}\nURL: {link}\n\n{scraped_text[:config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT]}"
+                    )
+
+                    try:
+                        response = await llm_client_instance.chat.completions.create(
+                            model=config.FAST_LLM_MODEL,
+                            messages=[{"role": "user", "content": prompt}],
+                            max_tokens=500,
+                            temperature=0.5,
+                            stream=False,
+                        )
+                        summary = response.choices[0].message.content.strip() if response.choices else ""
+                        if summary and summary != "[LLM summarization failed]":
+                            store_rss_summary(
+                                feed_url=ent["feed_url"],
+                                article_url=link,
+                                title=title,
+                                summary_text=summary,
+                                timestamp=datetime.now(),
+                            )
+                    except Exception as e_summ:
+                        logger.error(f"LLM summarization failed for {link}: {e_summ}")
+                        summary = "[LLM summarization failed]"
+
+                    summaries.append(f"**{title}**\n{pub_date}\n{link}\n{summary}\n")
+                    seen.setdefault(ent["feed_url"], []).append(guid)
+
+                save_seen_entries(seen)
+
+                combined = "\n\n".join(summaries)
+                batch_summaries.append(combined)
+                chunks = chunk_text(combined, config.EMBED_MAX_LENGTH)
+                for i, chunk in enumerate(chunks):
+                    embed = discord.Embed(
+                        title="RSS Summaries" + ("" if i == 0 else f" (cont. {i+1})"),
+                        description=chunk,
+                        color=config.EMBED_COLOR["complete"],
+                    )
+                    if i == 0 and batch_start == 0:
+                        progress_message = await safe_message_edit(
+                            progress_message,
+                            interaction.channel,
+                            content=None,
+                            embed=embed,
+                        )
+                    else:
+                        await safe_followup_send(interaction, embed=embed)
+
+                await send_tts_audio(
+                    interaction,
+                    combined,
+                    base_filename=f"rss_{interaction.id}_{batch_start // limit + 1}",
+                )
+
+                if batch_start + limit < total:
+                    progress_message = await safe_followup_send(
+                        interaction, content="Fetching next batch..."
+                    )
+
+            combined_total = "\n\n".join(batch_summaries)
 
             user_msg = MsgNode("user", f"/allrss (limit {limit})", name=str(interaction.user.id))
-            assistant_msg = MsgNode("assistant", combined, name=str(bot_instance.user.id))
+            assistant_msg = MsgNode("assistant", combined_total, name=str(bot_instance.user.id))
             await bot_state_instance.append_history(interaction.channel_id, user_msg, config.MAX_MESSAGE_HISTORY)
             await bot_state_instance.append_history(interaction.channel_id, assistant_msg, config.MAX_MESSAGE_HISTORY)
             await ingest_conversation_to_chromadb(
