@@ -411,7 +411,8 @@ async def stream_llm_response_to_interaction(
     title: str = "Sam's Response",
     force_new_followup_flow: bool = False,
     synthesized_rag_context_for_display: Optional[str] = None,
-    bot_user_id: Optional[int] = None
+    bot_user_id: Optional[int] = None,
+    retrieved_snippets: Optional[List[Tuple[str, str]]] = None
 ):
     channel_lock = None
     if interaction.channel_id is not None:
@@ -546,6 +547,7 @@ async def stream_llm_response_to_interaction(
             channel_id,
             interaction.user.id,
             chroma_ingest_history_with_response,
+            retrieved_snippets,
         )
 
 
@@ -557,7 +559,8 @@ async def stream_llm_response_to_message(
     prompt_messages: List[MsgNode],
     title: str = "Sam's Response",
     synthesized_rag_context_for_display: Optional[str] = None,
-    bot_user_id: Optional[int] = None
+    bot_user_id: Optional[int] = None,
+    retrieved_snippets: Optional[List[Tuple[str, str]]] = None
 ):
     channel_lock = bot_state.get_channel_lock(target_message.channel.id)
     initial_embed = discord.Embed(title=title, description="⏳ Thinking...", color=config.EMBED_COLOR["incomplete"])
@@ -624,6 +627,7 @@ async def stream_llm_response_to_message(
             channel_id,
             target_message.author.id,
             chroma_ingest_history_with_response,
+            retrieved_snippets,
         )
 
 

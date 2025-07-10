@@ -107,6 +107,7 @@ DiscordSam is a modular Python application designed for extensibility and mainta
     *   `initialize_chromadb()`: Sets up connections to various data collections (raw history, distilled summaries, news, timeline summaries, entities, relations, observations).
     *   `ingest_conversation_to_chromadb()`: Stores new conversations, extracts structured data (entities, relations, observations), distills key sentences, and saves them for future retrieval.
     *   `retrieve_and_prepare_rag_context()`: Given a query, searches relevant collections for pertinent information and synthesizes it into a context string for the LLM.
+    *   `update_retrieved_memories()`: Merges retrieved memory snippets with the latest conversation summary and stores updated memories for future use.
     *   Includes functions for importing data (e.g., ChatGPT exports) and storing specific data types (e.g., news summaries).
 
 8.  **Utility Modules**:
