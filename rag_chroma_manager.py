@@ -354,7 +354,7 @@ async def merge_memory_snippet_with_summary_llm(
     prompt = (
         "You maintain long-term memories for an AI assistant. "
         "Update the existing memory using details from the new conversation summary. "
-        "Return 1-3 concise sentences that preserve important older details and incorporate the new information." 
+        "Return 3-8 concise sentences that preserve important older details and incorporate the new information." 
     )
 
     timestamp_match = re.search(r"Conversation recorded at:\s*(.+)", old_memory)
@@ -364,7 +364,7 @@ async def merge_memory_snippet_with_summary_llm(
     user_text = (
         f"OLD MEMORY DATE: {old_date_str}\n"
         f"CURRENT DATE: {current_date_str}\n"
-        f"EXISTING MEMORY:\n{old_memory}\n\nNEW CONVERSATION SUMMARY:\n{new_summary}\n\nUPDATED MEMORY:"
+        f"OLD MEMORY:\n{old_memory}\n\nNEW CONVERSATION SUMMARY:\n{new_summary}\n\nUPDATED MEMORY:"
     )
 
     try:
