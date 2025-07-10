@@ -755,6 +755,13 @@ async def ingest_conversation_to_chromadb(
         logger.warning(f"Distillation failed or returned empty for convo ID {full_convo_doc_id} (source text preview: {distillation_preview_text[:100]}...). Skipping distilled sentence storage.")
         return
 
+    # Prefix the distilled summary with metadata headers so future merges retain the date
+    snippet_text = (
+        f"Conversation recorded at: {timestamp_now.isoformat()}\n"
+        f"Initiating User Question: {initiating_user_question}\n"
+        f"{distilled_sentence.strip()}"
+    )
+
     distilled_doc_id = f"distilled_{full_convo_doc_id}"
     distilled_metadata: Dict[str, Any] = {
         "channel_id": str(channel_id),
@@ -764,18 +771,23 @@ async def ingest_conversation_to_chromadb(
         "original_text_preview": distillation_preview_text
     }
 
-    if distilled_chat_summary_collection: # This check is good
+    if distilled_chat_summary_collection:  # This check is good
         try:
             distilled_chat_summary_collection.add(
-                documents=[distilled_sentence],
+                documents=[snippet_text],
                 metadatas=[distilled_metadata],
                 ids=[distilled_doc_id]
             )
-            logger.info(f"Ingested distilled sentence (ID: {distilled_doc_id}, linked to {full_convo_doc_id}) into '{config.CHROMA_DISTILLED_COLLECTION_NAME}'.")
+            logger.info(
+                f"Ingested distilled sentence (ID: {distilled_doc_id}, linked to {full_convo_doc_id}) into '{config.CHROMA_DISTILLED_COLLECTION_NAME}'."
+            )
             # After storing the distilled summary, update retrieved memories if provided
             await update_retrieved_memories(llm_client, retrieved_snippets, distilled_sentence)
         except Exception as e_add_distilled:
-            logger.error(f"Failed to add distilled sentence (ID: {distilled_doc_id}) to ChromaDB: {e_add_distilled}", exc_info=True)
+            logger.error(
+                f"Failed to add distilled sentence (ID: {distilled_doc_id}) to ChromaDB: {e_add_distilled}",
+                exc_info=True,
+            )
     else:
         logger.error("distilled_chat_summary_collection is None, cannot add distilled document.")
 
@@ -938,6 +950,11 @@ async def store_chatgpt_conversations_in_chromadb(llm_client: Any, conversations
                 logger.warning(f"Distillation failed for imported convo: {convo_data.get('title', 'Untitled')} (ID: {full_convo_doc_id_import}). Skipping distilled sentence storage.")
                 continue
 
+            snippet_text_import = (
+                f"Conversation recorded at: {timestamp_import.isoformat()}\n"
+                f"{distilled_sentence.strip()}"
+            )
+
             distilled_doc_id_import = f"distilled_{full_convo_doc_id_import}" # Renamed
             distilled_metadata_import: Dict[str, Any] = { # Renamed
                 "title": convo_data.get('title', 'Untitled'),
@@ -948,11 +965,13 @@ async def store_chatgpt_conversations_in_chromadb(llm_client: Any, conversations
             }
             if distilled_chat_summary_collection:
                 distilled_chat_summary_collection.add(
-                    documents=[distilled_sentence],
+                    documents=[snippet_text_import],
                     metadatas=[distilled_metadata_import],
                     ids=[distilled_doc_id_import]
                 )
-                logger.info(f"Stored distilled sentence for imported convo (ID: {distilled_doc_id_import}, linked to {full_convo_doc_id_import}) in '{config.CHROMA_DISTILLED_COLLECTION_NAME}'.")
+                logger.info(
+                    f"Stored distilled sentence for imported convo (ID: {distilled_doc_id_import}, linked to {full_convo_doc_id_import}) in '{config.CHROMA_DISTILLED_COLLECTION_NAME}'."
+                )
                 added_count += 1
             else: # Should have been caught by the all() check above
                 logger.error("distilled_chat_summary_collection is None, cannot add distilled document for import.")
