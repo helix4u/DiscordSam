@@ -142,7 +142,7 @@ This modular architecture allows for easier development, testing, and modificati
 *   **pip** (Python package installer)
 *   **A local LLM server:**
     *   Must be OpenAI API compatible (e.g., LM Studio, Ollama with OpenAI compatible endpoint).
-    *   You will need the server URL and potentially model names for text (`LLM_MODEL`, `FAST_LLM_MODEL`) and vision (`VISION_LLM_MODEL`).
+    *   You will need the server URL and potentially model names for text (`LLM`, `FAST_LLM_MODEL`) and vision (`VISION_LLM_MODEL`).
 *   **Git:** For cloning the repository.
 
 **Optional (but Recommended for Full Functionality):**
@@ -183,8 +183,8 @@ Below is a comprehensive list of environment variables used by DiscordSam, along
 
 *   `LOCAL_SERVER_URL` (Default: `http://localhost:1234/v1`): The base URL of your OpenAI-compatible LLM server (e.g., LM Studio, Ollama with OpenAI endpoint).
 *   `LLM_API_KEY` (Optional, Default: `""` or `lm-studio`): The API key for your LLM server. Often not strictly required for local servers but can be set if needed.
-*   `LLM_MODEL` (Default: `local-model`): The name/identifier of the default language model to be used for most text generation tasks.
-*   `FAST_LLM_MODEL` (Default: Same as `LLM_MODEL`): The model used for tasks where speed is preferred over maximum quality, such as intermediate summarizations or quick classifications.
+*   `LLM` (Default: `local-model`): The name/identifier of the default language model to be used for most text generation tasks.
+*   `FAST_LLM_MODEL` (Default: Same as `LLM`): The model used for tasks where speed is preferred over maximum quality, such as intermediate summarizations or quick classifications.
 *   `VISION_LLM_MODEL` (Default: `llava`): The model used for tasks involving image understanding (e.g., the `/ap` command or describing screenshots).
 *   `LLM_SUPPORTS_JSON_MODE` (Default: `false`): Set to `true` if your LLM server and the selected model support JSON mode for structured output (e.g., for entity extraction).
 *   `MAX_MESSAGE_HISTORY` (Default: `10`): The maximum number of recent messages (user and assistant turns) to include in the short-term context sent to the LLM.
@@ -229,7 +229,7 @@ Below is a comprehensive list of environment variables used by DiscordSam, along
 
 **Discord Embed & Streaming Settings:**
 
-*   `EMBED_COLOR_INCOMPLETE` (Default: `discord.Color.orange().value` e.g., `0xFFFFA500` or `16753920`): Hex color code (e.g., `#FFA500` or `0xFFA500`) or integer value for embeds indicating an incomplete or in-progress operation.
+*   `EMBED_COLOR_INCOMPLETE` (Default: `discord.Color.orange().value` e.g., `0xFFA500` or `16753920`): Hex color code (e.g., `#FFA500` or `0xFFA500`) or integer value for embeds indicating an incomplete or in-progress operation.
 *   `EMBED_COLOR_COMPLETE` (Default: `discord.Color.green().value` e.g., `0x00FF00` or `65280`): Hex color code or integer value for embeds indicating a successful or completed operation.
 *   `EMBED_COLOR_ERROR` (Default: `discord.Color.red().value` e.g., `0xFF0000` or `16711680`): Hex color code or integer value for embeds indicating an error.
 *   `EMBED_MAX_LENGTH` (Default: `4096`): Maximum character length for a single Discord embed description. Text will be chunked if it exceeds this.
@@ -287,7 +287,7 @@ DiscordSam offers a variety of slash commands for diverse functionalities. Here'
         2.  Scrapes the content of the top few articles (up to `NEWS_MAX_LINKS_TO_PROCESS`).
         3.  Uses a fast LLM (`FAST_LLM_MODEL`) to summarize each scraped article individually.
         4.  Stores these individual summaries in ChromaDB (`CHROMA_NEWS_SUMMARY_COLLECTION_NAME`).
-        5.  Sends all individual summaries to the main LLM (`LLM_MODEL`) to synthesize a final, coherent news briefing.
+        5.  Sends all individual summaries to the main LLM (`LLM`) to synthesize a final, coherent news briefing.
         6.  Streams the briefing back to the Discord channel.
         7.  Provides TTS for the final briefing if enabled.
     *   **Output:** An embed message containing the news briefing, updated live as the process unfolds (gathering articles, summarizing, final briefing).
@@ -337,7 +337,7 @@ DiscordSam offers a variety of slash commands for diverse functionalities. Here'
         1.  Queries the configured SearXNG instance (`SEARX_URL`).
         2.  Scrapes the content of the top few search results (up to `NEWS_MAX_LINKS_TO_PROCESS`).
         3.  Uses a fast LLM (`FAST_LLM_MODEL`) to summarize each scraped page individually, focusing on relevance to the query.
-        4.  Sends these individual summaries to the main LLM (`LLM_MODEL`) with a prompt to synthesize a single, integrated summary that directly addresses the user's query.
+        4.  Sends these individual summaries to the main LLM (`LLM`) with a prompt to synthesize a single, integrated summary that directly addresses the user's query.
         5.  Streams this final summary back to the Discord channel as a new message flow (using `force_new_followup_flow=True`).
         6.  Provides TTS for the summary if enabled.
     *   **Output:**
@@ -442,7 +442,7 @@ DiscordSam offers a variety of slash commands for diverse functionalities. Here'
 ## 9. Running the Bot
 
 1.  **Ensure your local servers are running:**
-    *   Your LLM server (e.g., LM Studio, Ollama) must be active and accessible at the `LOCAL_SERVER_URL`. Ensure the correct models specified in your `.env` file (e.g., `LLM_MODEL`, `VISION_LLM_MODEL`) are loaded and available on this server.
+    *   Your LLM server (e.g., LM Studio, Ollama) must be active and accessible at the `LOCAL_SERVER_URL`. Ensure the correct models specified in your `.env` file (e.g., `LLM`, `VISION_LLM_MODEL`) are loaded and available on this server.
     *   If `TTS_ENABLED_DEFAULT` is `true`, your TTS server must be running and accessible at `TTS_API_URL`.
     *   If you plan to use the `/search` or `/news` commands, your SearXNG instance must be running and accessible at `SEARX_URL`.
 
@@ -476,7 +476,7 @@ If you encounter issues, the console output containing these logs is the first p
 ## 11. Troubleshooting
 
 *   **Playwright Processes:** If Chromium or Playwright processes remain running after scraping, the bot has a built-in task (`cleanup_playwright_task` in `discord_events.py`) that attempts to clean them up periodically based on `PLAYWRIGHT_CLEANUP_INTERVAL_MINUTES` and `PLAYWRIGHT_IDLE_CLEANUP_THRESHOLD_MINUTES`. You can also manually kill these processes if needed.
-*   **Model Not Found Errors:** Ensure the model names specified in your `.env` file (e.g., `LLM_MODEL`, `VISION_LLM_MODEL`, `FAST_LLM_MODEL`) exactly match the models loaded and available on your LLM server at `LOCAL_SERVER_URL`.
+*   **Model Not Found Errors:** Ensure the model names specified in your `.env` file (e.g., `LLM`, `VISION_LLM_MODEL`, `FAST_LLM_MODEL`) exactly match the models loaded and available on your LLM server at `LOCAL_SERVER_URL`.
 *   **Connection Errors:** Verify that all specified server URLs (`LOCAL_SERVER_URL`, `TTS_API_URL`, `SEARX_URL`) are correct and that the respective services are running and accessible from where the bot is running.
 *   **Permissions:** If slash commands don't appear or certain commands fail, check the bot's permissions in your Discord server settings. It generally needs permissions to read messages, send messages, use embeds, attach files, and use slash commands. Some commands like `/clearhistory` or `/ingest_chatgpt_export` might require 'Manage Messages'.
 
