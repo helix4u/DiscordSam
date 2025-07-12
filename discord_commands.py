@@ -50,9 +50,9 @@ logger = logging.getLogger(__name__)
 # Default RSS feeds users can choose from with the /rss command
 DEFAULT_RSS_FEEDS = [
     ("Google News", "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en"),
-    ("CBS Main", "https://www.cbsnews.com/latest/rss/main"),
-    ("WSJ US", "https://feeds.content.dowjones.io/public/rss/RSSUSnews"),
-    ("WSJ Politics", "https://feeds.content.dowjones.io/public/rss/socialpoliticsfeed"),
+    ("CBS News - US", "https://www.cbsnews.com/latest/rss/us"),
+    ("The Daily Beast", "https://www.thedailybeast.com/arc/outboundfeeds/rss/articles/"),
+    ("Washington Post", "https://feeds.washingtonpost.com/rss/world"),
     ("ABC Politics Headlines", "https://abcnews.go.com/abcnews/politicsheadlines"),
     ("ABC US Headlines", "https://abcnews.go.com/abcnews/usheadlines"),
     ("SAN", "https://san.com/feed/"),
@@ -68,7 +68,7 @@ DEFAULT_RSS_FEEDS = [
     ("US News - The Guardian", "https://www.theguardian.com/us/rss"),
     ("Huffpost Politics", "https://chaski.huffpost.com/us/auto/vertical/politics"),
     ("Huffpost US News", "https://chaski.huffpost.com/us/auto/vertical/us-news"),
-    ("Fox News Politics", "https://moxie.foxnews.com/google-publisher/politics.xml"),
+    ("Express.co.uk - US", "https://www.express.co.uk/posts/rss/198/us"),
     ("Time", "https://time.com/feed/"),
     ("Google News - Ground News", "https://news.google.com/rss/search?q=news+site:ground.news&hl=en-US&gl=US&ceid=US:en"),
     ("Mother Jones", "https://www.motherjones.com/feed/"),
