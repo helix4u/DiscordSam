@@ -361,17 +361,16 @@ DiscordSam offers a variety of slash commands for diverse functionalities. Here'
         *   `limit` (Optional, Default: 15): The maximum number of new entries to fetch and process (max 20).
     *   **Behavior:**
         1.  Fetches the RSS feed using `web_utils.fetch_rss_entries`.
-        2.  Resolves Google redirect URLs so the final article link is shown instead of a long Google URL.
-        3.  Skips CBS News entries from `https://www.cbsnews.com/video/` as these pages lack article text.
-        4.  Compares entries against a local cache (`rss_seen.json`) to identify new ones.
-        5.  For each new entry (up to `limit`):
+        2.  Skips CBS News entries from `https://www.cbsnews.com/video/` as these pages lack article text.
+        3.  Compares entries against a local cache (`rss_seen.json`) to identify new ones.
+        4.  For each new entry (up to `limit`):
             *   Scrapes the content of the article linked in the entry.
             *   Uses a fast LLM (`FAST_LLM_MODEL`) to summarize the scraped article.
-        6.  Displays the summaries (title, publication date in your local time, link, summary) in Discord embeds. If the content is long, it's chunked into multiple embeds.
-        7.  Updates the `rss_seen.json` cache.
-        8.  Provides TTS for the combined summaries if enabled.
-        9.  The user's command and the bot's full summarized response are added to short-term history and ingested into ChromaDB.
-        10.  If no new entries are found, the bot replies with an ephemeral message instead of posting publicly.
+        5.  Displays the summaries (title, publication date in your local time, link, summary) in Discord embeds. If the content is long, it's chunked into multiple embeds.
+        6.  Updates the `rss_seen.json` cache.
+        7.  Provides TTS for the combined summaries if enabled.
+        8.  The user's command and the bot's full summarized response are added to short-term history and ingested into ChromaDB.
+        9.  If no new entries are found, the bot replies with an ephemeral message instead of posting publicly.
     *   **Output:** One or more embed messages containing summaries of new RSS feed entries, each showing the title, local publication date, link, and summary.
 
 *   **`/allrss [limit]`**
