@@ -725,10 +725,19 @@ async def fetch_rss_entries(feed_url: str) -> List[Dict[str, Any]]:
             if pub_date_dt is None or pub_date_dt < one_days_ago:
                 continue
 
+            link_url = it.findtext("link") or ""
+            if link_url.startswith("https://www.cbsnews.com/video/"):
+                continue
+            if (
+                link_url.startswith("https://www.cbsnews.com/")
+                and not link_url.startswith("https://www.cbsnews.com/news/")
+            ):
+                continue
+
             entries.append({
                 "title": it.findtext("title") or "",
-                "link": it.findtext("link") or "",
-                "guid": it.findtext("guid") or it.findtext("link") or "",
+                "link": link_url,
+                "guid": it.findtext("guid") or link_url or "",
                 "pubDate": pub_date_str,
                 "pubDate_dt": pub_date_dt,
                 "description": it.findtext("description") or "",
