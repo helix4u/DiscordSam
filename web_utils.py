@@ -4,7 +4,6 @@ import os
 import re
 import json
 from typing import List, Optional, Dict, Any, Callable, Awaitable, Tuple
-from urllib.parse import urlparse, parse_qs, unquote
 from bs4 import BeautifulSoup
 import random
 from datetime import datetime, timedelta, timezone
@@ -140,20 +139,6 @@ JS_EXTRACT_TWEETS_TWITTER = """
     return tweets;
 }
 """
-
-def resolve_google_redirect(url: str) -> str:
-    """Return the final target of a Google redirect URL if applicable."""
-    try:
-        parsed = urlparse(url)
-        if "google.com" not in parsed.netloc:
-            return url
-        qs = parse_qs(parsed.query)
-        for key in ("url", "q", "u"):
-            if key in qs and qs[key]:
-                return unquote(qs[key][0])
-    except Exception:
-        pass
-    return url
 
 async def _scrape_with_bs(url: str) -> Optional[str]:
     """Fallback scraping using aiohttp and BeautifulSoup with a Googlebot user agent."""
@@ -740,7 +725,7 @@ async def fetch_rss_entries(feed_url: str) -> List[Dict[str, Any]]:
             if pub_date_dt is None or pub_date_dt < one_days_ago:
                 continue
 
-            link_url = resolve_google_redirect(it.findtext("link") or "")
+            link_url = it.findtext("link") or ""
             if link_url.startswith("https://www.cbsnews.com/video/"):
                 continue
             if (
