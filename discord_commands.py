@@ -258,6 +258,271 @@ async def process_rss_feed(
     return True
 
 
+async def process_twitter_user(
+    interaction: discord.Interaction,
+    username: str,
+    limit: int,
+) -> bool:
+    """Fetch, summarize and display recent tweets from a single user.
+
+    Parameters
+    ----------
+    interaction : discord.Interaction
+        The originating interaction for responding and context.
+    username : str
+        Twitter username to process.
+    limit : int
+        Maximum number of tweets to fetch.
+
+    Returns
+    -------
+    bool
+        ``True`` if any new tweets were processed, ``False`` otherwise.
+    """
+
+    clean_username = username.lstrip("@")
+    progress_message = await safe_followup_send(
+        interaction,
+        content=f"Scraping tweets for @{clean_username} (up to {limit})...",
+    )
+
+    async def send_progress(message: str) -> None:
+        try:
+            await progress_message.edit(content=message)
+        except discord.HTTPException as e_prog:
+            logger.warning(
+                f"Failed to send progress update for @{clean_username}: {e_prog}"
+            )
+        except Exception as e_unexp:
+            logger.error(
+                f"Unexpected error in send_progress for @{clean_username}: {e_unexp}",
+                exc_info=True,
+            )
+
+    try:
+        if hasattr(bot_state_instance, "update_last_playwright_usage_time"):
+            await bot_state_instance.update_last_playwright_usage_time()
+
+        all_seen_tweet_ids_cache = load_seen_tweet_ids()
+        user_seen_tweet_ids = all_seen_tweet_ids_cache.get(clean_username, set())
+
+        fetched_tweets_data = await scrape_latest_tweets(
+            clean_username, limit=limit, progress_callback=send_progress
+        )
+
+        if not fetched_tweets_data:
+            await progress_message.edit(
+                content=(
+                    f"Finished scraping for @{clean_username}. "
+                    "No tweets found or profile inaccessible."
+                ),
+                embed=None,
+            )
+            return False
+
+        new_tweets_to_process = []
+        processed_tweet_ids_current_run: set[str] = set()
+        for tweet_data in fetched_tweets_data:
+            tweet_identifier = tweet_data.get("tweet_url")
+            if not tweet_identifier:
+                logger.warning(
+                    f"Tweet from @{clean_username} missing 'tweet_url'. Skipping."
+                )
+                continue
+            if tweet_identifier not in user_seen_tweet_ids:
+                new_tweets_to_process.append(tweet_data)
+                processed_tweet_ids_current_run.add(tweet_identifier)
+            else:
+                logger.info(
+                    f"Skipping already seen tweet for @{clean_username}: {tweet_identifier}"
+                )
+
+        if not new_tweets_to_process:
+            await progress_message.edit(
+                content=f"No new tweets found for @{clean_username} since last check.",
+                embed=None,
+            )
+            all_seen_tweet_ids_cache[clean_username] = user_seen_tweet_ids.union(
+                processed_tweet_ids_current_run
+            )
+            save_seen_tweet_ids(all_seen_tweet_ids_cache)
+            return False
+
+        tweet_texts_for_display = []
+        for t_data in new_tweets_to_process:
+            ts_str = t_data.get("timestamp", "N/A")
+            display_ts = ts_str
+            try:
+                dt_obj = (
+                    datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                    if ts_str != "N/A"
+                    else None
+                )
+                if dt_obj:
+                    display_ts = dt_obj.astimezone().strftime("%Y-%m-%d %H:%M %Z")
+            except Exception:
+                pass
+
+            author_display = t_data.get("username", clean_username)
+            content_display = discord.utils.escape_markdown(
+                t_data.get("content", "N/A")
+            )
+            tweet_url_display = t_data.get("tweet_url", "")
+
+            header = f"[{display_ts}] @{author_display}"
+            if t_data.get("is_repost") and t_data.get("reposted_by"):
+                header = f"[{display_ts}] @{t_data.get('reposted_by')} reposted @{author_display}"
+
+            link_text = f" ([Link]({tweet_url_display}))" if tweet_url_display else ""
+            tweet_texts_for_display.append(f"**{header}**: {content_display}{link_text}")
+
+        raw_tweets_display_str = "\n\n".join(tweet_texts_for_display)
+        if not raw_tweets_display_str:
+            raw_tweets_display_str = "No new tweet content could be formatted for display."
+
+        await send_progress(f"Formatting {len(new_tweets_to_process)} new tweets for display...")
+
+        all_seen_tweet_ids_cache[clean_username] = user_seen_tweet_ids.union(
+            processed_tweet_ids_current_run
+        )
+        save_seen_tweet_ids(all_seen_tweet_ids_cache)
+        logger.info(
+            f"Updated and saved seen tweet IDs for @{clean_username}. Total seen: {len(all_seen_tweet_ids_cache[clean_username])}"
+        )
+
+        if new_tweets_to_process and rcm.tweets_collection:
+            tweet_docs_to_add = []
+            tweet_metadatas_to_add = []
+            tweet_ids_to_add = []
+            seen_doc_ids: set[str] = set()
+            for t_data in new_tweets_to_process:
+                tweet_identifier = t_data.get("tweet_url")
+                if not tweet_identifier:
+                    logger.warning(
+                        f"Skipping tweet storage for @{clean_username} due to missing 'tweet_url'."
+                    )
+                    continue
+                tweet_id_val = str(t_data.get("id") or "")
+                if not tweet_id_val:
+                    tweet_id_val = tweet_identifier.split("?")[0].split("/")[-1]
+                doc_id = f"tweet_{clean_username}_{tweet_id_val}"
+
+                document_content = t_data.get("content", "")
+                if not document_content.strip():
+                    logger.info(
+                        f"Skipping empty tweet from @{clean_username}, ID: {doc_id}"
+                    )
+                    continue
+
+                metadata = {
+                    "username": clean_username,
+                    "tweet_url": tweet_identifier,
+                    "timestamp": t_data.get("timestamp", datetime.now().isoformat()),
+                    "is_repost": bool(t_data.get("is_repost", False)),
+                    "source_command": "/alltweets",
+                    "raw_data_preview": str(t_data)[:200],
+                }
+                reposted_by_val = t_data.get("reposted_by")
+                if reposted_by_val:
+                    metadata["reposted_by"] = str(reposted_by_val)
+                if doc_id in seen_doc_ids:
+                    logger.debug(
+                        f"Duplicate tweet doc_id detected in batch: {doc_id}"
+                    )
+                    continue
+
+                tweet_docs_to_add.append(document_content)
+                tweet_metadatas_to_add.append(metadata)
+                tweet_ids_to_add.append(doc_id)
+                seen_doc_ids.add(doc_id)
+
+            if tweet_ids_to_add:
+                try:
+                    rcm.tweets_collection.add(
+                        documents=tweet_docs_to_add,
+                        metadatas=tweet_metadatas_to_add,
+                        ids=tweet_ids_to_add,
+                    )
+                    logger.info(
+                        f"Successfully stored {len(tweet_ids_to_add)} new tweets from @{clean_username} in ChromaDB."
+                    )
+                except Exception as e_add_tweet:
+                    logger.error(
+                        f"Failed to store tweets for @{clean_username} in ChromaDB: {e_add_tweet}",
+                        exc_info=True,
+                    )
+        elif not rcm.tweets_collection:
+            logger.warning(
+                f"tweets_collection is not available. Skipping storage of tweets for @{clean_username}."
+            )
+
+        embed_title = f"Recent Tweets from @{clean_username}"
+        raw_tweet_chunks = chunk_text(raw_tweets_display_str, config.EMBED_MAX_LENGTH)
+
+        for i, chunk_content_part in enumerate(raw_tweet_chunks):
+            chunk_title = embed_title if i == 0 else f"{embed_title} (cont.)"
+            embed = discord.Embed(
+                title=chunk_title,
+                description=chunk_content_part,
+                color=config.EMBED_COLOR["complete"],
+            )
+            if i == 0:
+                await progress_message.edit(content=None, embed=embed)
+            else:
+                await interaction.followup.send(embed=embed)
+
+        user_query_content_for_summary = (
+            f"Please analyze and summarize the main themes, topics discussed, and overall sentiment "
+            f"from @{clean_username}'s recent tweets provided below. Extract key points and present a concise yet detailed overview of this snapshot in time. "
+            f"Do not just re-list the tweets.\n\nRecent Tweets:\n{raw_tweets_display_str[:config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT]}"
+        )
+        user_msg_node = MsgNode("user", user_query_content_for_summary, name=str(interaction.user.id))
+
+        rag_query_for_tweets_summary = (
+            f"summary of recent tweets from Twitter user @{clean_username}"
+        )
+        synthesized_summary, raw_snippets = await retrieve_and_prepare_rag_context(
+            llm_client_instance, rag_query_for_tweets_summary
+        )
+
+        prompt_nodes_summary = await _build_initial_prompt_messages(
+            user_query_content=user_query_content_for_summary,
+            channel_id=interaction.channel_id,
+            bot_state=bot_state_instance,
+            user_id=str(interaction.user.id),
+            synthesized_rag_context_str=synthesized_summary,
+            raw_rag_snippets=raw_snippets,
+        )
+        await stream_llm_response_to_interaction(
+            interaction,
+            llm_client_instance,
+            bot_state_instance,
+            user_msg_node,
+            prompt_nodes_summary,
+            title=f"Tweet Summary for @{clean_username}",
+            force_new_followup_flow=True,
+            synthesized_rag_context_for_display=synthesized_summary,
+            bot_user_id=bot_instance.user.id,
+            retrieved_snippets=raw_snippets,
+        )
+    except Exception as e:
+        logger.error(
+            f"Error processing tweets for @{clean_username}: {e}", exc_info=True
+        )
+        try:
+            await progress_message.edit(
+                content=f"Error processing @{clean_username}: {str(e)[:500]}",
+                embed=None,
+            )
+        except discord.HTTPException:
+            logger.warning(
+                f"Could not send final error message for @{clean_username} (HTTPException)."
+            )
+        return False
+
+    return True
+
+
 def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState):
     global bot_instance, llm_client_instance, bot_state_instance
     bot_instance = bot
@@ -1540,6 +1805,80 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             if acquired_lock:
                 scrape_lock.release()
                 logger.debug("Scrape lock released for /homefeed")
+
+
+    @bot_instance.tree.command(name="alltweets", description="Fetches tweets from all default accounts.")
+    @app_commands.describe(
+        limit="Number of tweets per account to fetch (max 50)."
+    )
+    async def alltweets_slash_command(
+        interaction: discord.Interaction,
+        limit: app_commands.Range[int, 1, 50] = 25,
+    ) -> None:
+        if not llm_client_instance or not bot_state_instance or not bot_instance or not bot_instance.user:
+            logger.error("alltweets_slash_command: One or more bot components are None.")
+            await interaction.response.send_message("Bot components not ready. Cannot get tweets.", ephemeral=True)
+            return
+
+        logger.info(
+            f"Alltweets command initiated by {interaction.user.name}, limit {limit}."
+        )
+        if interaction.channel_id is None:
+            await interaction.response.send_message("Error: This command must be used in a channel.", ephemeral=True)
+            return
+
+        scrape_lock = bot_state_instance.get_scrape_lock()
+        queue_notice = scrape_lock.locked()
+        acquired_lock = False
+        if queue_notice:
+            await interaction.response.send_message(
+                "Waiting for other scraping tasks to finish before fetching tweets...",
+                ephemeral=True,
+            )
+            await scrape_lock.acquire()
+            acquired_lock = True
+            await interaction.followup.send(content="Starting to scrape tweets from default accounts...")
+        else:
+            await scrape_lock.acquire()
+            acquired_lock = True
+            await interaction.response.defer(ephemeral=False)
+            await interaction.followup.send(content="Starting to scrape tweets from default accounts...")
+
+        try:
+            any_new = False
+            for username in DEFAULT_TWITTER_USERS:
+                processed = await process_twitter_user(interaction, username, limit)
+                any_new = any_new or processed
+
+            if not any_new:
+                await safe_followup_send(
+                    interaction,
+                    content="No new tweets found for any default account.",
+                    ephemeral=True,
+                )
+
+            user_msg = MsgNode("user", f"/alltweets (limit {limit})", name=str(interaction.user.id))
+            assistant_msg = MsgNode(
+                "assistant",
+                "Finished fetching tweets from default accounts.",
+                name=str(bot_instance.user.id),
+            )
+            await bot_state_instance.append_history(interaction.channel_id, user_msg, config.MAX_MESSAGE_HISTORY)
+            await bot_state_instance.append_history(interaction.channel_id, assistant_msg, config.MAX_MESSAGE_HISTORY)
+            await ingest_conversation_to_chromadb(
+                llm_client_instance,
+                interaction.channel_id,
+                interaction.user.id,
+                [user_msg, assistant_msg],
+                None,
+            )
+        except Exception as e:
+            logger.error(f"Error in alltweets_slash_command: {e}", exc_info=True)
+            await interaction.followup.send(content=f"Failed to process tweets. Error: {str(e)[:500]}")
+        finally:
+            if acquired_lock:
+                scrape_lock.release()
+                logger.debug("Scrape lock released for /alltweets")
 
 
     @bot_instance.tree.command(name="ap", description="Describes an attached image with a creative AP Photo twist.")
