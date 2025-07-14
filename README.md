@@ -416,6 +416,19 @@ DiscordSam offers a variety of slash commands for diverse functionalities. Here'
         *   Embed(s) containing the raw fetched tweets.
         *   A new set of messages (embeds) containing the LLM-generated summary of the tweets. Progress updates are sent during scraping.
 
+*   **`/alltweets [limit]`**
+    *   **Purpose:** Fetches and summarizes tweets from all default X/Twitter accounts.
+    *   **Arguments:**
+        *   `limit` (Optional, Default: 25): The maximum number of tweets to fetch per account (max 50).
+    *   **Behavior:**
+        1.  Iterates through each preset Twitter account defined for the bot.
+        2.  Uses `web_utils.scrape_latest_tweets` to scrape recent tweets for each account.
+        3.  Displays the raw fetched tweets in Discord embeds, chunked if necessary.
+        4.  Sends these tweets to the LLM to generate a brief summary, streamed back to the channel.
+        5.  Provides TTS for each summary if enabled.
+        6.  Stores newly fetched tweets in the `CHROMA_TWEETS_COLLECTION_NAME` collection for future retrieval.
+    *   **Output:** A series of embeds and summaries for each default account. If no new tweets are found for any account, the bot replies with an ephemeral message.
+
 *   **`/ap <image> [user_prompt]`**
     *   **Purpose:** Describes an attached image in the style of an Associated Press (AP) photo caption, with a humorous twist: a randomly chosen celebrity is creatively inserted as the main subject.
     *   **Arguments:**
