@@ -286,18 +286,6 @@ async def process_twitter_user(
         content=f"Scraping tweets for @{clean_username} (up to {limit})...",
     )
 
-    async def send_progress(message: str) -> None:
-        try:
-            await progress_message.edit(content=message)
-        except discord.HTTPException as e_prog:
-            logger.warning(
-                f"Failed to send progress update for @{clean_username}: {e_prog}"
-            )
-        except Exception as e_unexp:
-            logger.error(
-                f"Unexpected error in send_progress for @{clean_username}: {e_unexp}",
-                exc_info=True,
-            )
 
     try:
         if hasattr(bot_state_instance, "update_last_playwright_usage_time"):
@@ -307,7 +295,7 @@ async def process_twitter_user(
         user_seen_tweet_ids = all_seen_tweet_ids_cache.get(clean_username, set())
 
         fetched_tweets_data = await scrape_latest_tweets(
-            clean_username, limit=limit, progress_callback=send_progress
+            clean_username, limit=limit
         )
 
         if not fetched_tweets_data:
@@ -380,7 +368,6 @@ async def process_twitter_user(
         if not raw_tweets_display_str:
             raw_tweets_display_str = "No new tweet content could be formatted for display."
 
-        await send_progress(f"Formatting {len(new_tweets_to_process)} new tweets for display...")
 
         all_seen_tweet_ids_cache[clean_username] = user_seen_tweet_ids.union(
             processed_tweet_ids_current_run
@@ -1347,13 +1334,6 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 content=f"Starting to scrape tweets for @{clean_username_for_initial_message} (up to {limit})..."
             )
 
-        async def send_progress(message: str) -> None:
-            try:
-                await progress_message.edit(content=message)
-            except discord.HTTPException as e_prog:
-                logger.warning(f"Failed to send progress update for gettweets (edit original): {e_prog}")
-            except Exception as e_unexp:
-                logger.error(f"Unexpected error in send_progress for gettweets: {e_unexp}", exc_info=True)
 
         try:
             clean_username = user_to_fetch.lstrip('@')
@@ -1373,7 +1353,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             # If `scrape_latest_tweets` is not returning IDs, it will need to be modified.
             # For now, I'll proceed assuming 'tweet_url' is the unique identifier.
 
-            fetched_tweets_data = await scrape_latest_tweets(clean_username, limit=limit, progress_callback=send_progress)
+            fetched_tweets_data = await scrape_latest_tweets(clean_username, limit=limit)
 
             if not fetched_tweets_data:
                 final_content_message = (
@@ -1431,7 +1411,6 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             raw_tweets_display_str = "\n\n".join(tweet_texts_for_display)
             if not raw_tweets_display_str: raw_tweets_display_str = "No new tweet content could be formatted for display."
 
-            await send_progress(f"Formatting {len(new_tweets_to_process)} new tweets for display...")
 
             # Update and save the cache with newly processed tweet IDs
             all_seen_tweet_ids_cache[clean_username] = user_seen_tweet_ids.union(processed_tweet_ids_current_run)
@@ -1619,13 +1598,6 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 content=f"Starting to scrape home timeline tweets (up to {limit})..."
             )
 
-        async def send_progress(message: str) -> None:
-            try:
-                await progress_message.edit(content=message)
-            except discord.HTTPException as e_prog:
-                logger.warning(f"Failed to send progress update for homefeed (edit original): {e_prog}")
-            except Exception as e_unexp:
-                logger.error(f"Unexpected error in send_progress for homefeed: {e_unexp}", exc_info=True)
 
         try:
             if hasattr(bot_state_instance, 'update_last_playwright_usage_time'):
@@ -1636,7 +1608,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             home_key = "__home__"
             user_seen_tweet_ids = all_seen_tweet_ids_cache.get(home_key, set())
 
-            fetched_tweets_data = await scrape_home_timeline(limit=limit, progress_callback=send_progress)
+            fetched_tweets_data = await scrape_home_timeline(limit=limit)
 
             if not fetched_tweets_data:
                 final_content_message = "Finished scraping home timeline. No tweets found or timeline inaccessible."
@@ -1690,7 +1662,6 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             if not raw_tweets_display_str:
                 raw_tweets_display_str = "No new tweet content could be formatted for display."
 
-            await send_progress(f"Formatting {len(new_tweets_to_process)} new tweets for display...")
 
             all_seen_tweet_ids_cache[home_key] = user_seen_tweet_ids.union(processed_tweet_ids_current_run)
             save_seen_tweet_ids(all_seen_tweet_ids_cache)
