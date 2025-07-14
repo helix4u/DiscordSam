@@ -13,7 +13,12 @@ from state import BotState
 # Import MsgNode from the new common_models.py
 from common_models import MsgNode
 # Import utility functions
-from utils import chunk_text, cleanup_playwright_processes
+from utils import (
+    chunk_text,
+    cleanup_playwright_processes,
+    safe_followup_send,
+    safe_message_edit,
+)
 # Import functions for post-stream processing
 from rag_chroma_manager import ingest_conversation_to_chromadb
 from audio_utils import send_tts_audio
@@ -216,12 +221,15 @@ async def _stream_llm_handler(
                 interaction = cast(discord.Interaction, interaction_or_message)
                 if not interaction.response.is_done():
                     await interaction.response.defer(ephemeral=False)
-                current_initial_message = await interaction.followup.send(embed=placeholder_embed, wait=True)
+                current_initial_message = await safe_followup_send(
+                    interaction, embed=placeholder_embed, wait=True
+                )
             else:
                 logger.error("_stream_llm_handler: initial_message_to_edit is None for non-interaction type where it's expected.")
                 return "", prompt_messages
         except discord.HTTPException as e:
             logger.error(f"Failed to send initial followup/defer for stream '{title}': {e}")
+            # If defer fails, we can't use safe_followup_send, so we exit.
             return "", prompt_messages
 
     if current_initial_message:
@@ -280,7 +288,9 @@ async def _stream_llm_handler(
             error_text = response_prefix + "Failed to get response from LLM."
             error_embed = discord.Embed(title=title, description=error_text, color=config.EMBED_COLOR["error"])
             if sent_messages:
-                await sent_messages[0].edit(embed=error_embed)
+                await safe_message_edit(
+                    sent_messages[0], channel, embed=error_embed
+                )
             return "", final_prompt_for_rag
 
         last_edit_time = asyncio.get_event_loop().time()
@@ -288,10 +298,9 @@ async def _stream_llm_handler(
 
         if current_initial_message:
             initial_display_embed = discord.Embed(title=title, description=response_prefix + "⏳ Streaming response...", color=config.EMBED_COLOR["incomplete"])
-            try:
-                await current_initial_message.edit(embed=initial_display_embed)
-            except discord.HTTPException as e:
-                logger.warning(f"Failed to edit initial message with context prefix for '{title}': {e}")
+            await safe_message_edit(
+                current_initial_message, channel, embed=initial_display_embed
+            )
 
         async for chunk_data in stream:
             delta_content = ""
@@ -317,18 +326,17 @@ async def _stream_llm_handler(
                         description=chunk_content_part,
                         color=config.EMBED_COLOR["incomplete"]
                     )
-                    try:
-                        if i < len(sent_messages):
-                            await sent_messages[i].edit(embed=embed)
+                    if i < len(sent_messages):
+                        await safe_message_edit(
+                            sent_messages[i], channel, embed=embed
+                        )
+                    else:
+                        if channel:
+                            new_msg = await channel.send(embed=embed)
+                            sent_messages.append(new_msg)
                         else:
-                            if channel:
-                                new_msg = await channel.send(embed=embed)
-                                sent_messages.append(new_msg)
-                            else:
-                                logger.error(f"Cannot send overflow chunk {i+1} for '{title}': channel is None.")
-                                break
-                    except discord.HTTPException as e_edit_send:
-                        logger.warning(f"Failed edit/send embed part {i+1} (stream) for '{title}': {e_edit_send}")
+                            logger.error(f"Cannot send overflow chunk {i+1} for '{title}': channel is None.")
+                            break
                 last_edit_time = current_time
                 await asyncio.sleep(config.STREAM_EDIT_THROTTLE_SECONDS)
 
@@ -341,13 +349,12 @@ async def _stream_llm_handler(
                     description=chunk_content_part,
                     color=config.EMBED_COLOR["incomplete"]
                 )
-                try:
-                    if i < len(sent_messages):
-                        await sent_messages[i].edit(embed=embed)
-                    elif channel:
-                        sent_messages.append(await channel.send(embed=embed))
-                except discord.HTTPException as e:
-                    logger.warning(f"Failed final accumulated content edit/send for '{title}': {e}")
+                if i < len(sent_messages):
+                    await safe_message_edit(
+                        sent_messages[i], channel, embed=embed
+                    )
+                elif channel:
+                    sent_messages.append(await channel.send(embed=embed))
             await asyncio.sleep(config.STREAM_EDIT_THROTTLE_SECONDS)
 
         final_display_text = response_prefix + full_response_content
@@ -367,7 +374,7 @@ async def _stream_llm_handler(
                 color=config.EMBED_COLOR["complete"]
             )
             if i < len(sent_messages):
-                await sent_messages[i].edit(embed=embed)
+                await safe_message_edit(sent_messages[i], channel, embed=embed)
             elif channel:
                 logger.warning(f"Sending new message for final chunk {i+1} of '{title}' as it wasn't in sent_messages.")
                 sent_messages.append(await channel.send(embed=embed))
@@ -380,7 +387,15 @@ async def _stream_llm_handler(
 
         if not full_response_content.strip() and sent_messages:
             empty_response_text = response_prefix + "\nSam didn't provide a response to the query."
-            await sent_messages[0].edit(embed=discord.Embed(title=title, description=empty_response_text, color=config.EMBED_COLOR["error"]))
+            await safe_message_edit(
+                sent_messages[0],
+                channel,
+                embed=discord.Embed(
+                    title=title,
+                    description=empty_response_text,
+                    color=config.EMBED_COLOR["error"],
+                ),
+            )
 
     except Exception as e:
         logger.error(f"Error in _stream_llm_handler for '{title}': {e}", exc_info=True)
