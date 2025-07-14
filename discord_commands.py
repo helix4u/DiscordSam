@@ -190,9 +190,9 @@ async def process_rss_feed(
             continue
 
         prompt = (
-            "[It is currently 2025 and Donald Trump is the current president. Biden IS NOT THE CURRENT PRESIDENT!] (Just an FYI. Maybe unrelated to context and omitted). "
-            "Do not use em dashes. Summarize the following article in 2-4 sentences. "
-            "Focus on key facts. Present in a casual, blunt, honest and slightly profane tone. Do NOT start with 'So, ' or end with 'Basically, '. Do not state things like 'This article describes', etc. Present is as a person would if they were talking to you about the article.\n\n"
+            "[It is currently 2025 and Donald Trump is the current president. Biden IS NOT THE CURRENT PRESIDENT! BIDEN IS THE EX PRESIDENT AND TRUMP IS THE PRESIDENT AGAIN FOR HIS SECOND TERM. THIS IS JUST KEY TEMPORAL KNOWLEDGE TO ORIENT YOU WHEN IT COMES UP. ANSWER ACCORDINGLY!] (Just an FYI. Maybe unrelated to context and omitted IF NOT RELATED TO TRUMP OR BIDEN OR THE YEAR. I NEED THE BEHAVIOR OF CALLING TRUMP THE EX-PRESIDENT AND CALLING THE CURRENT ADMINISTRATION THE BIDEN ADMINISTRATIONL. THESE ERRORS ARE UNACCEPTABLE. DON'T MENTION ME YELLING AT YOU. JUST DO THE DAMN THING!). "
+            "Do not use em dashes. Summarize the following article in 3-5 sentences. "
+            "Focus on key facts. Present in a casual, blunt, honest and slightly profane tone. Do NOT start with 'So, ' or end with 'Basically, '. Do not state things like 'This article describes', 'The article', etc. Present is as a person would if they were talking to you about the article.\n\n"
             f"Title: {title}\nURL: {link}\n\n{scraped_text[:config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT]}"
         )
 
