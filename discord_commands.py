@@ -287,11 +287,16 @@ async def process_twitter_user(
     )
 
     async def send_progress(message: str) -> None:
+        nonlocal progress_message
+        if not interaction.channel:
+            logger.error(f"Cannot send progress for @{clean_username}: interaction.channel is None")
+            return
         try:
-            await progress_message.edit(content=message)
-        except discord.HTTPException as e_prog:
-            logger.warning(
-                f"Failed to send progress update for @{clean_username}: {e_prog}"
+            # Reassign because safe_message_edit can return a new message object
+            progress_message = await safe_message_edit(
+                progress_message,
+                interaction.channel,
+                content=message
             )
         except Exception as e_unexp:
             logger.error(
@@ -311,13 +316,16 @@ async def process_twitter_user(
         )
 
         if not fetched_tweets_data:
-            await progress_message.edit(
-                content=(
-                    f"Finished scraping for @{clean_username}. "
-                    "No tweets found or profile inaccessible."
-                ),
-                embed=None,
-            )
+            if interaction.channel:
+                await safe_message_edit(
+                    progress_message,
+                    interaction.channel,
+                    content=(
+                        f"Finished scraping for @{clean_username}. "
+                        "No tweets found or profile inaccessible."
+                    ),
+                    embed=None,
+                )
             return False
 
         new_tweets_to_process = []
@@ -338,10 +346,13 @@ async def process_twitter_user(
                 )
 
         if not new_tweets_to_process:
-            await progress_message.edit(
-                content=f"No new tweets found for @{clean_username} since last check.",
-                embed=None,
-            )
+            if interaction.channel:
+                await safe_message_edit(
+                    progress_message,
+                    interaction.channel,
+                    content=f"No new tweets found for @{clean_username} since last check.",
+                    embed=None,
+                )
             all_seen_tweet_ids_cache[clean_username] = user_seen_tweet_ids.union(
                 processed_tweet_ids_current_run
             )
@@ -467,9 +478,15 @@ async def process_twitter_user(
                 color=config.EMBED_COLOR["complete"],
             )
             if i == 0:
-                await progress_message.edit(content=None, embed=embed)
+                if interaction.channel:
+                    progress_message = await safe_message_edit(
+                        progress_message,
+                        interaction.channel,
+                        content=None,
+                        embed=embed
+                    )
             else:
-                await interaction.followup.send(embed=embed)
+                await safe_followup_send(interaction, embed=embed)
 
         user_query_content_for_summary = (
             f"Please analyze and summarize the main themes, topics discussed, and overall sentiment "
@@ -509,15 +526,18 @@ async def process_twitter_user(
         logger.error(
             f"Error processing tweets for @{clean_username}: {e}", exc_info=True
         )
-        try:
-            await progress_message.edit(
-                content=f"Error processing @{clean_username}: {str(e)[:500]}",
-                embed=None,
-            )
-        except discord.HTTPException:
-            logger.warning(
-                f"Could not send final error message for @{clean_username} (HTTPException)."
-            )
+        if interaction.channel:
+            try:
+                await safe_message_edit(
+                    progress_message,
+                    interaction.channel,
+                    content=f"Error processing @{clean_username}: {str(e)[:500]}",
+                    embed=None,
+                )
+            except discord.HTTPException:
+                logger.warning(
+                    f"Could not send final error message for @{clean_username} (HTTPException)."
+                )
         return False
 
     return True
