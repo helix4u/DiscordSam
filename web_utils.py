@@ -18,7 +18,6 @@ import xml.etree.ElementTree
 # Assuming config is imported from config.py
 from config import config
 from utils import cleanup_playwright_processes
-from common_models import TweetData
 
 logger = logging.getLogger(__name__)
 
@@ -109,10 +108,6 @@ JS_EXTRACT_TWEETS_TWITTER = """
             const tweetTextElement = article.querySelector('div[data-testid="tweetText"]');
             const content = tweetTextElement ? tweetTextElement.innerText.trim() : '';
 
-            const imageElements = article.querySelectorAll('div[data-testid="tweetPhoto"] img');
-            const imageUrls = Array.from(imageElements).map(img => img.src);
-            const altTexts = Array.from(imageElements).map(img => img.alt || null);
-
             const socialContextElement = article.querySelector('div[data-testid="socialContext"]');
             let is_repost = false, reposted_by = null;
             if (socialContextElement && /reposted|retweeted/i.test(socialContextElement.innerText)) {
@@ -126,7 +121,7 @@ JS_EXTRACT_TWEETS_TWITTER = """
                 }
             }
 
-            if (content || imageUrls.length > 0 || article.querySelector('[data-testid="videoPlayer"]')) {
+            if (content || article.querySelector('[data-testid="tweetPhoto"], [data-testid="videoPlayer"]')) {
                 tweets.push({
                     id: id || `no-id-${Date.now()}-${Math.random()}`,
                     username,
@@ -134,9 +129,7 @@ JS_EXTRACT_TWEETS_TWITTER = """
                     timestamp: timestamp || new Date().toISOString(),
                     is_repost,
                     reposted_by,
-                    tweet_url: tweetLink || (id ? `https://x.com/${username}/status/${id}` : ''),
-                    image_urls: imageUrls,
-                    alt_texts: altTexts
+                    tweet_url: tweetLink || (id ? `https://x.com/${username}/status/${id}` : '')
                 });
             }
         } catch (e) {
@@ -347,9 +340,9 @@ async def scrape_website(
     finally:
         await _graceful_close_playwright(page, context_manager, browser_instance_sw, profile_dir_usable)
 
-async def scrape_latest_tweets(username_queried: str, limit: int = 10, progress_callback: Optional[Callable[[str], Awaitable[None]]] = None) -> List[TweetData]:
+async def scrape_latest_tweets(username_queried: str, limit: int = 10, progress_callback: Optional[Callable[[str], Awaitable[None]]] = None) -> List[Dict[str, Any]]:
     logger.info(f"Scraping last {limit} tweets for @{username_queried} (profile page, with replies) using Playwright JS execution.")
-    tweets_collected: List[TweetData] = []
+    tweets_collected: List[Dict[str, Any]] = []
     seen_tweet_ids: set[str] = set()
 
     user_data_dir = os.path.join(os.getcwd(), ".pw-profile")
@@ -432,18 +425,7 @@ async def scrape_latest_tweets(username_queried: str, limit: int = 10, progress_
 
 
                         if uid and uid not in seen_tweet_ids:
-                            tweet = TweetData(
-                                id=data.get('id', ''),
-                                username=data.get('username', 'unknown_user'),
-                                content=data.get('content', ''),
-                                timestamp=data.get('timestamp', ''),
-                                tweet_url=data.get('tweet_url', ''),
-                                is_repost=data.get('is_repost', False),
-                                reposted_by=data.get('reposted_by'),
-                                image_urls=data.get('image_urls', []),
-                                alt_texts=data.get('alt_texts', [])
-                            )
-                            tweets_collected.append(tweet)
+                            tweets_collected.append(data)
                             seen_tweet_ids.add(uid)
                             newly_added_count +=1
                             if progress_callback:
@@ -488,11 +470,11 @@ async def scrape_latest_tweets(username_queried: str, limit: int = 10, progress_
     return tweets_collected[:limit]
 
 
-async def scrape_home_timeline(limit: int = 10, progress_callback: Optional[Callable[[str], Awaitable[None]]] = None) -> List[TweetData]:
+async def scrape_home_timeline(limit: int = 10, progress_callback: Optional[Callable[[str], Awaitable[None]]] = None) -> List[Dict[str, Any]]:
     """Scrape tweets from the logged-in home timeline on X/Twitter."""
     logger.info(f"Scraping last {limit} tweets from the home timeline using Playwright JS execution.")
 
-    tweets_collected: List[TweetData] = []
+    tweets_collected: List[Dict[str, Any]] = []
     seen_tweet_ids: set[str] = set()
 
     user_data_dir = os.path.join(os.getcwd(), ".pw-profile")
@@ -580,18 +562,7 @@ async def scrape_home_timeline(limit: int = 10, progress_callback: Optional[Call
                         uid = hashlib.md5("".join(filter(None, uid_parts)).encode("utf-8")).hexdigest()
 
                         if uid and uid not in seen_tweet_ids:
-                            tweet = TweetData(
-                                id=data.get('id', ''),
-                                username=data.get('username', 'unknown_user'),
-                                content=data.get('content', ''),
-                                timestamp=data.get('timestamp', ''),
-                                tweet_url=data.get('tweet_url', ''),
-                                is_repost=data.get('is_repost', False),
-                                reposted_by=data.get('reposted_by'),
-                                image_urls=data.get('image_urls', []),
-                                alt_texts=data.get('alt_texts', [])
-                            )
-                            tweets_collected.append(tweet)
+                            tweets_collected.append(data)
                             seen_tweet_ids.add(uid)
                             newly_added_count += 1
                             if progress_callback:
