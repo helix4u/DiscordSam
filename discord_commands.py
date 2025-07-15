@@ -13,7 +13,7 @@ from email.utils import parsedate_to_datetime
 # Bot services and utilities
 from config import config
 from state import BotState
-from common_models import MsgNode
+from common_models import MsgNode, TweetData
 
 from llm_handling import (
     _build_initial_prompt_messages,
@@ -28,6 +28,7 @@ from rag_chroma_manager import (
     ingest_conversation_to_chromadb,
 )
 import rag_chroma_manager as rcm
+import aiohttp
 from web_utils import (
     scrape_website,
     query_searx,
@@ -258,6 +259,46 @@ async def process_rss_feed(
     return True
 
 
+async def describe_image(image_url: str) -> Optional[str]:
+    """Describes an image using the vision-capable LLM."""
+    if not llm_client_instance:
+        logger.error("describe_image: llm_client_instance is None.")
+        return None
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(image_url) as resp:
+                if resp.status != 200:
+                    logger.error(f"Failed to download image from {image_url}, status: {resp.status}")
+                    return None
+                image_bytes = await resp.read()
+
+        base64_image = base64.b64encode(image_bytes).decode('utf-8')
+        image_url_for_llm = f"data:image/jpeg;base64,{base64_image}"
+
+        prompt_messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Describe this image for a visually impaired user. Be concise and focus on the most important elements."},
+                    {"type": "image_url", "image_url": {"url": image_url_for_llm}}
+                ]
+            }
+        ]
+
+        response = await llm_client_instance.chat.completions.create(
+            model=config.VISION_LLM_MODEL,
+            messages=prompt_messages,
+            max_tokens=150,
+            temperature=0.3,
+        )
+        if response.choices and response.choices[0].message and response.choices[0].message.content:
+            return response.choices[0].message.content.strip()
+        return None
+    except Exception as e:
+        logger.error(f"Error describing image at {image_url}: {e}", exc_info=True)
+        return None
+
 async def process_twitter_user(
     interaction: discord.Interaction,
     username: str,
@@ -328,21 +369,20 @@ async def process_twitter_user(
                 )
             return False
 
-        new_tweets_to_process = []
+        new_tweets_to_process: List[TweetData] = []
         processed_tweet_ids_current_run: set[str] = set()
         for tweet_data in fetched_tweets_data:
-            tweet_identifier = tweet_data.get("tweet_url")
-            if not tweet_identifier:
+            if not tweet_data.tweet_url:
                 logger.warning(
                     f"Tweet from @{clean_username} missing 'tweet_url'. Skipping."
                 )
                 continue
-            if tweet_identifier not in user_seen_tweet_ids:
+            if tweet_data.tweet_url not in user_seen_tweet_ids:
                 new_tweets_to_process.append(tweet_data)
-                processed_tweet_ids_current_run.add(tweet_identifier)
+                processed_tweet_ids_current_run.add(tweet_data.tweet_url)
             else:
                 logger.info(
-                    f"Skipping already seen tweet for @{clean_username}: {tweet_identifier}"
+                    f"Skipping already seen tweet for @{clean_username}: {tweet_data.tweet_url}"
                 )
 
         if not new_tweets_to_process:
@@ -361,12 +401,11 @@ async def process_twitter_user(
 
         tweet_texts_for_display = []
         for t_data in new_tweets_to_process:
-            ts_str = t_data.get("timestamp", "N/A")
-            display_ts = ts_str
+            display_ts = t_data.timestamp
             try:
                 dt_obj = (
-                    datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
-                    if ts_str != "N/A"
+                    datetime.fromisoformat(t_data.timestamp.replace("Z", "+00:00"))
+                    if t_data.timestamp
                     else None
                 )
                 if dt_obj:
@@ -374,18 +413,28 @@ async def process_twitter_user(
             except Exception:
                 pass
 
-            author_display = t_data.get("username", clean_username)
-            content_display = discord.utils.escape_markdown(
-                t_data.get("content", "N/A")
-            )
-            tweet_url_display = t_data.get("tweet_url", "")
+            author_display = t_data.username or clean_username
+            content_display = discord.utils.escape_markdown(t_data.content or "N/A")
+            tweet_url_display = t_data.tweet_url
 
             header = f"[{display_ts}] @{author_display}"
-            if t_data.get("is_repost") and t_data.get("reposted_by"):
-                header = f"[{display_ts}] @{t_data.get('reposted_by')} reposted @{author_display}"
+            if t_data.is_repost and t_data.reposted_by:
+                header = f"[{display_ts}] @{t_data.reposted_by} reposted @{author_display}"
+
+            image_description_text = ""
+            if t_data.image_urls:
+                for i, image_url in enumerate(t_data.image_urls):
+                    alt_text = t_data.alt_texts[i] if i < len(t_data.alt_texts) else None
+                    if alt_text:
+                        image_description_text += f'\n*Image Alt Text: "{alt_text}"*'
+                    else:
+                        await send_progress(f"Describing image in tweet from @{author_display}...")
+                        description = await describe_image(image_url)
+                        if description:
+                            image_description_text += f'\n*Image Description: "{description}"*'
 
             link_text = f" ([Link]({tweet_url_display}))" if tweet_url_display else ""
-            tweet_texts_for_display.append(f"**{header}**: {content_display}{link_text}")
+            tweet_texts_for_display.append(f"**{header}**: {content_display}{image_description_text}{link_text}")
 
         raw_tweets_display_str = "\n\n".join(tweet_texts_for_display)
         if not raw_tweets_display_str:
@@ -407,18 +456,17 @@ async def process_twitter_user(
             tweet_ids_to_add = []
             seen_doc_ids: set[str] = set()
             for t_data in new_tweets_to_process:
-                tweet_identifier = t_data.get("tweet_url")
-                if not tweet_identifier:
+                if not t_data.tweet_url:
                     logger.warning(
                         f"Skipping tweet storage for @{clean_username} due to missing 'tweet_url'."
                     )
                     continue
-                tweet_id_val = str(t_data.get("id") or "")
+                tweet_id_val = str(t_data.id or "")
                 if not tweet_id_val:
-                    tweet_id_val = tweet_identifier.split("?")[0].split("/")[-1]
+                    tweet_id_val = t_data.tweet_url.split("?")[0].split("/")[-1]
                 doc_id = f"tweet_{clean_username}_{tweet_id_val}"
 
-                document_content = t_data.get("content", "")
+                document_content = t_data.content
                 if not document_content.strip():
                     logger.info(
                         f"Skipping empty tweet from @{clean_username}, ID: {doc_id}"
@@ -427,15 +475,14 @@ async def process_twitter_user(
 
                 metadata = {
                     "username": clean_username,
-                    "tweet_url": tweet_identifier,
-                    "timestamp": t_data.get("timestamp", datetime.now().isoformat()),
-                    "is_repost": bool(t_data.get("is_repost", False)),
+                    "tweet_url": t_data.tweet_url,
+                    "timestamp": t_data.timestamp,
+                    "is_repost": t_data.is_repost,
                     "source_command": "/alltweets",
                     "raw_data_preview": str(t_data)[:200],
                 }
-                reposted_by_val = t_data.get("reposted_by")
-                if reposted_by_val:
-                    metadata["reposted_by"] = str(reposted_by_val)
+                if t_data.reposted_by:
+                    metadata["reposted_by"] = t_data.reposted_by
                 if doc_id in seen_doc_ids:
                     logger.debug(
                         f"Duplicate tweet doc_id detected in batch: {doc_id}"
@@ -1409,16 +1456,15 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 # IMPORTANT: Adjust 'tweet_url' if the actual unique identifier is different
                 # (e.g., 'id_str', 'tweet_id', or a combination of fields).
                 # For robustness, a dedicated tweet ID from the platform is best if available.
-                tweet_identifier = tweet_data.get('tweet_url')
-                if not tweet_identifier:
+                if not tweet_data.tweet_url:
                     logger.warning(f"Tweet from @{clean_username} missing 'tweet_url' or suitable ID. Skipping. Data: {tweet_data}")
                     continue
 
-                if tweet_identifier not in user_seen_tweet_ids:
+                if tweet_data.tweet_url not in user_seen_tweet_ids:
                     new_tweets_to_process.append(tweet_data)
-                    processed_tweet_ids_current_run.add(tweet_identifier)
+                    processed_tweet_ids_current_run.add(tweet_data.tweet_url)
                 else:
-                    logger.info(f"Skipping already seen tweet for @{clean_username}: {tweet_identifier}")
+                    logger.info(f"Skipping already seen tweet for @{clean_username}: {tweet_data.tweet_url}")
 
             if not new_tweets_to_process:
                 final_content_message = f"No new tweets found for @{clean_username} since last check."
@@ -1430,23 +1476,34 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
 
             tweet_texts_for_display = []
             for t_data in new_tweets_to_process: # Iterate over new_tweets_to_process
-                ts_str = t_data.get('timestamp', 'N/A')
-                display_ts = ts_str
+                display_ts = t_data.timestamp
                 try:
-                    dt_obj = datetime.fromisoformat(ts_str.replace("Z", "+00:00")) if ts_str != 'N/A' else None
-                    display_ts = dt_obj.strftime("%Y-%m-%d %H:%M UTC") if dt_obj else ts_str
+                    dt_obj = datetime.fromisoformat(t_data.timestamp.replace("Z", "+00:00")) if t_data.timestamp else None
+                    display_ts = dt_obj.strftime("%Y-%m-%d %H:%M UTC") if dt_obj else t_data.timestamp
                 except ValueError: pass
 
-                author_display = t_data.get('username', clean_username)
-                content_display = discord.utils.escape_markdown(t_data.get('content', 'N/A'))
-                tweet_url_display = t_data.get('tweet_url', '') # This is our assumed ID
+                author_display = t_data.username or clean_username
+                content_display = discord.utils.escape_markdown(t_data.content or 'N/A')
+                tweet_url_display = t_data.tweet_url # This is our assumed ID
 
                 header = f"[{display_ts}] @{author_display}"
-                if t_data.get('is_repost') and t_data.get('reposted_by'):
-                    header = f"[{display_ts}] @{t_data.get('reposted_by')} reposted @{author_display}"
+                if t_data.is_repost and t_data.reposted_by:
+                    header = f"[{display_ts}] @{t_data.reposted_by} reposted @{author_display}"
+
+                image_description_text = ""
+                if t_data.image_urls:
+                    for i, image_url in enumerate(t_data.image_urls):
+                        alt_text = t_data.alt_texts[i] if i < len(t_data.alt_texts) else None
+                        if alt_text:
+                            image_description_text += f'\n*Image Alt Text: "{alt_text}"*'
+                        else:
+                            await send_progress(f"Describing image in tweet from @{author_display}...")
+                            description = await describe_image(image_url)
+                            if description:
+                                image_description_text += f'\n*Image Description: "{description}"*'
 
                 link_text = f" ([Link]({tweet_url_display}))" if tweet_url_display else ""
-                tweet_texts_for_display.append(f"**{header}**: {content_display}{link_text}")
+                tweet_texts_for_display.append(f"**{header}**: {content_display}{image_description_text}{link_text}")
 
             raw_tweets_display_str = "\n\n".join(tweet_texts_for_display)
             if not raw_tweets_display_str: raw_tweets_display_str = "No new tweet content could be formatted for display."
@@ -1465,35 +1522,33 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 tweet_ids_to_add = []
                 seen_doc_ids: set[str] = set()
                 for t_data in new_tweets_to_process:
-                    tweet_identifier = t_data.get('tweet_url') # Assuming this is unique and suitable as an ID
-                    if not tweet_identifier:
+                    if not t_data.tweet_url:
                         logger.warning(f"Skipping tweet storage for @{clean_username} due to missing 'tweet_url' or ID. Data: {t_data}")
                         continue
 
                     # Use the tweet URL as the document ID if it's guaranteed unique, otherwise generate one
                     # For Chroma, IDs should be unique strings.
-                    tweet_id_val = str(t_data.get("id") or "")
+                    tweet_id_val = str(t_data.id or "")
                     if not tweet_id_val:
-                        tweet_id_val = tweet_identifier.split("?")[0].split("/")[-1]
+                        tweet_id_val = t_data.tweet_url.split("?")[0].split("/")[-1]
                     doc_id = f"tweet_{clean_username}_{tweet_id_val}"
 
                     # The document itself will be the content of the tweet
-                    document_content = t_data.get('content', '')
+                    document_content = t_data.content or ''
                     if not document_content.strip(): # Don't store empty tweets
                         logger.info(f"Skipping empty tweet from @{clean_username}, ID: {doc_id}")
                         continue
 
                     metadata = {
                         "username": clean_username,
-                        "tweet_url": tweet_identifier,
-                        "timestamp": t_data.get("timestamp", datetime.now().isoformat()),
-                        "is_repost": bool(t_data.get("is_repost", False)),
+                        "tweet_url": t_data.tweet_url,
+                        "timestamp": t_data.timestamp,
+                        "is_repost": t_data.is_repost,
                         "source_command": "/gettweets",
                         "raw_data_preview": str(t_data)[:200],  # Store a snippet for quick reference
                     }
-                    reposted_by_val = t_data.get("reposted_by")
-                    if reposted_by_val:
-                        metadata["reposted_by"] = str(reposted_by_val)
+                    if t_data.reposted_by:
+                        metadata["reposted_by"] = t_data.reposted_by
                     if doc_id in seen_doc_ids:
                         logger.debug(f"Duplicate tweet doc_id detected in batch: {doc_id}")
                         continue
@@ -1667,16 +1722,15 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             processed_tweet_ids_current_run = set()
 
             for tweet_data in fetched_tweets_data:
-                tweet_identifier = tweet_data.get('tweet_url')
-                if not tweet_identifier:
+                if not tweet_data.tweet_url:
                     logger.warning(f"Tweet from home timeline missing 'tweet_url' or suitable ID. Skipping. Data: {tweet_data}")
                     continue
 
-                if tweet_identifier not in user_seen_tweet_ids:
+                if tweet_data.tweet_url not in user_seen_tweet_ids:
                     new_tweets_to_process.append(tweet_data)
-                    processed_tweet_ids_current_run.add(tweet_identifier)
+                    processed_tweet_ids_current_run.add(tweet_data.tweet_url)
                 else:
-                    logger.info(f"Skipping already seen home tweet: {tweet_identifier}")
+                    logger.info(f"Skipping already seen home tweet: {tweet_data.tweet_url}")
 
             if not new_tweets_to_process:
                 final_content_message = "No new tweets found in the home timeline since last check."
@@ -1687,24 +1741,35 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
 
             tweet_texts_for_display = []
             for t_data in new_tweets_to_process:
-                ts_str = t_data.get('timestamp', 'N/A')
-                display_ts = ts_str
+                display_ts = t_data.timestamp
                 try:
-                    dt_obj = datetime.fromisoformat(ts_str.replace("Z", "+00:00")) if ts_str != 'N/A' else None
-                    display_ts = dt_obj.strftime("%Y-%m-%d %H:%M UTC") if dt_obj else ts_str
+                    dt_obj = datetime.fromisoformat(t_data.timestamp.replace("Z", "+00:00")) if t_data.timestamp else None
+                    display_ts = dt_obj.strftime("%Y-%m-%d %H:%M UTC") if dt_obj else t_data.timestamp
                 except ValueError:
                     pass
 
-                author_display = t_data.get('username', 'unknown')
-                content_display = discord.utils.escape_markdown(t_data.get('content', 'N/A'))
-                tweet_url_display = t_data.get('tweet_url', '')
+                author_display = t_data.username or 'unknown'
+                content_display = discord.utils.escape_markdown(t_data.content or 'N/A')
+                tweet_url_display = t_data.tweet_url
 
                 header = f"[{display_ts}] @{author_display}"
-                if t_data.get('is_repost') and t_data.get('reposted_by'):
-                    header = f"[{display_ts}] @{t_data.get('reposted_by')} reposted @{author_display}"
+                if t_data.is_repost and t_data.reposted_by:
+                    header = f"[{display_ts}] @{t_data.reposted_by} reposted @{author_display}"
+
+                image_description_text = ""
+                if t_data.image_urls:
+                    for i, image_url in enumerate(t_data.image_urls):
+                        alt_text = t_data.alt_texts[i] if i < len(t_data.alt_texts) else None
+                        if alt_text:
+                            image_description_text += f'\n*Image Alt Text: "{alt_text}"*'
+                        else:
+                            await send_progress(f"Describing image in tweet from @{author_display}...")
+                            description = await describe_image(image_url)
+                            if description:
+                                image_description_text += f'\n*Image Description: "{description}"*'
 
                 link_text = f" ([Link]({tweet_url_display}))" if tweet_url_display else ""
-                tweet_texts_for_display.append(f"**{header}**: {content_display}{link_text}")
+                tweet_texts_for_display.append(f"**{header}**: {content_display}{image_description_text}{link_text}")
 
             raw_tweets_display_str = "\n\n".join(tweet_texts_for_display)
             if not raw_tweets_display_str:
@@ -1722,17 +1787,16 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 tweet_ids_to_add = []
                 seen_doc_ids: set[str] = set()
                 for t_data in new_tweets_to_process:
-                    tweet_identifier = t_data.get('tweet_url')
-                    if not tweet_identifier:
+                    if not t_data.tweet_url:
                         logger.warning(f"Skipping tweet storage for home timeline due to missing 'tweet_url'. Data: {t_data}")
                         continue
 
-                    tweet_id_val = str(t_data.get("id") or "")
+                    tweet_id_val = str(t_data.id or "")
                     if not tweet_id_val:
-                        tweet_id_val = tweet_identifier.split("?")[0].split("/")[-1]
+                        tweet_id_val = t_data.tweet_url.split("?")[0].split("/")[-1]
                     doc_id = f"tweet_home_{tweet_id_val}"
 
-                    document_content = t_data.get('content', '')
+                    document_content = t_data.content or ''
                     if not document_content.strip():
                         logger.info(f"Skipping empty tweet from home timeline, ID: {doc_id}")
                         continue
@@ -1742,7 +1806,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                         continue
 
                     tweet_docs_to_add.append(document_content)
-                    tweet_metadatas_to_add.append({'username': t_data.get('username', 'unknown'), 'tweet_url': tweet_identifier})
+                    tweet_metadatas_to_add.append({'username': t_data.username, 'tweet_url': t_data.tweet_url})
                     tweet_ids_to_add.append(doc_id)
                     seen_doc_ids.add(doc_id)
 
