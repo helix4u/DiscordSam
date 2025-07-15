@@ -392,7 +392,7 @@ DiscordSam offers a variety of slash commands for diverse functionalities. Here'
         *   `limit` (Optional, Default: 10): The maximum number of tweets to fetch (max 50).
     *   **Behavior:**
         1.  Uses `web_utils.scrape_latest_tweets` (Playwright with JS execution) to scrape recent tweets from the user's profile (specifically their "with_replies" timeline).
-        2.  Displays the raw fetched tweets (timestamp, author, content, link) in Discord embeds, chunked if necessary.
+        2.  Displays the raw fetched tweets (timestamp, author, content, link) in Discord embeds, chunked if necessary. Any images are downloaded and described via the vision LLM, and these descriptions are included with the tweet text.
         3.  Sends the text of these tweets to the LLM with a prompt to analyze and summarize the main themes, topics, and overall sentiment.
         4.  Streams this summary back to the Discord channel as a new message flow.
         5.  Provides TTS for the summary if enabled.
@@ -407,7 +407,7 @@ DiscordSam offers a variety of slash commands for diverse functionalities. Here'
         *   `limit` (Optional, Default: 10): The maximum number of tweets to fetch (max 50).
     *   **Behavior:**
         1.  Uses `web_utils.scrape_home_timeline` (Playwright with JS execution) to scrape tweets from `https://x.com/home`.
-        2.  Displays the raw fetched tweets (timestamp, author, content, link) in Discord embeds, chunked if necessary.
+        2.  Displays the raw fetched tweets (timestamp, author, content, link) in Discord embeds, chunked if necessary. Any images are downloaded and described via the vision LLM, and these descriptions are included with the tweet text.
         3.  Sends the text of these tweets to the LLM with a prompt to analyze and summarize the main themes, topics, and overall sentiment.
         4.  Streams this summary back to the Discord channel as a new message flow.
         5.  Provides TTS for the summary if enabled.
@@ -423,7 +423,7 @@ DiscordSam offers a variety of slash commands for diverse functionalities. Here'
     *   **Behavior:**
         1.  Iterates through each preset Twitter account defined for the bot.
         2.  Uses `web_utils.scrape_latest_tweets` to scrape recent tweets for each account.
-        3.  Displays the raw fetched tweets in Discord embeds, chunked if necessary.
+        3.  Displays the raw fetched tweets in Discord embeds, chunked if necessary. Any images are downloaded and described via the vision LLM, and these descriptions are included with the tweet text.
         4.  Sends these tweets to the LLM to generate a brief summary, streamed back to the channel.
         5.  Provides TTS for each summary if enabled.
         6.  Stores newly fetched tweets in the `CHROMA_TWEETS_COLLECTION_NAME` collection for future retrieval.
