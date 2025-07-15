@@ -96,10 +96,10 @@ DEFAULT_TWITTER_USERS = [
     "kslcom",
     "wutangkids",
     "sama",
-    "openai",
-    "openainewsroom",
-    "openaidevs",
-    "jdvance",
+    "CNBC",
+    "ABC",
+    "testingcatalog",
+    "WesRothMoney",
 ]
 # Module-level globals to store instances passed from main_bot.py
 bot_instance: Optional[commands.Bot] = None
