@@ -427,11 +427,10 @@ async def process_twitter_user(
                     alt_text = t_data.alt_texts[i] if i < len(t_data.alt_texts) else None
                     if alt_text:
                         image_description_text += f'\n*Image Alt Text: "{alt_text}"*'
-                    else:
-                        await send_progress(f"Describing image in tweet from @{author_display}...")
-                        description = await describe_image(image_url)
-                        if description:
-                            image_description_text += f'\n*Image Description: "{description}"*'
+                    await send_progress(f"Describing image in tweet from @{author_display}...")
+                    description = await describe_image(image_url)
+                    if description:
+                        image_description_text += f'\n*Image Description: "{description}"*'
 
             link_text = f" ([Link]({tweet_url_display}))" if tweet_url_display else ""
             tweet_texts_for_display.append(f"**{header}**: {content_display}{image_description_text}{link_text}")
@@ -1496,11 +1495,10 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                         alt_text = t_data.alt_texts[i] if i < len(t_data.alt_texts) else None
                         if alt_text:
                             image_description_text += f'\n*Image Alt Text: "{alt_text}"*'
-                        else:
-                            await send_progress(f"Describing image in tweet from @{author_display}...")
-                            description = await describe_image(image_url)
-                            if description:
-                                image_description_text += f'\n*Image Description: "{description}"*'
+                        await send_progress(f"Describing image in tweet from @{author_display}...")
+                        description = await describe_image(image_url)
+                        if description:
+                            image_description_text += f'\n*Image Description: "{description}"*'
 
                 link_text = f" ([Link]({tweet_url_display}))" if tweet_url_display else ""
                 tweet_texts_for_display.append(f"**{header}**: {content_display}{image_description_text}{link_text}")
@@ -1762,11 +1760,10 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                         alt_text = t_data.alt_texts[i] if i < len(t_data.alt_texts) else None
                         if alt_text:
                             image_description_text += f'\n*Image Alt Text: "{alt_text}"*'
-                        else:
-                            await send_progress(f"Describing image in tweet from @{author_display}...")
-                            description = await describe_image(image_url)
-                            if description:
-                                image_description_text += f'\n*Image Description: "{description}"*'
+                        await send_progress(f"Describing image in tweet from @{author_display}...")
+                        description = await describe_image(image_url)
+                        if description:
+                            image_description_text += f'\n*Image Description: "{description}"*'
 
                 link_text = f" ([Link]({tweet_url_display}))" if tweet_url_display else ""
                 tweet_texts_for_display.append(f"**{header}**: {content_display}{image_description_text}{link_text}")
