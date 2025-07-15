@@ -66,7 +66,7 @@ DEFAULT_RSS_FEEDS = [
     ("KSL Local Stories", "https://www.ksl.com/rss/news"),
     ("Hacker News", "https://news.ycombinator.com/rss"),
     ("Sky News - US", "https://feeds.skynews.com/feeds/rss/us.xml"),
-    ("US News - The Guardian", "https://www.theguardian.com/us/rss"),
+    ("US Politics - The Guardian", "https://www.theguardian.com/us-news/us-politics/rss"),
     ("Huffpost Politics", "https://chaski.huffpost.com/us/auto/vertical/politics"),
     ("Huffpost US News", "https://chaski.huffpost.com/us/auto/vertical/us-news"),
     ("Express.co.uk - US", "https://www.express.co.uk/posts/rss/198/us"),
