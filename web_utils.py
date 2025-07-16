@@ -3,7 +3,7 @@ import logging
 import os
 import re
 import json
-from typing import List, Optional, Dict, Any, Callable, Awaitable, Tuple
+from typing import List, Optional, Dict, Any, Callable, Awaitable, Tuple, Set
 from bs4 import BeautifulSoup
 import random
 from datetime import datetime, timedelta, timezone
@@ -18,7 +18,7 @@ import xml.etree.ElementTree
 # Assuming config is imported from config.py
 from config import config
 from utils import cleanup_playwright_processes
-from common_models import TweetData
+from common_models import TweetData, GroundNewsArticle
 
 logger = logging.getLogger(__name__)
 
@@ -775,3 +775,106 @@ async def fetch_rss_entries(feed_url: str) -> List[Dict[str, Any]]:
     except Exception as e:
         logger.error(f"Failed to parse RSS feed {feed_url}: {e}")
         return []
+
+
+async def scrape_ground_news_my(limit: int = 10) -> List[GroundNewsArticle]:
+    """Scrape the Ground News 'My Feed' page for article links.
+
+    Requires that the user is already logged in within the persistent
+    Playwright profile (``.pw-profile``). If not logged in, this function
+    will likely return an empty list.
+
+    Parameters
+    ----------
+    limit : int, optional
+        Maximum number of article links to return, by default ``10``.
+
+    Returns
+    -------
+    List[GroundNewsArticle]
+        Parsed article entries with title and URL.
+    """
+    logger.info("Scraping Ground News 'My Feed' for articles...")
+    articles: List[GroundNewsArticle] = []
+
+    user_data_dir = os.path.join(os.getcwd(), ".pw-profile")
+    profile_dir_usable = True
+    if not os.path.exists(user_data_dir):
+        try:
+            os.makedirs(user_data_dir, exist_ok=True)
+            logger.info("Created .pw-profile directory for Ground News scrape.")
+        except OSError as exc:
+            logger.error("Could not create .pw-profile directory: %s", exc)
+            profile_dir_usable = False
+
+    context_manager: Optional[Any] = None
+    browser_instance: Optional[Any] = None
+    page: Optional[Any] = None
+
+    try:
+        async with PLAYWRIGHT_SEM:
+            async with async_playwright() as p:
+                if profile_dir_usable:
+                    context = await p.chromium.launch_persistent_context(
+                        user_data_dir,
+                        headless=config.HEADLESS_PLAYWRIGHT,
+                        args=["--disable-blink-features=AutomationControlled", "--no-sandbox", "--disable-dev-shm-usage"],
+                        ignore_https_errors=True,
+                    )
+                else:
+                    browser_instance = await p.chromium.launch(
+                        headless=config.HEADLESS_PLAYWRIGHT,
+                        args=["--disable-blink-features=AutomationControlled", "--no-sandbox", "--disable-dev-shm-usage"],
+                    )
+                    context = await browser_instance.new_context(ignore_https_errors=True)
+                context_manager = context
+                page = await context_manager.new_page()
+
+                await page.goto("https://ground.news/my", wait_until="domcontentloaded")
+                await asyncio.sleep(5)
+
+                seen_urls: Set[str] = set()
+                scroll_attempt = 0
+                while len(articles) < limit and scroll_attempt <= config.SCRAPE_SCROLL_ATTEMPTS:
+                    extracted = await page.evaluate(
+                        """
+                        () => {
+                            const arts = [];
+                            document.querySelectorAll('article').forEach(a => {
+                                const link = Array.from(a.querySelectorAll('a')).find(el => el.textContent && el.textContent.includes('See the Story'));
+                                const titleEl = a.querySelector('h3, h2, h4');
+                                if (link) {
+                                    const title = titleEl ? titleEl.textContent.trim() : link.textContent.trim();
+                                    arts.push({title, url: link.href});
+                                }
+                            });
+                            return arts;
+                        }
+                        """
+                    )
+                    for item in extracted:
+                        if not isinstance(item, dict):
+                            continue
+                        title = str(item.get("title", "")).strip()
+                        url = str(item.get("url", "")).strip()
+                        if title and url and url not in seen_urls:
+                            seen_urls.add(url)
+                            articles.append(GroundNewsArticle(title=title, url=url))
+                            if len(articles) >= limit:
+                                break
+                    if len(articles) >= limit:
+                        break
+                    try:
+                        await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                        await asyncio.sleep(1.5)
+                    except Exception as e_scroll:
+                        logger.warning("Scrolling failed on Ground News page: %s", e_scroll)
+                        break
+                    scroll_attempt += 1
+    except Exception as e:
+        logger.error("Error scraping Ground News: %s", e, exc_info=True)
+    finally:
+        await _graceful_close_playwright(page, context_manager, browser_instance, profile_dir_usable)
+
+    logger.info("Found %s articles on Ground News", len(articles))
+    return articles

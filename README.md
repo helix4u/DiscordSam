@@ -429,6 +429,18 @@ DiscordSam offers a variety of slash commands for diverse functionalities. Here'
         6.  Stores newly fetched tweets in the `CHROMA_TWEETS_COLLECTION_NAME` collection for future retrieval.
     *   **Output:** A series of embeds and summaries for each default account. If no new tweets are found for any account, the bot replies with an ephemeral message.
 
+*   **`/groundnews [limit]`**
+    *   **Purpose:** Scrapes the Ground News "My Feed" page and summarizes new articles.
+    *   **Arguments:**
+        *   `limit` (Optional, Default: 10): Maximum number of articles to process (max 20).
+    *   **Behavior:**
+        1.  Uses `web_utils.scrape_ground_news_my` (Playwright) to extract "See the Story" links, scrolling the page to load more items if necessary.
+        2.  Skips any links already recorded in `ground_news_seen.json`.
+        3.  Scrapes each new article with `web_utils.scrape_website` and summarizes it using the fast LLM.
+        4.  Displays the summaries (title, link, short summary) in Discord embeds and updates the cache.
+    *   **Requirements:** You must already be logged in to Ground News using Playwright's persistent profile (`.pw-profile`). If not logged in, the command will likely return no articles.
+    *   **Output:** Embeds containing summaries for each newly found Ground News article.
+
 *   **`/ap <image> [user_prompt]`**
     *   **Purpose:** Describes an attached image in the style of an Associated Press (AP) photo caption, with a humorous twist: a randomly chosen celebrity is creatively inserted as the main subject.
     *   **Arguments:**
