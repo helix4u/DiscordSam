@@ -831,17 +831,7 @@ async def scrape_ground_news_my(limit: int = 10) -> List[GroundNewsArticle]:
                 page = await context_manager.new_page()
 
                 await page.goto("https://ground.news/my", wait_until="domcontentloaded")
-                # Give the dynamic feed ample time to populate before we start scrolling
-                await asyncio.sleep(8)
-
-                # Scroll a few times to load additional articles
-                for _ in range(max(1, config.SCRAPE_SCROLL_ATTEMPTS)):
-                    try:
-                        await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                    except Exception as e_scroll:
-                        logger.warning("Error scrolling Ground News page: %s", e_scroll)
-                        break
-                    await asyncio.sleep(3)
+                await asyncio.sleep(5)
 
                 extracted = await page.evaluate(
                     """
