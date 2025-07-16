@@ -784,6 +784,10 @@ async def scrape_ground_news_my(limit: int = 10) -> List[GroundNewsArticle]:
     Playwright profile (``.pw-profile``). If not logged in, this function
     will likely return an empty list.
 
+    The scraper searches for any link containing ``See the Story`` and
+    attempts to find a nearby title element. It scrolls the page
+    gradually between attempts to allow dynamic content to load.
+
     Parameters
     ----------
     limit : int, optional
@@ -840,10 +844,10 @@ async def scrape_ground_news_my(limit: int = 10) -> List[GroundNewsArticle]:
                         """
                         () => {
                             const arts = [];
-                            document.querySelectorAll('article').forEach(a => {
-                                const link = Array.from(a.querySelectorAll('a')).find(el => el.textContent && el.textContent.includes('See the Story'));
-                                const titleEl = a.querySelector('h3, h2, h4');
-                                if (link) {
+                            document.querySelectorAll('a').forEach(link => {
+                                if (link.textContent && link.textContent.includes('See the Story')) {
+                                    const container = link.closest('article, div') || link.parentElement;
+                                    const titleEl = container ? container.querySelector('h3, h2, h4') : null;
                                     const title = titleEl ? titleEl.textContent.trim() : link.textContent.trim();
                                     arts.push({title, url: link.href});
                                 }
@@ -865,8 +869,8 @@ async def scrape_ground_news_my(limit: int = 10) -> List[GroundNewsArticle]:
                     if len(articles) >= limit:
                         break
                     try:
-                        await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                        await asyncio.sleep(1.5)
+                        await page.evaluate("window.scrollBy(0, window.innerHeight)")
+                        await asyncio.sleep(2)
                     except Exception as e_scroll:
                         logger.warning("Scrolling failed on Ground News page: %s", e_scroll)
                         break
