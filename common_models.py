@@ -18,14 +18,6 @@ class TweetData:
     image_urls: List[str] = field(default_factory=list)
     alt_texts: List[Optional[str]] = field(default_factory=list)
 
-
-@dataclass
-class GroundNewsArticle:
-    """Represents an article entry from Ground News."""
-    title: str
-    url: str
-
-
 class MsgNode:
     """Represents a single message node in a conversation."""
     def __init__(self, role: str, content: Any, name: Optional[str] = None):
