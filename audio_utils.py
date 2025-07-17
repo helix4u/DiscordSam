@@ -95,18 +95,59 @@ async def _send_audio_segment(
         try:
             audio = AudioSegment.from_file(io.BytesIO(tts_audio_data), format="mp3")
             output_buffer = io.BytesIO()
-            audio.export(output_buffer, format="mp3", bitrate="128k") 
+            audio.export(output_buffer, format="mp3", bitrate="128k")
             fixed_audio_data = output_buffer.getvalue()
 
-            file = discord.File(io.BytesIO(fixed_audio_data), filename=f"{base_filename}_{filename_suffix}.mp3")
-            content_message = None
-            if is_thought:
-                content_message = "**Sam's thoughts (TTS):**"
-            elif filename_suffix in ["main_response", "full"]: 
-                 content_message = "**Sam's response (TTS):**"
+            if len(fixed_audio_data) <= config.TTS_MAX_AUDIO_BYTES:
+                file = discord.File(io.BytesIO(fixed_audio_data), filename=f"{base_filename}_{filename_suffix}.mp3")
+                content_message = None
+                if is_thought:
+                    content_message = "**Sam's thoughts (TTS):**"
+                elif filename_suffix in ["main_response", "full"]:
+                    content_message = "**Sam's response (TTS):**"
 
-            await actual_destination_channel.send(content=content_message, file=file)
-            logger.info(f"Sent TTS audio: {base_filename}_{filename_suffix}.mp3 to Channel ID {actual_destination_channel.id}")
+                await actual_destination_channel.send(content=content_message, file=file)
+                logger.info(f"Sent TTS audio: {base_filename}_{filename_suffix}.mp3 to Channel ID {actual_destination_channel.id}")
+            else:
+                bytes_per_second = 16000  # 128 kbps
+                max_duration_ms = int((config.TTS_MAX_AUDIO_BYTES / bytes_per_second) * 1000)
+                segments = [
+                    audio[i : i + max_duration_ms]
+                    for i in range(0, len(audio), max_duration_ms)
+                ]
+                logger.info(
+                    "Audio segment '%s' exceeds size limit (%d > %d). Splitting into %d parts.",
+                    filename_suffix,
+                    len(fixed_audio_data),
+                    config.TTS_MAX_AUDIO_BYTES,
+                    len(segments),
+                )
+
+                for idx, segment in enumerate(segments, start=1):
+                    part_buffer = io.BytesIO()
+                    segment.export(part_buffer, format="mp3", bitrate="128k")
+                    part_data = part_buffer.getvalue()
+                    part_file = discord.File(
+                        io.BytesIO(part_data),
+                        filename=f"{base_filename}_{filename_suffix}_part{idx}.mp3",
+                    )
+                    content_message = None
+                    if idx == 1:
+                        if is_thought:
+                            content_message = "**Sam's thoughts (TTS):**"
+                        elif filename_suffix in ["main_response", "full"]:
+                            content_message = "**Sam's response (TTS):**"
+                    await actual_destination_channel.send(content=content_message, file=part_file)
+                    logger.info(
+                        "Sent TTS audio part %d/%d: %s_%s_part%d.mp3 to Channel ID %s",
+                        idx,
+                        len(segments),
+                        base_filename,
+                        filename_suffix,
+                        idx,
+                        actual_destination_channel.id,
+                    )
+                    await asyncio.sleep(0.5)
         except Exception as e:
             logger.error(f"Error processing or sending TTS audio for '{filename_suffix}': {e}", exc_info=True)
     else:
