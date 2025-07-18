@@ -20,8 +20,7 @@ from llm_handling import (
     get_description_for_image # Import the new function
 )
 from rag_chroma_manager import (
-    retrieve_and_prepare_rag_context,
-    _format_msg_content_for_text,
+    retrieve_and_prepare_rag_context
 )
 from utils import detect_urls, cleanup_playwright_processes
 from web_utils import scrape_website, fetch_youtube_transcript
@@ -415,16 +414,6 @@ def setup_events_and_tasks(bot: commands.Bot, llm_client_in: Any, bot_state_in: 
 
         rag_query_text = user_message_text_for_processing.strip() if user_message_text_for_processing.strip() else \
                          ("User sent an image/attachment" if image_added_to_prompt else "User sent a message with no textual content.")
-
-        history_for_context = await bot_state_instance.get_history(channel_id)
-        if history_for_context:
-            history_snippets = []
-            for h in history_for_context[-config.MAX_HISTORY_FOR_CONTEXT:]:
-                role = "User" if h.role == "user" else "Assistant"
-                content_str = _format_msg_content_for_text(h.content)
-                history_snippets.append(f"{role}: {content_str}")
-            if history_snippets:
-                rag_query_text = "\n".join(history_snippets) + "\n" + rag_query_text
 
         synthesized_rag_summary, raw_rag_snippets = await retrieve_and_prepare_rag_context(llm_client_instance, rag_query_text)
 

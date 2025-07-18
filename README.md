@@ -188,7 +188,6 @@ Below is a comprehensive list of environment variables used by DiscordSam, along
 *   `VISION_LLM_MODEL` (Default: `llava`): The model used for tasks involving image understanding (e.g., the `/ap` command or describing screenshots).
 *   `LLM_SUPPORTS_JSON_MODE` (Default: `false`): Set to `true` if your LLM server and the selected model support JSON mode for structured output (e.g., for entity extraction).
 *   `MAX_MESSAGE_HISTORY` (Default: `10`): The maximum number of recent messages (user and assistant turns) to include in the short-term context sent to the LLM.
-*   `MAX_HISTORY_FOR_CONTEXT` (Default: `4`): How many recent messages from the current channel to include in the query sent to the context builder for RAG retrieval.
 *   `MAX_COMPLETION_TOKENS` (Default: `2048`): The maximum number of tokens the LLM is allowed to generate in a single response.
 
 **Text-to-Speech (TTS) Settings:**
