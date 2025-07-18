@@ -353,7 +353,7 @@ async def merge_memory_snippet_with_summary_llm(
 
     prompt = (
         "You maintain long-term memories for an AI assistant. "
-        "Update the existing memory using details from the new conversation summary. "
+        "Rewrite the existing memory with any new insights from the conversation summary. "
         "Return 3-8 concise sentences that preserve important older details and incorporate the new information." 
     )
 
