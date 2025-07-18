@@ -67,7 +67,6 @@ class Config:
 
         self.MAX_IMAGES_PER_MESSAGE = _get_int("MAX_IMAGES_PER_MESSAGE", 1)
         self.MAX_MESSAGE_HISTORY = _get_int("MAX_MESSAGE_HISTORY", 10)
-        self.MAX_HISTORY_FOR_CONTEXT = _get_int("MAX_HISTORY_FOR_CONTEXT", 4)
         self.MAX_COMPLETION_TOKENS = _get_int("MAX_COMPLETION_TOKENS", 2048)
 
         self.TTS_API_URL = os.getenv("TTS_API_URL", "http://localhost:8880/v1/audio/speech")
