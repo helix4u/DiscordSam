@@ -23,12 +23,12 @@ async def _fetch_old_documents(prune_days: int) -> List[Dict[str, Any]]:
     cutoff = datetime.now() - timedelta(days=prune_days)
     cutoff_iso = cutoff.isoformat()
 
-    total = rcm.chat_history_collection.count()
+    total = await rcm.chat_history_collection.count()
     limit = 100
     old_docs: List[Dict[str, Any]] = []
 
     for offset in range(0, total, limit):
-        res = rcm.chat_history_collection.get(limit=limit, offset=offset, include=["documents", "metadatas"])
+        res = await rcm.chat_history_collection.get(limit=limit, offset=offset, include=["documents", "metadatas"])
         ids = res.get("ids", [])
         docs = res.get("documents", [])
         metas = res.get("metadatas", [])
@@ -72,11 +72,11 @@ def _store_timeline_summary(start: datetime, end: datetime, summary: str, source
 
 async def _get_collection_timestamps(collection) -> List[datetime]:
     """Retrieve timestamp metadata from all documents in a collection."""
-    total = collection.count()
+    total = await collection.count()
     limit = 100
     timestamps: List[datetime] = []
     for offset in range(0, total, limit):
-        res = collection.get(limit=limit, offset=offset, include=["metadatas"])
+        res = await collection.get(limit=limit, offset=offset, include=["metadatas"])
         metas = res.get("metadatas", [])
         for meta in metas:
             ts_str = (meta or {}).get("timestamp") or (meta or {}).get("create_time")
@@ -114,7 +114,7 @@ async def print_collection_metrics() -> None:
             logger.info(f"Collection '{name}' (variable: rcm.{name.lower().replace(' ', '_')}_collection) unavailable or not initialized.")
             continue
 
-        count = coll_instance.count()
+        count = await coll_instance.count()
         timestamps = await _get_collection_timestamps(coll_instance)
 
         if timestamps:
