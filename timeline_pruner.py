@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 PRUNE_DAYS = getattr(config, "TIMELINE_PRUNE_DAYS", 30)
 
 
-async def _fetch_old_documents(prune_days: int) -> List[Dict[str, Any]]:
+def _fetch_old_documents(prune_days: int) -> List[Dict[str, Any]]:
     if not rcm.chat_history_collection:
         logger.warning("Chat history collection unavailable")
         return []
@@ -23,12 +23,12 @@ async def _fetch_old_documents(prune_days: int) -> List[Dict[str, Any]]:
     cutoff = datetime.now() - timedelta(days=prune_days)
     cutoff_iso = cutoff.isoformat()
 
-    total = await rcm.chat_history_collection.count()
+    total = rcm.chat_history_collection.count()
     limit = 100
     old_docs: List[Dict[str, Any]] = []
 
     for offset in range(0, total, limit):
-        res = await rcm.chat_history_collection.get(limit=limit, offset=offset, include=["documents", "metadatas"])
+        res = rcm.chat_history_collection.get(limit=limit, offset=offset, include=["documents", "metadatas"])
         ids = res.get("ids", [])
         docs = res.get("documents", [])
         metas = res.get("metadatas", [])
@@ -70,13 +70,13 @@ def _store_timeline_summary(start: datetime, end: datetime, summary: str, source
         logger.error(f"Failed to store timeline summary: {e}")
 
 
-async def _get_collection_timestamps(collection) -> List[datetime]:
+def _get_collection_timestamps(collection) -> List[datetime]:
     """Retrieve timestamp metadata from all documents in a collection."""
-    total = await collection.count()
+    total = collection.count()
     limit = 100
     timestamps: List[datetime] = []
     for offset in range(0, total, limit):
-        res = await collection.get(limit=limit, offset=offset, include=["metadatas"])
+        res = collection.get(limit=limit, offset=offset, include=["metadatas"])
         metas = res.get("metadatas", [])
         for meta in metas:
             ts_str = (meta or {}).get("timestamp") or (meta or {}).get("create_time")
@@ -90,8 +90,8 @@ async def _get_collection_timestamps(collection) -> List[datetime]:
     return timestamps
 
 
-async def print_collection_metrics() -> None:
-    if not await rcm.initialize_chromadb():
+def print_collection_metrics() -> None:
+    if not rcm.initialize_chromadb():
         logger.error("ChromaDB initialization failed")
         return
 
@@ -114,8 +114,8 @@ async def print_collection_metrics() -> None:
             logger.info(f"Collection '{name}' (variable: rcm.{name.lower().replace(' ', '_')}_collection) unavailable or not initialized.")
             continue
 
-        count = await coll_instance.count()
-        timestamps = await _get_collection_timestamps(coll_instance)
+        count = coll.count()
+        timestamps = _get_collection_timestamps(coll)
 
         if timestamps:
             earliest = min(timestamps)
@@ -133,13 +133,13 @@ async def print_collection_metrics() -> None:
 
 
 async def prune_and_summarize(prune_days: int = PRUNE_DAYS):
-    if not await rcm.initialize_chromadb():
+    if not rcm.initialize_chromadb():
         logger.error("ChromaDB initialization failed")
         return
 
     llm_client = AsyncOpenAI(base_url=config.LOCAL_SERVER_URL, api_key=config.LLM_API_KEY or "lm-studio")
 
-    docs = await _fetch_old_documents(prune_days)
+    docs = _fetch_old_documents(prune_days)
     if not docs:
         logger.info("No documents eligible for pruning")
         return
@@ -262,6 +262,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.stats:
-        asyncio.run(print_collection_metrics())
+        print_collection_metrics()
     else:
         asyncio.run(prune_and_summarize(args.days))
