@@ -116,8 +116,8 @@ DiscordSam is a modular Python application designed for extensibility and mainta
     *   **`utils.py`**: Contains general helper functions like text chunking, URL detection, text cleaning for TTS, time string parsing, and Playwright process cleanup.
     *   **`common_models.py`**: Defines common data structures like `MsgNode` used throughout the application.
     *   **`rss_cache.py`**: Manages a local cache of seen RSS feed items to avoid reprocessing.
-    *   **`timeline_pruner.py`**: Contains logic for the background task that prunes and summarizes old chat history from ChromaDB. After each run it invokes `rag_cleanup` to remove stale references.
-    *   **`rag_cleanup.py`**: Cleans up distilled summaries by clearing references to conversation IDs that have been pruned from the main chat history.
+    *   **`timeline_pruner.py`**: Contains logic for the background task that prunes and summarizes old chat history from ChromaDB.
+    *   **`rag_cleanup.py`**: Utility script that removes distilled summary entries referencing conversation IDs that no longer exist in the main chat history collection.
 
 **Data Flow Example (User sends a message mentioning the bot):**
 

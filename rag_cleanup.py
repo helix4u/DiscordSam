@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 import logging
-from typing import Dict, List, Tuple
+from typing import Dict, List
 
 import rag_chroma_manager as rcm
 
@@ -8,13 +8,7 @@ logger = logging.getLogger(__name__)
 
 
 def cleanup_distilled_entries(batch_size: int = 100, dry_run: bool = False) -> int:
-    """Remove references to pruned conversations from distilled summaries.
-
-    Instead of deleting the distilled documents entirely, this function clears
-    the ``full_conversation_document_id`` metadata field when the referenced
-    conversation no longer exists. This preserves the distilled sentences while
-    ensuring stale references do not linger in the database.
-    """
+    """Remove distilled summary docs referencing missing conversations."""
     if not rcm.initialize_chromadb():
         logger.error("ChromaDB initialization failed")
         return 0
@@ -35,63 +29,45 @@ def cleanup_distilled_entries(batch_size: int = 100, dry_run: bool = False) -> i
         ids = res.get("ids", [])
         metas = res.get("metadatas", [])
 
-        ids_to_check: Dict[str, Tuple[str, Dict]] = {}
-        invalid_docs: Dict[str, Dict] = {}
+        ids_to_check: Dict[str, str] = {}
+        invalid_ids: List[str] = []
 
         for i, doc_id in enumerate(ids):
             meta = metas[i] if i < len(metas) else {}
             full_id = meta.get("full_conversation_document_id")
             if not full_id:
                 logger.info(
-                    "Distilled doc %s missing full_conversation_document_id",
-                    doc_id,
+                    "Distilled doc %s missing full_conversation_document_id", doc_id
                 )
-                invalid_docs[doc_id] = meta
+                invalid_ids.append(doc_id)
             else:
-                ids_to_check[doc_id] = (str(full_id), meta)
+                ids_to_check[doc_id] = str(full_id)
 
         if ids_to_check:
             try:
                 existence_res = rcm.chat_history_collection.get(
-                    ids=[val[0] for val in ids_to_check.values()],
+                    ids=list(ids_to_check.values()),
                     include=[],
                 )
                 existing = set(existence_res.get("ids", []))
             except Exception as e_get:
                 logger.error("Failed checking existence of chat history docs: %s", e_get)
                 existing = set()
-            for doc_id, (full_id, meta) in ids_to_check.items():
+            for doc_id, full_id in ids_to_check.items():
                 if full_id not in existing:
                     logger.info(
                         "Distilled doc %s references missing conversation %s",
                         doc_id,
                         full_id,
                     )
-                    invalid_docs[doc_id] = meta
+                    invalid_ids.append(doc_id)
 
-        if invalid_docs:
+        if invalid_ids:
             if dry_run:
-                logger.info(
-                    "Would clear references for %d distilled docs: %s",
-                    len(invalid_docs),
-                    list(invalid_docs.keys()),
-                )
+                logger.info("Would delete %d distilled docs: %s", len(invalid_ids), invalid_ids)
             else:
-                for doc_id, meta in invalid_docs.items():
-                    clean_meta = dict(meta)
-                    clean_meta.pop("full_conversation_document_id", None)
-                    try:
-                        rcm.distilled_chat_summary_collection.update(
-                            ids=doc_id,
-                            metadatas=clean_meta,
-                        )
-                        removed += 1
-                    except Exception as e_update:
-                        logger.error(
-                            "Failed updating metadata for distilled doc %s: %s",
-                            doc_id,
-                            e_update,
-                        )
+                rcm.distilled_chat_summary_collection.delete(ids=invalid_ids)
+                removed += len(invalid_ids)
 
     return removed
 
@@ -106,7 +82,7 @@ if __name__ == "__main__":
     )
 
     parser = argparse.ArgumentParser(
-        description="Clear references to missing chat history documents in distilled summaries."
+        description="Remove distilled summary entries referencing missing chat history documents."
     )
     parser.add_argument(
         "--dry-run",
@@ -121,12 +97,10 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    removed_count = cleanup_distilled_entries(
-        batch_size=args.batch_size, dry_run=args.dry_run
-    )
+    removed_count = cleanup_distilled_entries(batch_size=args.batch_size, dry_run=args.dry_run)
 
     if args.dry_run:
         logger.info("Dry run complete")
     else:
-        logger.info("Cleared references from %d distilled entries", removed_count)
+        logger.info("Removed %d invalid distilled entries", removed_count)
 
