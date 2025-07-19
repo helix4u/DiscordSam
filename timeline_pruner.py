@@ -196,6 +196,8 @@ async def prune_and_summarize(prune_days: int = PRUNE_DAYS):
                         if rcm.chat_history_collection: # Ensure collection exists before deleting
                             rcm.chat_history_collection.delete(ids=ids_to_prune)
                             logger.info(f"Pruned {len(ids_to_prune)} documents for block {block_start_dt.strftime('%Y-%m-%d %H:%M')} - {block_end_dt.strftime('%Y-%m-%d %H:%M')}")
+                            # After pruning, clean up the references in the distilled collection
+                            rcm.remove_full_conversation_references(ids_to_prune)
                         else:
                             logger.error("chat_history_collection is None, cannot prune documents.")
                     else:
@@ -234,6 +236,8 @@ async def prune_and_summarize(prune_days: int = PRUNE_DAYS):
             if rcm.chat_history_collection: # Ensure collection exists
                 rcm.chat_history_collection.delete(ids=ids_to_prune)
                 logger.info(f"Pruned {len(ids_to_prune)} documents for final block {block_start_dt.strftime('%Y-%m-%d %H:%M')} - {block_end_dt.strftime('%Y-%m-%d %H:%M')}")
+                # After pruning, clean up the references in the distilled collection
+                rcm.remove_full_conversation_references(ids_to_prune)
             else:
                 logger.error("chat_history_collection is None, cannot prune documents for final block.")
 
