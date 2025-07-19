@@ -91,7 +91,7 @@ async def _get_collection_timestamps(collection) -> List[datetime]:
 
 
 async def print_collection_metrics() -> None:
-    if not rcm.initialize_chromadb():
+    if not await rcm.initialize_chromadb():
         logger.error("ChromaDB initialization failed")
         return
 
@@ -133,7 +133,7 @@ async def print_collection_metrics() -> None:
 
 
 async def prune_and_summarize(prune_days: int = PRUNE_DAYS):
-    if not rcm.initialize_chromadb():
+    if not await rcm.initialize_chromadb():
         logger.error("ChromaDB initialization failed")
         return
 
