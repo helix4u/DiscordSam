@@ -7,14 +7,8 @@ import rag_chroma_manager as rcm
 logger = logging.getLogger(__name__)
 
 
-def clear_invalid_summary_refs(batch_size: int = 100, dry_run: bool = False) -> int:
-    """Clear invalid conversation references in distilled summaries.
-
-    Iterates over distilled summary documents and removes the
-    ``full_conversation_document_id`` metadata key when the
-    referenced conversation is missing. Returns the number of
-    references cleared.
-    """
+def cleanup_distilled_entries(batch_size: int = 100, dry_run: bool = False) -> int:
+    """Remove distilled summary docs referencing missing conversations."""
     if not rcm.initialize_chromadb():
         logger.error("ChromaDB initialization failed")
         return 0
@@ -24,7 +18,7 @@ def clear_invalid_summary_refs(batch_size: int = 100, dry_run: bool = False) -> 
         return 0
 
     total = rcm.distilled_chat_summary_collection.count()
-    cleared = 0
+    removed = 0
 
     for offset in range(0, total, batch_size):
         res = rcm.distilled_chat_summary_collection.get(
@@ -36,13 +30,10 @@ def clear_invalid_summary_refs(batch_size: int = 100, dry_run: bool = False) -> 
         metas = res.get("metadatas", [])
 
         ids_to_check: Dict[str, str] = {}
-        metas_by_id: Dict[str, Dict] = {}
         invalid_ids: List[str] = []
 
         for i, doc_id in enumerate(ids):
             meta = metas[i] if i < len(metas) else {}
-            meta = meta or {}
-            metas_by_id[doc_id] = meta
             full_id = meta.get("full_conversation_document_id")
             if not full_id:
                 logger.info(
@@ -73,23 +64,12 @@ def clear_invalid_summary_refs(batch_size: int = 100, dry_run: bool = False) -> 
 
         if invalid_ids:
             if dry_run:
-                logger.info(
-                    "Would clear invalid references in %d docs: %s",
-                    len(invalid_ids),
-                    invalid_ids,
-                )
+                logger.info("Would delete %d distilled docs: %s", len(invalid_ids), invalid_ids)
             else:
-                for doc_id in invalid_ids:
-                    meta = metas_by_id.get(doc_id, {}) or {}
-                    if "full_conversation_document_id" in meta:
-                        meta.pop("full_conversation_document_id", None)
-                    try:
-                        rcm.distilled_chat_summary_collection.update(ids=[doc_id], metadatas=[meta])
-                        cleared += 1
-                    except Exception as e_upd:
-                        logger.error("Failed updating metadata for %s: %s", doc_id, e_upd)
+                rcm.distilled_chat_summary_collection.delete(ids=invalid_ids)
+                removed += len(invalid_ids)
 
-    return cleared
+    return removed
 
 
 if __name__ == "__main__":
@@ -102,7 +82,7 @@ if __name__ == "__main__":
     )
 
     parser = argparse.ArgumentParser(
-        description="Clear invalid conversation references in distilled summaries."
+        description="Remove distilled summary entries referencing missing chat history documents."
     )
     parser.add_argument(
         "--dry-run",
@@ -117,10 +97,10 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    cleared_count = clear_invalid_summary_refs(batch_size=args.batch_size, dry_run=args.dry_run)
+    removed_count = cleanup_distilled_entries(batch_size=args.batch_size, dry_run=args.dry_run)
 
     if args.dry_run:
         logger.info("Dry run complete")
     else:
-        logger.info("Cleared %d invalid conversation references", cleared_count)
+        logger.info("Removed %d invalid distilled entries", removed_count)
 
