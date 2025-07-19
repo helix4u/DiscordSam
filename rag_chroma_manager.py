@@ -1052,3 +1052,58 @@ def store_rss_summary(feed_url: str, article_url: str, title: str, summary_text:
     except Exception as e:
         logger.error(f"Failed to store RSS summary for article {article_url} from feed {feed_url}: {e}", exc_info=True)
         return False
+
+def remove_full_conversation_references(pruned_doc_ids: List[str], batch_size: int = 100):
+    """
+    Finds distilled summaries linked to pruned full conversations and removes the linking metadata.
+    """
+    if not distilled_chat_summary_collection:
+        logger.error("distilled_chat_summary_collection is unavailable for cleanup.")
+        return
+
+    if not pruned_doc_ids:
+        logger.info("No pruned document IDs provided for reference cleanup.")
+        return
+
+    logger.info(f"Starting reference cleanup for {len(pruned_doc_ids)} pruned documents.")
+
+    total = distilled_chat_summary_collection.count()
+    updated_count = 0
+
+    for offset in range(0, total, batch_size):
+        try:
+            res = distilled_chat_summary_collection.get(
+                limit=batch_size,
+                offset=offset,
+                include=["metadatas"],
+            )
+            ids_to_update = []
+            metadatas_to_update = []
+
+            distilled_ids = res.get("ids", [])
+            metadatas = res.get("metadatas", [])
+
+            for i, meta in enumerate(metadatas):
+                if not meta:
+                    continue
+
+                full_id = meta.get("full_conversation_document_id")
+                if full_id and full_id in pruned_doc_ids:
+                    logger.info(f"Found distilled doc {distilled_ids[i]} linked to pruned doc {full_id}. Removing reference.")
+                    # Create a new metadata dict without the key
+                    new_meta = {k: v for k, v in meta.items() if k != "full_conversation_document_id"}
+                    ids_to_update.append(distilled_ids[i])
+                    metadatas_to_update.append(new_meta)
+
+            if ids_to_update:
+                distilled_chat_summary_collection.update(
+                    ids=ids_to_update,
+                    metadatas=metadatas_to_update,
+                )
+                updated_count += len(ids_to_update)
+                logger.info(f"Updated metadata for {len(ids_to_update)} distilled documents.")
+
+        except Exception as e:
+            logger.error(f"An error occurred during reference cleanup in batch starting at offset {offset}: {e}", exc_info=True)
+
+    logger.info(f"Completed reference cleanup. Updated {updated_count} distilled document(s).")
