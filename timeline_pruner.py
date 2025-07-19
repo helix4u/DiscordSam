@@ -8,6 +8,7 @@ from openai import AsyncOpenAI
 
 from config import config
 import rag_chroma_manager as rcm
+import rag_cleanup
 
 logger = logging.getLogger(__name__)
 
@@ -239,6 +240,11 @@ async def prune_and_summarize(prune_days: int = PRUNE_DAYS):
 
         else:
             logger.warning(f"No summary generated for final block {block_start_dt.strftime('%Y-%m-%d %H:%M')} - {block_end_dt.strftime('%Y-%m-%d %H:%M')}; skipping deletion")
+
+    # Clear any invalid references in distilled summaries after pruning
+    cleared = rag_cleanup.clear_invalid_summary_refs()
+    if cleared:
+        logger.info(f"Cleared {cleared} invalid distilled summary references after pruning")
 
 
 if __name__ == "__main__":
