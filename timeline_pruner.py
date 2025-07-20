@@ -108,13 +108,15 @@ def print_collection_metrics() -> None:
     
     logger.info("--- ChromaDB Collection Metrics ---")
 
-    for name, coll_instance in collections_to_check: # Renamed 'coll' to 'coll_instance'
+    for name, coll_instance in collections_to_check:  # Renamed 'coll' to 'coll_instance'
         if not coll_instance:
-            logger.info(f"Collection '{name}' (variable: rcm.{name.lower().replace(' ', '_')}_collection) unavailable or not initialized.")
+            logger.info(
+                f"Collection '{name}' (variable: rcm.{name.lower().replace(' ', '_')}_collection) unavailable or not initialized."
+            )
             continue
 
-        count = coll.count()
-        timestamps = _get_collection_timestamps(coll)
+        count = coll_instance.count()
+        timestamps = _get_collection_timestamps(coll_instance)
 
         if timestamps:
             earliest = min(timestamps)
