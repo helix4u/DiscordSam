@@ -80,6 +80,44 @@ def parse_time_string_to_delta(time_str: str) -> Tuple[Optional[timedelta], Opti
     return time_delta, descriptive_str
 
 
+import functools
+import time
+import asyncio
+
+
+def async_rate_limiter(max_calls: int, period: int):
+    """
+    Rate limiting decorator for async functions.
+
+    Parameters
+    ----------
+    max_calls : int
+        Maximum number of calls allowed within the period.
+    period : int
+        The time period in seconds.
+    """
+    calls = []
+
+    def decorator(func):
+        @functools.wraps(func)
+        async def wrapper(*args, **kwargs):
+            now = time.time()
+            calls[:] = [c for c in calls if c > now - period]
+            if len(calls) >= max_calls:
+                wait_time = calls[0] - (now - period)
+                logger.warning(
+                    "Rate limit for %s reached (%s calls/%ss). Waiting %.2fs.",
+                    func.__name__, max_calls, period, wait_time,
+                )
+                await asyncio.sleep(wait_time)
+
+            result = await func(*args, **kwargs)
+            calls.append(time.time())
+            return result
+        return wrapper
+    return decorator
+
+
 def cleanup_playwright_processes() -> int:
     """Kill lingering Playwright/Chromium processes.
 
