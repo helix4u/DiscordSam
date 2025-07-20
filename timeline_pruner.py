@@ -20,17 +20,19 @@ def _fetch_old_documents(prune_days: int) -> List[Dict[str, Any]]:
         return []
 
     cutoff_date = datetime.now() - timedelta(days=prune_days)
-    # Convert cutoff_date to a Unix timestamp (float) for the query.
-    # ChromaDB's metadata filters for $lte require a numeric type (int or float).
-    # We will be storing and querying timestamps as Unix timestamps.
-    cutoff_timestamp = cutoff_date.timestamp()
+    # ChromaDB stores timestamps as ISO-8601 strings. Use an ISO string for the
+    # comparison so we don't have to migrate existing data.
+    cutoff_iso = cutoff_date.isoformat()
 
-    logger.info(f"Fetching documents with timestamps older than {cutoff_date.isoformat()} (Unix: {cutoff_timestamp}).")
+    logger.info(
+        "Fetching documents with timestamps older than %s.", cutoff_iso
+    )
 
     try:
-        # The 'where' filter now uses the numeric Unix timestamp for comparison.
-        # This requires that the 'timestamp' metadata in ChromaDB is also stored as a Unix timestamp (number).
-        where_filter = {"timestamp": {"$lte": cutoff_timestamp}}
+        # Use the ISO formatted timestamp for the comparison. ChromaDB performs
+        # lexicographical comparison for string fields, which works for
+        # ISO-8601 timestamps.
+        where_filter = {"timestamp": {"$lte": cutoff_iso}}
 
         # We get all results at once. If this dataset is enormous, pagination might be needed,
         # but it's still better than loading everything into memory.
@@ -46,15 +48,23 @@ def _fetch_old_documents(prune_days: int) -> List[Dict[str, Any]]:
         for i, doc_id in enumerate(ids):
             meta = metas[i] if i < len(metas) else {}
             doc_content = docs[i] if i < len(docs) else ""
-            ts_str = meta.get("timestamp")
 
             try:
-                # The timestamp from metadata should be a Unix timestamp (float or int).
-                # We convert it to a datetime object for use in the application logic.
                 ts_val = meta.get("timestamp")
-                ts = datetime.fromtimestamp(ts_val) if isinstance(ts_val, (int, float)) else None
+                if isinstance(ts_val, (int, float)):
+                    ts = datetime.fromtimestamp(ts_val)
+                elif isinstance(ts_val, str):
+                    # Handle common ISO formats. If parsing fails, fall back to None.
+                    ts = datetime.fromisoformat(ts_val.replace("Z", "+00:00"))
+                else:
+                    ts = None
             except (ValueError, TypeError) as e:
-                logger.warning(f"Could not convert timestamp '{ts_val}' for document ID {doc_id}. Error: {e}. Skipping.")
+                logger.warning(
+                    "Could not convert timestamp '%s' for document ID %s. Error: %s. Skipping.",
+                    ts_val,
+                    doc_id,
+                    e,
+                )
                 ts = None
 
             # The 'where' clause should prevent this, but as a safeguard:
