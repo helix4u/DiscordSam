@@ -65,7 +65,7 @@ DEFAULT_RSS_FEEDS = [
     ("Drudge Report", "https://feeds.feedburner.com/DrudgeReportFeed"),
     ("NPR News", "http://www.npr.org/rss/rss.php?id=1001"),
     ("BBC Americas", "http://feeds.bbci.co.uk/news/world/us_and_canada/rss.xml?edition=int"),
-    ("KSL Local Stories", "https://www.ksl.com/rss/news"),
+    ("Congressional Bills", "https://www.govinfo.gov/rss/bills.xml"),
     ("Hacker News", "https://news.ycombinator.com/rss"),
     ("Sky News - US", "https://feeds.skynews.com/feeds/rss/us.xml"),
     ("Forbes Business", "https://www.forbes.com/business/feed/"),
@@ -882,7 +882,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
 
     @bot_instance.tree.command(name="ingest_chatgpt_export", description="Ingests a conversations.json file from a ChatGPT export.")
     @app_commands.describe(file_path="The full local path to your conversations.json file.")
-    @app_commands.checks.has_permissions(manage_messages=True)
+    @app_commands.checks.has_permissions(manage_messages=False)
     async def ingest_chatgpt_export_command(interaction: discord.Interaction, file_path: str):
         if not llm_client_instance:
             logger.error("ingest_chatgpt_export_command: llm_client_instance is None.")
@@ -2072,11 +2072,11 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
 
     @bot_instance.tree.command(name="groundnews", description="Scrapes Ground News 'My Feed' and summarizes new articles.")
     @app_commands.describe(
-        limit="Number of articles to fetch (max 20)."
+        limit="Number of articles to fetch (max 50)."
     )
     async def groundnews_slash_command(
         interaction: discord.Interaction,
-        limit: app_commands.Range[int, 1, 20] = 10,
+        limit: app_commands.Range[int, 1, 50] = 20,
     ) -> None:
         if not llm_client_instance or not bot_state_instance or not bot_instance or not bot_instance.user:
             logger.error("groundnews_slash_command: One or more bot components are None.")
