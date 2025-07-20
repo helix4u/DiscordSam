@@ -211,7 +211,6 @@ Below is a comprehensive list of environment variables used by DiscordSam, along
 *   `SCRAPE_SCROLL_ATTEMPTS` (Default: `3`): How many times the bot will attempt to scroll down a webpage when scraping to load dynamically loaded content.
 *   `GROUND_NEWS_SEE_MORE_CLICKS` (Default: `3`): How many times to click Ground News's "See more stories" button before scraping.
 *   `GROUND_NEWS_CLICK_DELAY_SECONDS` (Default: `1.0`): Seconds to wait after each "See more stories" click when scraping Ground News.
-*   `GROUND_NEWS_RATE_LIMIT_PER_MINUTE` (Default: `6`): Maximum number of Ground News pages the bot will scrape per minute.
 *   `PLAYWRIGHT_CLEANUP_INTERVAL_MINUTES` (Default: `5`): How often the background task runs to check for and clean up idle Playwright processes.
 *   `PLAYWRIGHT_IDLE_CLEANUP_THRESHOLD_MINUTES` (Default: `10`): How long Playwright must be idle (no scraping activity) before the cleanup task will terminate its processes.
 *   `SCRAPE_LOCK_TIMEOUT_SECONDS` (Default: `60`): How long to wait when acquiring the scraping lock before giving up.
