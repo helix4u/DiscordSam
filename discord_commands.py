@@ -305,7 +305,7 @@ async def process_ground_news(
     for idx, art in enumerate(new_articles[:limit], 1):
         if idx > 1:
             # Rate limit scraping
-            await asyncio.sleep(5)
+            await asyncio.sleep(config.GROUND_NEWS_ARTICLE_DELAY_SECONDS)
         progress_message = await safe_message_edit(
             progress_message,
             interaction.channel,
@@ -417,7 +417,7 @@ async def process_ground_news_topic(
     for idx, art in enumerate(new_articles[:limit], 1):
         if idx > 1:
             # Rate limit scraping
-            await asyncio.sleep(5)
+            await asyncio.sleep(config.GROUND_NEWS_ARTICLE_DELAY_SECONDS)
         progress_message = await safe_message_edit(
             progress_message,
             interaction.channel,
