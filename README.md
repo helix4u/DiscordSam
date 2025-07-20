@@ -209,7 +209,6 @@ Below is a comprehensive list of environment variables used by DiscordSam, along
 *   `PLAYWRIGHT_MAX_CONCURRENCY` (Default: `2`): Maximum number of concurrent Playwright browser instances/contexts allowed.
 *   `SCRAPE_SCROLL_ATTEMPTS` (Default: `3`): How many times the bot will attempt to scroll down a webpage when scraping to load dynamically loaded content.
 *   `GROUND_NEWS_SEE_MORE_CLICKS` (Default: `3`): How many times to click Ground News's "See more stories" button before scraping.
-*   `GROUND_NEWS_CLICK_DELAY_SECONDS` (Default: `1.0`): Seconds to wait after each "See more stories" click when scraping Ground News.
 *   `PLAYWRIGHT_CLEANUP_INTERVAL_MINUTES` (Default: `5`): How often the background task runs to check for and clean up idle Playwright processes.
 *   `PLAYWRIGHT_IDLE_CLEANUP_THRESHOLD_MINUTES` (Default: `10`): How long Playwright must be idle (no scraping activity) before the cleanup task will terminate its processes.
 *   `SCRAPE_LOCK_TIMEOUT_SECONDS` (Default: `60`): How long to wait when acquiring the scraping lock before giving up.
@@ -436,7 +435,7 @@ DiscordSam offers a variety of slash commands for diverse functionalities. Here'
 *   **`/groundnews [limit]`**
     *   **Purpose:** Scrapes the Ground News "My Feed" page and summarizes new articles.
     *   **Arguments:**
-        *   `limit` (Optional, Default: 10): Maximum number of articles to process (max 50).
+        *   `limit` (Optional, Default: 10): Maximum number of articles to process (max 20).
     *   **Behavior:**
         1.  Uses `web_utils.scrape_ground_news_my` (Playwright) to extract "See the Story" links, scrolling the page to load more items if necessary.
         2.  Skips any links already recorded in `ground_news_seen.json`.
