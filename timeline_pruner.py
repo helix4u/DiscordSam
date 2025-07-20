@@ -33,32 +33,24 @@ def _fetch_old_documents(prune_days: int) -> List[Dict[str, Any]]:
     )
 
     try:
-        total = rcm.chat_history_collection.count()
-        if total == 0:
+        # Use the ISO formatted timestamp for the comparison. ChromaDB performs
+        # lexicographical comparison for string fields, which works for
+        # ISO-8601 timestamps.
+        where_filter = {"timestamp": {"$lte": cutoff_iso}}
+
+        # We get all results at once. If this dataset is enormous, pagination might be needed,
+        # but it's still better than loading everything into memory.
+        res = rcm.chat_history_collection.get(where=where_filter, include=["documents", "metadatas"])
+
+        ids = res.get("ids", [])
+        docs = res.get("documents", [])
+        metas = res.get("metadatas", [])
+
+        if not ids:
             logger.info("No documents found in the chat history collection.")
             return []
 
-        logger.debug(f"Chat history collection has {total} documents. Beginning batch fetch.")
-
-        limit = 100
-        ids: List[str] = []
-        docs: List[str] = []
-        metas: List[Dict[str, Any]] = []
-        for offset in range(0, total, limit):
-            batch = rcm.chat_history_collection.get(
-                limit=limit,
-                offset=offset,
-                include=["documents", "metadatas"],
-            )
-            ids.extend(batch.get("ids", []))
-            docs.extend(batch.get("documents", []))
-            metas.extend(batch.get("metadatas", []))
-
-        if not ids:
-            logger.info("No documents found in the chat history collection after batching.")
-            return []
-
-        logger.info(f"Fetched {len(ids)} total documents across all batches. Filtering in memory...")
+        logger.info(f"Fetched {len(ids)} total documents. Filtering in memory...")
 
         old_docs: List[Dict[str, Any]] = []
         for i, doc_id in enumerate(ids):
@@ -83,7 +75,7 @@ def _fetch_old_documents(prune_days: int) -> List[Dict[str, Any]]:
                 )
                 ts = None
 
-            # We filtered in Python, but double-check just in case:
+            # The 'where' clause should prevent this, but as a safeguard:
             if ts and ts <= cutoff_date:
                 old_docs.append({"id": doc_id, "document": doc_content, "metadata": meta, "timestamp": ts})
 
