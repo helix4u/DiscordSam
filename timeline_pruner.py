@@ -71,7 +71,12 @@ def _store_timeline_summary(start: datetime, end: datetime, summary: str, source
 
 def _get_collection_timestamps(collection) -> List[datetime]:
     """Retrieve timestamp metadata from all documents in a collection."""
+    if not collection:
+        return []
     total = collection.count()
+    if total == 0:
+        return []
+
     limit = 100
     timestamps: List[datetime] = []
     for offset in range(0, total, limit):
@@ -146,6 +151,9 @@ async def prune_and_summarize(prune_days: int = PRUNE_DAYS):
         return
 
     # Sort all documents by timestamp once
+    if not docs:
+        logger.info("No documents to sort")
+        return
     docs.sort(key=lambda x: x["timestamp"])
 
     # Group documents into 6-hour blocks
