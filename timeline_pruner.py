@@ -261,7 +261,8 @@ async def prune_and_summarize(prune_days: int = PRUNE_DAYS):
             logger.error(f"Pruner: Failed to process the final document block: {e}", exc_info=True)
 
 
-if __name__ == "__main__":
+def main():
+    """Main function to run the pruner from the command line."""
     import argparse
 
     logging.basicConfig(
@@ -278,4 +279,15 @@ if __name__ == "__main__":
     if args.stats:
         print_collection_metrics()
     else:
-        asyncio.run(prune_and_summarize(args.days))
+        # This is a blocking call that runs the async function and manages the event loop.
+        try:
+            asyncio.run(prune_and_summarize(args.days))
+        except KeyboardInterrupt:
+            logger.info("Pruning process interrupted by user.")
+        except Exception as e:
+            logger.critical(f"An unhandled error occurred during pruning: {e}", exc_info=True)
+
+if __name__ == "__main__":
+    # This block is executed only when the script is run directly (e.g., `python timeline_pruner.py`)
+    # It will not run when the script is imported by another module, such as discord_events.py.
+    main()
