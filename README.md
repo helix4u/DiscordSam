@@ -446,19 +446,6 @@ DiscordSam offers a variety of slash commands for diverse functionalities. Here'
     *   **Requirements:** You must already be logged in to Ground News using Playwright's persistent profile (`.pw-profile`). If not logged in, the command will likely return no articles.
     *   **Output:** Embeds containing summaries for each newly found Ground News article.
 
-*   **`/groundtopic <topic> [limit]`**
-    *   **Purpose:** Scrapes a specified Ground News topic page and summarizes new articles.
-    *   **Arguments:**
-        *   `topic` (Required): The topic to fetch, chosen from a preset list.
-        *   `limit` (Optional, Default: 10): Maximum number of articles to process (max 50).
-    *   **Behavior:**
-        1.  Uses `web_utils.scrape_ground_news_topic` to extract "See the Story" links from the selected topic page.
-        2.  Skips links already recorded in `ground_news_seen.json`.
-        3.  Scrapes and summarizes each new article via the fast LLM.
-        4.  Displays summaries in Discord embeds and updates the cache.
-    *   **Requirements:** Same as `/groundnews` &mdash; you must be logged in with Playwright's persistent profile.
-    *   **Output:** Embeds containing summaries for each new topic article.
-
 *   **`/ap <image> [user_prompt]`**
     *   **Purpose:** Describes an attached image in the style of an Associated Press (AP) photo caption, with a humorous twist: a randomly chosen celebrity is creatively inserted as the main subject.
     *   **Arguments:**
