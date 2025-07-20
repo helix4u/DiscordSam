@@ -77,37 +77,45 @@ def setup_events_and_tasks(bot: commands.Bot, llm_client_in: Any, bot_state_in: 
 
     @tasks.loop(minutes=config.PLAYWRIGHT_CLEANUP_INTERVAL_MINUTES if hasattr(config, 'PLAYWRIGHT_CLEANUP_INTERVAL_MINUTES') else 5) # Default to 5 min if not in config
     async def cleanup_playwright_task():
-        if not bot_state_instance:
-            logger.error("cleanup_playwright_task: BotState not available.")
-            return
-
-        last_usage = await bot_state_instance.get_last_playwright_usage_time()
-        cleanup_threshold_minutes = config.PLAYWRIGHT_IDLE_CLEANUP_THRESHOLD_MINUTES if hasattr(config, 'PLAYWRIGHT_IDLE_CLEANUP_THRESHOLD_MINUTES') else 5 # Default to 5 min
-
-        if last_usage:
-            idle_time = datetime.now() - last_usage
-            if idle_time < timedelta(minutes=cleanup_threshold_minutes):
-                logger.debug(f"Playwright cleanup skipped. Last used {idle_time.total_seconds()//60:.0f}m ago (threshold: {cleanup_threshold_minutes}m).")
+        logger.debug("Playwright cleanup task started.")
+        try:
+            if not bot_state_instance:
+                logger.error("cleanup_playwright_task: BotState not available.")
                 return
-            logger.info(f"Playwright idle for {idle_time.total_seconds()//60:.0f}m. Proceeding with cleanup check (threshold: {cleanup_threshold_minutes}m).")
-        else:
-            # If last_usage is None, it means either it was never used or cleaned up previously.
-            # We can proceed to clean up any potential orphaned processes.
-            logger.info("No recorded Playwright usage or previously cleaned. Proceeding with cleanup check.")
 
-        killed = cleanup_playwright_processes()
-        if killed:
-            logger.info(f"Cleaned up {killed} stray Chromium/Playwright processes.")
-            # After a successful cleanup, update the time, signifying active management.
-            await bot_state_instance.update_last_playwright_usage_time()
-        else:
-            logger.debug("Playwright cleanup task ran: No stray processes found or killed.")
+            last_usage = await bot_state_instance.get_last_playwright_usage_time()
+            cleanup_threshold_minutes = config.PLAYWRIGHT_IDLE_CLEANUP_THRESHOLD_MINUTES if hasattr(config, 'PLAYWRIGHT_IDLE_CLEANUP_THRESHOLD_MINUTES') else 5 # Default to 5 min
+
+            if last_usage:
+                idle_time = datetime.now() - last_usage
+                if idle_time < timedelta(minutes=cleanup_threshold_minutes):
+                    logger.debug(f"Playwright cleanup skipped. Last used {idle_time.total_seconds()//60:.0f}m ago (threshold: {cleanup_threshold_minutes}m).")
+                    return
+                logger.info(f"Playwright idle for {idle_time.total_seconds()//60:.0f}m. Proceeding with cleanup check (threshold: {cleanup_threshold_minutes}m).")
+            else:
+                # If last_usage is None, it means either it was never used or cleaned up previously.
+                # We can proceed to clean up any potential orphaned processes.
+                logger.info("No recorded Playwright usage or previously cleaned. Proceeding with cleanup check.")
+
+            killed = cleanup_playwright_processes()
+            if killed:
+                logger.info(f"Cleaned up {killed} stray Chromium/Playwright processes.")
+                # After a successful cleanup, update the time, signifying active management.
+                await bot_state_instance.update_last_playwright_usage_time()
+            else:
+                logger.debug("Playwright cleanup task ran: No stray processes found or killed.")
+        except Exception as e:
+            logger.error(f"An unexpected error occurred in cleanup_playwright_task: {e}", exc_info=True)
+        finally:
+            logger.debug("Playwright cleanup task finished.")
 
     @tasks.loop(hours=24)
     async def timeline_pruner_task():
+        logger.info("Timeline pruner task started.")
         prune_days = getattr(config, 'TIMELINE_PRUNE_DAYS', 30)
         try:
             await prune_and_summarize(prune_days)
+            logger.info("Timeline pruner task completed successfully.")
         except Exception as e:
             logger.error(f"Timeline pruner task failed: {e}", exc_info=True)
 

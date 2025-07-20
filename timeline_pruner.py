@@ -139,120 +139,126 @@ def print_collection_metrics() -> None:
 
 
 async def prune_and_summarize(prune_days: int = PRUNE_DAYS):
-    if not rcm.initialize_chromadb():
-        logger.error("ChromaDB initialization failed")
+    # The ChromaDB client is now expected to be initialized by main_bot.py.
+    # We just check if the necessary collections are available.
+    if not rcm.chat_history_collection or not rcm.timeline_summary_collection:
+        logger.error("Pruner: One or more ChromaDB collections are not available. Aborting.")
         return
 
+    logger.info(f"Starting timeline pruning for documents older than {prune_days} days.")
     llm_client = AsyncOpenAI(base_url=config.LOCAL_SERVER_URL, api_key=config.LLM_API_KEY or "lm-studio")
 
-    docs = _fetch_old_documents(prune_days)
-    if not docs:
-        logger.info("No documents eligible for pruning")
+    try:
+        docs = _fetch_old_documents(prune_days)
+    except Exception as e:
+        logger.error(f"Pruner: An error occurred while fetching old documents: {e}", exc_info=True)
         return
 
+    if not docs:
+        logger.info("Pruner: No documents found eligible for pruning.")
+        return
+
+    logger.info(f"Pruner: Found {len(docs)} documents to potentially prune and summarize.")
     # Sort all documents by timestamp once
-    if not docs:
-        logger.info("No documents to sort")
+    try:
+        docs.sort(key=lambda x: x["timestamp"])
+    except (KeyError, TypeError) as e:
+        logger.error(f"Pruner: Could not sort documents due to missing or invalid timestamp data: {e}", exc_info=True)
         return
-    docs.sort(key=lambda x: x["timestamp"])
-
-    # Group documents into 6-hour blocks
-    # A block is defined by YYYY-MM-DD-HH_block_index (0-3 for 6-hour intervals)
-    # e.g., 2023-10-26 hour 0-5 is block 0, 6-11 is block 1, 12-17 is block 2, 18-23 is block 3
 
     current_block_items: List[Dict[str, Any]] = []
     current_block_start_time: Optional[datetime] = None
 
     for doc in docs:
-        doc_ts = doc["timestamp"]
+        doc_ts = doc.get("timestamp")
+        if not isinstance(doc_ts, datetime):
+            logger.warning(f"Pruner: Skipping document with invalid or missing timestamp: ID {doc.get('id', 'N/A')}")
+            continue
+
         if current_block_start_time is None:
             current_block_start_time = doc_ts
             current_block_items.append(doc)
         else:
-            # Check if doc is within 6 hours of current_block_start_time AND on the same day
-            time_diff = doc_ts - current_block_start_time
             is_same_day = doc_ts.date() == current_block_start_time.date()
-            
-            # Determine the block index for current_block_start_time (0, 1, 2, 3)
             block_index_start = current_block_start_time.hour // 6
-            # Determine the block index for the current document
             block_index_doc = doc_ts.hour // 6
 
-            # If the doc is in a new 6-hour block or a new day, process the previous block
             if not is_same_day or block_index_doc != block_index_start:
                 if current_block_items:
-                    # Process the completed block
-                    block_start_dt = current_block_items[0]["timestamp"]
-                    block_end_dt = current_block_items[-1]["timestamp"]
-                    block_key_for_id = f"{block_start_dt.strftime('%Y%m%d%H%M%S')}_{block_end_dt.strftime('%Y%m%d%H%M%S')}"
-                    
-                    texts = [item["document"] for item in current_block_items]
-                    text_pairs = [(t, "timeline_block") for t in texts]
-                    query = (
-                        f"Summarize the included chat history that took place from "
-                        f"{block_start_dt.strftime('%Y-%m-%d %H:%M:%S')} to "
-                        f"{block_end_dt.strftime('%Y-%m-%d %H:%M:%S')} "
-                        f"as a keyword dense narrative focusing on content, date, novel learnings, etc. "
-                        f"Do not state anything about or reference the word snippet, conversation, retrieved, etc. "
-                        f"This is for a RAG db. Keep it clean, but keep all pertinant detail."
-                    )
-                    summary = await rcm.synthesize_retrieved_contexts_llm(
-                        llm_client, text_pairs, query
-                    )
-                    
-                    if summary:
-                        ids_to_prune = [item["id"] for item in current_block_items]
-                        _store_timeline_summary(block_start_dt, block_end_dt, summary, ids_to_prune, block_key_for_id)
-                        if rcm.chat_history_collection: # Ensure collection exists before deleting
-                            rcm.chat_history_collection.delete(ids=ids_to_prune)
-                            logger.info(f"Pruned {len(ids_to_prune)} documents for block {block_start_dt.strftime('%Y-%m-%d %H:%M')} - {block_end_dt.strftime('%Y-%m-%d %H:%M')}")
-                            # After pruning, clean up the references in the distilled collection
-                            rcm.remove_full_conversation_references(ids_to_prune)
-                        else:
-                            logger.error("chat_history_collection is None, cannot prune documents.")
-                    else:
-                        logger.warning(f"No summary generated for block {block_start_dt.strftime('%Y-%m-%d %H:%M')} - {block_end_dt.strftime('%Y-%m-%d %H:%M')}; skipping deletion")
+                    logger.info(f"Pruner: Processing a block of {len(current_block_items)} documents.")
+                    try:
+                        block_start_dt = current_block_items[0]["timestamp"]
+                        block_end_dt = current_block_items[-1]["timestamp"]
+                        block_key_for_id = f"{block_start_dt.strftime('%Y%m%d%H%M%S')}_{block_end_dt.strftime('%Y%m%d%H%M%S')}"
 
-                # Start a new block
+                        texts = [item["document"] for item in current_block_items]
+                        text_pairs = [(t, "timeline_block") for t in texts]
+                        query = (
+                            f"Summarize the included chat history that took place from "
+                            f"{block_start_dt.strftime('%Y-%m-%d %H:%M:%S')} to "
+                            f"{block_end_dt.strftime('%Y-%m-%d %H:%M:%S')} "
+                            f"as a keyword dense narrative focusing on content, date, novel learnings, etc. "
+                            f"Do not state anything about or reference the word snippet, conversation, retrieved, etc. "
+                            f"This is for a RAG db. Keep it clean, but keep all pertinant detail."
+                        )
+                        summary = await rcm.synthesize_retrieved_contexts_llm(
+                            llm_client, text_pairs, query
+                        )
+
+                        if summary:
+                            ids_to_prune = [item["id"] for item in current_block_items]
+                            _store_timeline_summary(block_start_dt, block_end_dt, summary, ids_to_prune, block_key_for_id)
+
+                            if rcm.chat_history_collection:
+                                rcm.chat_history_collection.delete(ids=ids_to_prune)
+                                logger.info(f"Pruner: Pruned {len(ids_to_prune)} documents for block {block_start_dt.strftime('%Y-%m-%d %H:%M')} - {block_end_dt.strftime('%Y-%m-%d %H:%M')}")
+                                rcm.remove_full_conversation_references(ids_to_prune)
+                            else:
+                                logger.error("Pruner: chat_history_collection is None, cannot prune documents.")
+                        else:
+                            logger.warning(f"Pruner: No summary generated for block {block_start_dt.strftime('%Y-%m-%d %H:%M')} - {block_end_dt.strftime('%Y-%m-%d %H:%M')}; skipping deletion")
+                    except Exception as e:
+                        logger.error(f"Pruner: Failed to process a document block: {e}", exc_info=True)
+
                 current_block_items = [doc]
                 current_block_start_time = doc_ts
             else:
-                # Add to current block
                 current_block_items.append(doc)
 
-    # Process the last remaining block, if any
-    if current_block_items and current_block_start_time is not None: # Ensure current_block_start_time is not None
-        block_start_dt = current_block_items[0]["timestamp"]
-        block_end_dt = current_block_items[-1]["timestamp"]
-        block_key_for_id = f"{block_start_dt.strftime('%Y%m%d%H%M%S')}_{block_end_dt.strftime('%Y%m%d%H%M%S')}"
+    if current_block_items and current_block_start_time is not None:
+        logger.info(f"Pruner: Processing the final block of {len(current_block_items)} documents.")
+        try:
+            block_start_dt = current_block_items[0]["timestamp"]
+            block_end_dt = current_block_items[-1]["timestamp"]
+            block_key_for_id = f"{block_start_dt.strftime('%Y%m%d%H%M%S')}_{block_end_dt.strftime('%Y%m%d%H%M%S')}"
 
-        texts = [item["document"] for item in current_block_items]
-        text_pairs = [(t, "timeline_block") for t in texts]
-        query = (
-            f"Summarize the included chat history that took place from "
-            f"{block_start_dt.strftime('%Y-%m-%d %H:%M:%S')} to "
-            f"{block_end_dt.strftime('%Y-%m-%d %H:%M:%S')} "
-            f"as a keyword dense narrative focusing on content, date, novel learnings, etc. "
-            f"Do not state anything about the reference the word snippet, conversation, retrieved, etc. "
-            f"This is for a RAG db. Keep it clean."
-        )
-        summary = await rcm.synthesize_retrieved_contexts_llm(
-            llm_client, text_pairs, query
-        )
+            texts = [item["document"] for item in current_block_items]
+            text_pairs = [(t, "timeline_block") for t in texts]
+            query = (
+                f"Summarize the included chat history that took place from "
+                f"{block_start_dt.strftime('%Y-%m-%d %H:%M:%S')} to "
+                f"{block_end_dt.strftime('%Y-%m-%d %H:%M:%S')} "
+                f"as a keyword dense narrative focusing on content, date, novel learnings, etc. "
+                f"Do not state anything about the reference the word snippet, conversation, retrieved, etc. "
+                f"This is for a RAG db. Keep it clean."
+            )
+            summary = await rcm.synthesize_retrieved_contexts_llm(
+                llm_client, text_pairs, query
+            )
 
-        if summary:
-            ids_to_prune = [item["id"] for item in current_block_items]
-            _store_timeline_summary(block_start_dt, block_end_dt, summary, ids_to_prune, block_key_for_id)
-            if rcm.chat_history_collection: # Ensure collection exists
-                rcm.chat_history_collection.delete(ids=ids_to_prune)
-                logger.info(f"Pruned {len(ids_to_prune)} documents for final block {block_start_dt.strftime('%Y-%m-%d %H:%M')} - {block_end_dt.strftime('%Y-%m-%d %H:%M')}")
-                # After pruning, clean up the references in the distilled collection
-                rcm.remove_full_conversation_references(ids_to_prune)
+            if summary:
+                ids_to_prune = [item["id"] for item in current_block_items]
+                _store_timeline_summary(block_start_dt, block_end_dt, summary, ids_to_prune, block_key_for_id)
+                if rcm.chat_history_collection:
+                    rcm.chat_history_collection.delete(ids=ids_to_prune)
+                    logger.info(f"Pruner: Pruned {len(ids_to_prune)} documents for final block {block_start_dt.strftime('%Y-%m-%d %H:%M')} - {block_end_dt.strftime('%Y-%m-%d %H:%M')}")
+                    rcm.remove_full_conversation_references(ids_to_prune)
+                else:
+                    logger.error("Pruner: chat_history_collection is None, cannot prune documents for final block.")
             else:
-                logger.error("chat_history_collection is None, cannot prune documents for final block.")
-
-        else:
-            logger.warning(f"No summary generated for final block {block_start_dt.strftime('%Y-%m-%d %H:%M')} - {block_end_dt.strftime('%Y-%m-%d %H:%M')}; skipping deletion")
+                logger.warning(f"Pruner: No summary generated for final block {block_start_dt.strftime('%Y-%m-%d %H:%M')} - {block_end_dt.strftime('%Y-%m-%d %H:%M')}; skipping deletion")
+        except Exception as e:
+            logger.error(f"Pruner: Failed to process the final document block: {e}", exc_info=True)
 
 
 if __name__ == "__main__":
