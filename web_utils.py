@@ -833,41 +833,7 @@ async def _scrape_ground_news_page(page_url: str, limit: int = 10) -> List[Groun
                 context_manager = context
                 page = await context_manager.new_page()
 
-                response = None
-                for attempt in range(config.GROUND_NEWS_MAX_RETRIES + 1):
-                    try:
-                        response = await page.goto(page_url, wait_until="domcontentloaded", timeout=35000)
-                        if response and response.status != 403:
-                            logger.info("Successfully loaded Ground News page with status %s", response.status)
-                            break
-                        if response and response.status == 403:
-                            logger.warning(
-                                "Ground News returned 403 Forbidden. Attempt %s/%s.",
-                                attempt + 1,
-                                config.GROUND_NEWS_MAX_RETRIES,
-                            )
-                            if attempt < config.GROUND_NEWS_MAX_RETRIES:
-                                backoff_time = 2 ** (attempt + 1)
-                                logger.info("Waiting for %s seconds before retrying.", backoff_time)
-                                await asyncio.sleep(backoff_time)
-                            else:
-                                logger.error("Max retries reached for Ground News. Aborting scrape.")
-                                return []
-                        else:
-                            # If response is None or status is not 403, break and proceed
-                            logger.info("Page loaded without a 403 error.")
-                            break
-                    except PlaywrightTimeoutError:
-                        logger.error("Timeout loading Ground News page %s. Aborting.", page_url)
-                        return []
-                    except Exception as e_goto:
-                        logger.error("Error during page.goto for Ground News: %s", e_goto, exc_info=True)
-                        return []
-
-                if response and response.status == 403:
-                    logger.error("Failed to load Ground News page due to persistent 403 errors.")
-                    return []
-
+                await page.goto(page_url, wait_until="domcontentloaded")
                 await asyncio.sleep(5)
 
                 clicks = 0
