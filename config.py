@@ -139,7 +139,6 @@ class Config:
         self.GROUND_NEWS_CLICK_DELAY_SECONDS = _get_float(
             "GROUND_NEWS_CLICK_DELAY_SECONDS", 1.0
         )
-        self.GROUND_NEWS_MAX_RETRIES = _get_int("GROUND_NEWS_MAX_RETRIES", 3)
 
         # Configuration for Playwright cleanup task
         self.PLAYWRIGHT_CLEANUP_INTERVAL_MINUTES = _get_int("PLAYWRIGHT_CLEANUP_INTERVAL_MINUTES", 5) # How often the cleanup task runs
