@@ -3,6 +3,8 @@ import logging
 import os
 import re
 import json
+from collections import deque
+import time
 from typing import List, Optional, Dict, Any, Callable, Awaitable, Tuple, Set
 from bs4 import BeautifulSoup
 import random
@@ -23,6 +25,10 @@ from common_models import TweetData, GroundNewsArticle
 logger = logging.getLogger(__name__)
 
 PLAYWRIGHT_SEM = asyncio.Semaphore(config.PLAYWRIGHT_MAX_CONCURRENCY)
+GROUND_NEWS_SEMAPHORE = asyncio.Semaphore(1)
+GROUND_NEWS_REQUEST_TIMESTAMPS = deque()
+GROUND_NEWS_RATE_LIMIT_PER_MINUTE = 6
+
 
 async def _graceful_close_playwright(page: Optional[Any], context: Optional[Any], browser: Optional[Any], profile_dir_usable: bool, timeout: float = 1.0) -> None:
     """Attempt to close Playwright objects; kill lingering processes if they remain."""
@@ -217,6 +223,20 @@ async def scrape_website(
     page: Optional[Any] = None
 
     try:
+        async with GROUND_NEWS_SEMAPHORE:
+            now = time.monotonic()
+            while GROUND_NEWS_REQUEST_TIMESTAMPS and GROUND_NEWS_REQUEST_TIMESTAMPS[0] <= now - 60:
+                GROUND_NEWS_REQUEST_TIMESTAMPS.popleft()
+
+            if len(GROUND_NEWS_REQUEST_TIMESTAMPS) >= GROUND_NEWS_RATE_LIMIT_PER_MINUTE:
+                sleep_duration = (GROUND_NEWS_REQUEST_TIMESTAMPS[0] + 60) - now
+                logger.warning(
+                    "Ground News rate limit reached. Sleeping for %.2f seconds.",
+                    sleep_duration,
+                )
+                await asyncio.sleep(sleep_duration)
+
+            GROUND_NEWS_REQUEST_TIMESTAMPS.append(time.monotonic())
         async with PLAYWRIGHT_SEM:
             async with async_playwright() as p:
                 if profile_dir_usable:
