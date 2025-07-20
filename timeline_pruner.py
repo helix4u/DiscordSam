@@ -15,6 +15,10 @@ PRUNE_DAYS = getattr(config, "TIMELINE_PRUNE_DAYS", 30)
 
 
 def _fetch_old_documents(prune_days: int) -> List[Dict[str, Any]]:
+    """
+    Fetches all documents from the chat history collection and filters them by age in memory.
+    This is a temporary workaround because ChromaDB's metadata filtering with ISO date strings is unreliable.
+    """
     if not rcm.chat_history_collection:
         logger.warning("Chat history collection unavailable for fetching old documents.")
         return []
@@ -42,7 +46,11 @@ def _fetch_old_documents(prune_days: int) -> List[Dict[str, Any]]:
         docs = res.get("documents", [])
         metas = res.get("metadatas", [])
 
-        logger.info(f"Found {len(ids)} documents meeting the prune criteria.")
+        if not ids:
+            logger.info("No documents found in the chat history collection.")
+            return []
+
+        logger.info(f"Fetched {len(ids)} total documents. Filtering in memory...")
 
         old_docs: List[Dict[str, Any]] = []
         for i, doc_id in enumerate(ids):
@@ -70,14 +78,12 @@ def _fetch_old_documents(prune_days: int) -> List[Dict[str, Any]]:
             # The 'where' clause should prevent this, but as a safeguard:
             if ts and ts <= cutoff_date:
                 old_docs.append({"id": doc_id, "document": doc_content, "metadata": meta, "timestamp": ts})
-            elif not ts:
-                 logger.warning(f"Document with ID {doc_id} was returned by query but has no parsable timestamp.")
 
+        logger.info(f"Found {len(old_docs)} documents meeting the prune criteria after in-memory filtering.")
         return old_docs
 
     except Exception as e:
-        # This could be a database connection error or an issue with the query syntax.
-        logger.error(f"An error occurred querying ChromaDB for old documents: {e}", exc_info=True)
+        logger.error(f"An error occurred fetching or filtering documents from ChromaDB: {e}", exc_info=True)
         return []
 
 
@@ -109,6 +115,25 @@ def _store_timeline_summary(start: datetime, end: datetime, summary: str, source
         logger.error(f"Failed to store timeline summary: {e}")
 
 
+def _parse_timestamp(ts_val: Any) -> Optional[datetime]:
+    """
+    Parses a timestamp from various formats (ISO string, Unix timestamp) into a datetime object.
+    """
+    if ts_val is None:
+        return None
+    try:
+        if isinstance(ts_val, (int, float)):
+            return datetime.fromtimestamp(ts_val)
+        elif isinstance(ts_val, str):
+            # Handle ISO 8601 format, including 'Z' for UTC
+            return datetime.fromisoformat(ts_val.replace("Z", "+00:00"))
+        else:
+            logger.warning(f"Unrecognized timestamp type: {type(ts_val)}")
+            return None
+    except (ValueError, TypeError) as e:
+        logger.debug(f"Could not parse timestamp '{ts_val}': {e}")
+        return None
+
 def _get_collection_timestamps(collection) -> List[datetime]:
     """Retrieve timestamp metadata from all documents in a collection."""
     if not collection:
@@ -123,22 +148,10 @@ def _get_collection_timestamps(collection) -> List[datetime]:
         res = collection.get(limit=limit, offset=offset, include=["metadatas"])
         metas = res.get("metadatas", [])
         for meta in metas:
-            # Handle both numeric (Unix timestamp) and string (ISO format) timestamps for backward compatibility.
             ts_val = (meta or {}).get("timestamp") or (meta or {}).get("create_time")
-            if ts_val is None:
-                continue
-
-            try:
-                if isinstance(ts_val, (int, float)):
-                    ts = datetime.fromtimestamp(ts_val)
-                elif isinstance(ts_val, str):
-                    ts = datetime.fromisoformat(ts_val)
-                else:
-                    continue  # Skip if the type is unexpected
+            ts = _parse_timestamp(ts_val)
+            if ts:
                 timestamps.append(ts)
-            except (ValueError, TypeError) as e:
-                logger.debug(f"Could not parse timestamp '{ts_val}': {e}")
-                continue
     return timestamps
 
 
