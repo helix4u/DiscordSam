@@ -778,17 +778,19 @@ async def fetch_rss_entries(feed_url: str) -> List[Dict[str, Any]]:
         return []
 
 
-async def _scrape_ground_news_page(page_url: str, limit: int = 10) -> List[GroundNewsArticle]:
-    """Scrape a Ground News page for article links.
+async def scrape_ground_news_my(limit: int = 10) -> List[GroundNewsArticle]:
+    """Scrape the Ground News 'My Feed' page for article links.
 
-    This helper is used by the ``scrape_ground_news_my`` and
-    ``scrape_ground_news_topic`` functions. It expects the user to already
-    be logged in within the persistent Playwright profile (``.pw-profile``).
+    Requires that the user is already logged in within the persistent
+    Playwright profile (``.pw-profile``). If not logged in, this function
+    will likely return an empty list.
+
+    The scraper searches for any link containing ``See the Story`` and
+    attempts to find a nearby title element. It scrolls the page
+    gradually between attempts to allow dynamic content to load.
 
     Parameters
     ----------
-    page_url : str
-        The full URL of the Ground News page to scrape.
     limit : int, optional
         Maximum number of article links to return, by default ``10``.
 
@@ -797,7 +799,7 @@ async def _scrape_ground_news_page(page_url: str, limit: int = 10) -> List[Groun
     List[GroundNewsArticle]
         Parsed article entries with title and URL.
     """
-    logger.info(f"Scraping Ground News page {page_url} for articles...")
+    logger.info("Scraping Ground News 'My Feed' for articles...")
     articles: List[GroundNewsArticle] = []
 
     user_data_dir = os.path.join(os.getcwd(), ".pw-profile")
@@ -833,21 +835,13 @@ async def _scrape_ground_news_page(page_url: str, limit: int = 10) -> List[Groun
                 context_manager = context
                 page = await context_manager.new_page()
 
-                await page.goto(page_url, wait_until="domcontentloaded")
+                await page.goto("https://ground.news/my", wait_until="domcontentloaded")
                 await asyncio.sleep(5)
 
                 clicks = 0
                 for _ in range(config.GROUND_NEWS_SEE_MORE_CLICKS):
                     try:
                         btn = await page.query_selector('#more-stories-my-feed')
-                        if not btn:
-                            btn = await page.query_selector('#more-stories-interest')
-                        if not btn:
-                            btn = await page.query_selector('#more-stories')
-                        if not btn:
-                            btn = await page.query_selector('#more_stories')
-                        if not btn:
-                            btn = await page.query_selector("button:has-text('More stories')")
                         if not btn:
                             btn = await page.query_selector("button:has-text('See more stories')")
                         if not btn:
@@ -857,7 +851,7 @@ async def _scrape_ground_news_page(page_url: str, limit: int = 10) -> List[Groun
                         await asyncio.sleep(config.GROUND_NEWS_CLICK_DELAY_SECONDS)
                     except Exception as e_click:
                         logger.debug(
-                            "Error clicking 'More stories' on Ground News: %s",
+                            "Error clicking 'See more stories' on Ground News: %s",
                             e_click,
                         )
                         break
@@ -910,15 +904,5 @@ async def _scrape_ground_news_page(page_url: str, limit: int = 10) -> List[Groun
     finally:
         await _graceful_close_playwright(page, context_manager, browser_instance, profile_dir_usable)
 
-    logger.info("Found %s articles on Ground News page", len(articles))
+    logger.info("Found %s articles on Ground News", len(articles))
     return articles
-
-
-async def scrape_ground_news_my(limit: int = 10) -> List[GroundNewsArticle]:
-    """Scrape the Ground News 'My Feed' page for article links."""
-    return await _scrape_ground_news_page("https://ground.news/my", limit)
-
-
-async def scrape_ground_news_topic(topic_url: str, limit: int = 10) -> List[GroundNewsArticle]:
-    """Scrape a specific Ground News topic page for article links."""
-    return await _scrape_ground_news_page(topic_url, limit)
