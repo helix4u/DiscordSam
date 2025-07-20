@@ -834,7 +834,7 @@ async def _scrape_ground_news_page(page_url: str, limit: int = 10) -> List[Groun
                 page = await context_manager.new_page()
 
                 await page.goto(page_url, wait_until="domcontentloaded")
-                await asyncio.sleep(5)
+                await asyncio.sleep(config.GROUND_NEWS_ARTICLE_DELAY_SECONDS)
 
                 clicks = 0
                 selectors = [
