@@ -17,16 +17,12 @@ import xml.etree.ElementTree
 
 # Assuming config is imported from config.py
 from config import config
-from utils import cleanup_playwright_processes, AsyncRateLimiter
+from utils import cleanup_playwright_processes
 from common_models import TweetData, GroundNewsArticle
 
 logger = logging.getLogger(__name__)
 
 PLAYWRIGHT_SEM = asyncio.Semaphore(config.PLAYWRIGHT_MAX_CONCURRENCY)
-GROUND_NEWS_RATE_LIMITER = AsyncRateLimiter(
-    config.GROUND_NEWS_RATE_LIMIT_PER_MINUTE,
-    60.0,
-)
 
 async def _graceful_close_playwright(page: Optional[Any], context: Optional[Any], browser: Optional[Any], profile_dir_usable: bool, timeout: float = 1.0) -> None:
     """Attempt to close Playwright objects; kill lingering processes if they remain."""
@@ -802,7 +798,6 @@ async def _scrape_ground_news_page(page_url: str, limit: int = 10) -> List[Groun
         Parsed article entries with title and URL.
     """
     logger.info(f"Scraping Ground News page {page_url} for articles...")
-    await GROUND_NEWS_RATE_LIMITER.acquire()
     articles: List[GroundNewsArticle] = []
 
     user_data_dir = os.path.join(os.getcwd(), ".pw-profile")
