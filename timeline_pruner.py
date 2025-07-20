@@ -24,12 +24,23 @@ def _fetch_old_documents(prune_days: int) -> List[Dict[str, Any]]:
         return []
 
     cutoff_date = datetime.now() - timedelta(days=prune_days)
-    logger.info(f"Fetching all documents to filter for timestamps older than {cutoff_date.isoformat()}.")
+    # ChromaDB stores timestamps as ISO-8601 strings. Use an ISO string for the
+    # comparison so we don't have to migrate existing data.
+    cutoff_iso = cutoff_date.isoformat()
+
+    logger.info(
+        "Fetching documents with timestamps older than %s.", cutoff_iso
+    )
 
     try:
-        # Fetch all documents from the collection.
-        # This is not ideal for performance but necessary until the timestamp issue is resolved.
-        res = rcm.chat_history_collection.get(include=["documents", "metadatas"])
+        # Use the ISO formatted timestamp for the comparison. ChromaDB performs
+        # lexicographical comparison for string fields, which works for
+        # ISO-8601 timestamps.
+        where_filter = {"timestamp": {"$lte": cutoff_iso}}
+
+        # We get all results at once. If this dataset is enormous, pagination might be needed,
+        # but it's still better than loading everything into memory.
+        res = rcm.chat_history_collection.get(where=where_filter, include=["documents", "metadatas"])
 
         ids = res.get("ids", [])
         docs = res.get("documents", [])
@@ -45,24 +56,27 @@ def _fetch_old_documents(prune_days: int) -> List[Dict[str, Any]]:
         for i, doc_id in enumerate(ids):
             meta = metas[i] if i < len(metas) else {}
             doc_content = docs[i] if i < len(docs) else ""
-            ts_val = meta.get("timestamp")
 
-            if not ts_val:
-                logger.debug(f"Document ID {doc_id} has no timestamp. Skipping.")
-                continue
+            try:
+                ts_val = meta.get("timestamp")
+                if isinstance(ts_val, (int, float)):
+                    ts = datetime.fromtimestamp(ts_val)
+                elif isinstance(ts_val, str):
+                    # Handle common ISO formats. If parsing fails, fall back to None.
+                    ts = datetime.fromisoformat(ts_val.replace("Z", "+00:00"))
+                else:
+                    ts = None
+            except (ValueError, TypeError) as e:
+                logger.warning(
+                    "Could not convert timestamp '%s' for document ID %s. Error: %s. Skipping.",
+                    ts_val,
+                    doc_id,
+                    e,
+                )
+                ts = None
 
-            ts = _parse_timestamp(ts_val)
-            if not ts:
-                logger.warning(f"Could not parse timestamp for document ID {doc_id}. Skipping.")
-                continue
-
-            # Timezone-aware comparison if one is aware and the other is naive
-            if ts.tzinfo is not None and cutoff_date.tzinfo is None:
-                cutoff_date = cutoff_date.astimezone(ts.tzinfo)
-            elif ts.tzinfo is None and cutoff_date.tzinfo is not None:
-                ts = ts.astimezone(cutoff_date.tzinfo)
-
-            if ts <= cutoff_date:
+            # The 'where' clause should prevent this, but as a safeguard:
+            if ts and ts <= cutoff_date:
                 old_docs.append({"id": doc_id, "document": doc_content, "metadata": meta, "timestamp": ts})
 
         logger.info(f"Found {len(old_docs)} documents meeting the prune criteria after in-memory filtering.")
