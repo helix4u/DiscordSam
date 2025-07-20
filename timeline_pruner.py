@@ -20,17 +20,17 @@ def _fetch_old_documents(prune_days: int) -> List[Dict[str, Any]]:
         return []
 
     cutoff_date = datetime.now() - timedelta(days=prune_days)
-    # ChromaDB stores timestamps as strings, so we use ISO format for comparison.
-    # The comparison will be string-based, which works for ISO 8601 format.
-    cutoff_iso = cutoff_date.isoformat()
+    # Convert cutoff_date to a Unix timestamp (float) for the query.
+    # ChromaDB's metadata filters for $lte require a numeric type (int or float).
+    # We will be storing and querying timestamps as Unix timestamps.
+    cutoff_timestamp = cutoff_date.timestamp()
 
-    logger.info(f"Fetching documents with timestamps older than {cutoff_iso}.")
+    logger.info(f"Fetching documents with timestamps older than {cutoff_date.isoformat()} (Unix: {cutoff_timestamp}).")
 
     try:
-        # Note: ChromaDB's string comparison for ISO dates works because the format is lexicographically sortable.
-        # However, this relies on all 'timestamp' metadata values being in the correct ISO 8601 format.
-        # Using a direct query with a 'where' clause is vastly more efficient than fetching all documents.
-        where_filter = {"timestamp": {"$lte": cutoff_iso}}
+        # The 'where' filter now uses the numeric Unix timestamp for comparison.
+        # This requires that the 'timestamp' metadata in ChromaDB is also stored as a Unix timestamp (number).
+        where_filter = {"timestamp": {"$lte": cutoff_timestamp}}
 
         # We get all results at once. If this dataset is enormous, pagination might be needed,
         # but it's still better than loading everything into memory.
@@ -49,10 +49,12 @@ def _fetch_old_documents(prune_days: int) -> List[Dict[str, Any]]:
             ts_str = meta.get("timestamp")
 
             try:
-                # We still parse the timestamp to a datetime object for sorting and other logic.
-                ts = datetime.fromisoformat(ts_str) if ts_str else None
-            except (ValueError, TypeError):
-                logger.warning(f"Could not parse timestamp '{ts_str}' for document ID {doc_id}. Skipping.")
+                # The timestamp from metadata should be a Unix timestamp (float or int).
+                # We convert it to a datetime object for use in the application logic.
+                ts_val = meta.get("timestamp")
+                ts = datetime.fromtimestamp(ts_val) if isinstance(ts_val, (int, float)) else None
+            except (ValueError, TypeError) as e:
+                logger.warning(f"Could not convert timestamp '{ts_val}' for document ID {doc_id}. Error: {e}. Skipping.")
                 ts = None
 
             # The 'where' clause should prevent this, but as a safeguard:
@@ -84,9 +86,11 @@ def _store_timeline_summary(start: datetime, end: datetime, summary: str, source
     # To deserialize later, use json.loads(serialized_ids).
     serialized_ids = json.dumps(source_ids)
     metadata = {
-        "start": start.isoformat(),
-        "end": end.isoformat(),
+        "start": start.timestamp(),
+        "end": end.timestamp(),
         "source_ids": serialized_ids,
+        "start_iso": start.isoformat(),
+        "end_iso": end.isoformat(),
     }
     try:
         rcm.timeline_summary_collection.add(documents=[summary], metadatas=[metadata], ids=[doc_id])
@@ -109,14 +113,22 @@ def _get_collection_timestamps(collection) -> List[datetime]:
         res = collection.get(limit=limit, offset=offset, include=["metadatas"])
         metas = res.get("metadatas", [])
         for meta in metas:
-            ts_str = (meta or {}).get("timestamp") or (meta or {}).get("create_time")
-            if not ts_str:
+            # Handle both numeric (Unix timestamp) and string (ISO format) timestamps for backward compatibility.
+            ts_val = (meta or {}).get("timestamp") or (meta or {}).get("create_time")
+            if ts_val is None:
                 continue
+
             try:
-                ts = datetime.fromisoformat(ts_str)
-            except Exception:
+                if isinstance(ts_val, (int, float)):
+                    ts = datetime.fromtimestamp(ts_val)
+                elif isinstance(ts_val, str):
+                    ts = datetime.fromisoformat(ts_val)
+                else:
+                    continue  # Skip if the type is unexpected
+                timestamps.append(ts)
+            except (ValueError, TypeError) as e:
+                logger.debug(f"Could not parse timestamp '{ts_val}': {e}")
                 continue
-            timestamps.append(ts)
     return timestamps
 
 
