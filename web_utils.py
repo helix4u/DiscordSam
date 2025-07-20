@@ -78,28 +78,6 @@ JS_EXPAND_SHOWMORE_TWITTER = """
 }
 """
 
-JS_CLICK_SEE_MORE_GROUNDNEWS = """
-(maxClicks) => {
-    let clicks = 0;
-    function findButton() {
-        const byId = document.querySelector('#more-stories-my-feed');
-        if (byId) return byId;
-        return Array.from(document.querySelectorAll('button')).find(b =>
-            (b.textContent || '').toLowerCase().includes('see more stories'));
-    }
-    while (clicks < maxClicks) {
-        const btn = findButton();
-        if (!btn) break;
-        try {
-            btn.click();
-            clicks++;
-        } catch (e) {
-            break;
-        }
-    }
-    return clicks;
-}
-"""
 
 JS_EXTRACT_TWEETS_TWITTER = """
 () => {
@@ -860,21 +838,27 @@ async def scrape_ground_news_my(limit: int = 10) -> List[GroundNewsArticle]:
                 await page.goto("https://ground.news/my", wait_until="domcontentloaded")
                 await asyncio.sleep(5)
 
-                try:
-                    clicked = await page.evaluate(
-                        JS_CLICK_SEE_MORE_GROUNDNEWS,
-                        config.GROUND_NEWS_SEE_MORE_CLICKS,
-                    )
-                    if clicked:
-                        logger.info(
-                            "Clicked 'See more stories' button %s time(s) on Ground News",
-                            clicked,
+                clicks = 0
+                for _ in range(config.GROUND_NEWS_SEE_MORE_CLICKS):
+                    try:
+                        btn = await page.query_selector('#more-stories-my-feed')
+                        if not btn:
+                            btn = await page.query_selector("button:has-text('See more stories')")
+                        if not btn:
+                            break
+                        await btn.click()
+                        clicks += 1
+                        await asyncio.sleep(config.GROUND_NEWS_CLICK_DELAY_SECONDS)
+                    except Exception as e_click:
+                        logger.debug(
+                            "Error clicking 'See more stories' on Ground News: %s",
+                            e_click,
                         )
-                        await asyncio.sleep(2)
-                except Exception as e_click:
-                    logger.debug(
-                        "Error clicking 'See more stories' on Ground News: %s",
-                        e_click,
+                        break
+                if clicks:
+                    logger.info(
+                        "Clicked 'See more stories' button %s time(s) on Ground News",
+                        clicks,
                     )
 
                 seen_urls: Set[str] = set()
