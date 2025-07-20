@@ -35,6 +35,7 @@ from web_utils import (
     scrape_latest_tweets,
     scrape_home_timeline,
     scrape_ground_news_my,
+    scrape_ground_news_topic,
     fetch_rss_entries
 )
 from audio_utils import send_tts_audio
@@ -103,6 +104,21 @@ DEFAULT_TWITTER_USERS = [
     "ABC",
     "testingcatalog",
     "WesRothMoney",
+]
+
+# Available Ground News topic pages for the /groundtopic command
+GROUND_NEWS_TOPICS = {
+    "us-politics": ("US Politics", "https://ground.news/interest/us-politics_3c3c3c"),
+    "donald-trump": ("Donald Trump", "https://ground.news/interest/donald-trump"),
+    "stock-markets": ("Stock Markets", "https://ground.news/interest/stock-markets"),
+    "us-immigration": ("US Immigration", "https://ground.news/interest/us-immigration"),
+    "us-crime": ("US Crime", "https://ground.news/interest/us-crime"),
+    "wall-street": ("Wall Street", "https://ground.news/interest/wall-street"),
+}
+
+GROUND_NEWS_TOPIC_CHOICES = [
+    app_commands.Choice(name=disp, value=slug)
+    for slug, (disp, _) in GROUND_NEWS_TOPICS.items()
 ]
 # Module-level globals to store instances passed from main_bot.py
 bot_instance: Optional[commands.Bot] = None
@@ -353,6 +369,115 @@ async def process_ground_news(
     await send_tts_audio(interaction, combined, base_filename=f"groundnews_{interaction.id}")
 
     user_msg = MsgNode("user", f"/groundnews (limit {limit})", name=str(interaction.user.id))
+    assistant_msg = MsgNode("assistant", combined, name=str(bot_instance.user.id))
+    await bot_state_instance.append_history(interaction.channel_id, user_msg, config.MAX_MESSAGE_HISTORY)
+    await bot_state_instance.append_history(interaction.channel_id, assistant_msg, config.MAX_MESSAGE_HISTORY)
+    await ingest_conversation_to_chromadb(
+        llm_client_instance,
+        interaction.channel_id,
+        interaction.user.id,
+        [user_msg, assistant_msg],
+        None,
+    )
+
+    return True
+
+
+async def process_ground_news_topic(
+    interaction: discord.Interaction,
+    topic_slug: str,
+    limit: int,
+) -> bool:
+    """Fetch and summarize new articles from a specific Ground News topic."""
+
+    display_name, topic_url = GROUND_NEWS_TOPICS.get(topic_slug, (topic_slug, topic_slug))
+
+    progress_message = await safe_followup_send(
+        interaction,
+        content=f"Fetching Ground News articles for {display_name}...",
+    )
+
+    seen_urls = load_seen_links()
+
+    articles = await scrape_ground_news_topic(topic_url, limit)
+    new_articles = [a for a in articles if a.url not in seen_urls]
+
+    if not new_articles:
+        await safe_message_edit(
+            progress_message,
+            interaction.channel,
+            content="No new Ground News articles found.",
+        )
+        return False
+
+    summaries: List[str] = []
+    for idx, art in enumerate(new_articles[:limit], 1):
+        progress_message = await safe_message_edit(
+            progress_message,
+            interaction.channel,
+            content=f"Scraping {idx}/{len(new_articles[:limit])}: {art.title}...",
+        )
+
+        scraped_text, _ = await scrape_website(art.url)
+        if not scraped_text or "Failed to scrape" in scraped_text or "Scraping timed out" in scraped_text:
+            summaries.append(f"**{art.title}**\n{art.url}\nCould not scrape article\n")
+            seen_urls.add(art.url)
+            continue
+
+        prompt = (
+            "[It is currently 2025 and Donald Trump is the current president. Biden IS NOT THE CURRENT PRESIDENT! BIDEN IS THE EX PRESIDENT AND TRUMP IS THE PRESIDENT AGAIN FOR HIS SECOND TERM. THIS IS JUST KEY TEMPORAL KNOWLEDGE TO ORIENT YOU WHEN IT COMES UP. ANSWER ACCORDINGLY!] (Just an FYI. Maybe unrelated to context and omitted IF NOT RELATED TO TRUMP OR BIDEN OR THE YEAR. I NEED THE BEHAVIOR OF CALLING TRUMP THE EX-PRESIDENT AND CALLING THE CURRENT ADMINISTRATION THE BIDEN ADMINISTRATIONL. THESE ERRORS ARE UNACCEPTABLE. DON'T MENTION ME YELLING AT YOU. JUST DO THE DAMN THING!). "
+            "Do not use em dashes. Summarize the following article in 3-5 sentences. "
+            "Focus on key facts. Present in a casual, blunt, honest and slightly profane tone. Do NOT start with 'So, ' or end with 'Basically, '. Do not state things like 'This article describes', 'The article', etc. Present is as a person would if they were talking to you about the article.\n\n"
+            f"Title: {art.title}\nURL: {art.url}\n\n{scraped_text[:config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT]}"
+        )
+
+        try:
+            response = await llm_client_instance.chat.completions.create(
+                model=config.FAST_LLM_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=500,
+                temperature=0.5,
+                stream=False,
+            )
+            summary = response.choices[0].message.content.strip() if response.choices else ""
+            if summary and summary != "[LLM summarization failed]":
+                store_rss_summary(
+                    feed_url=f"ground_news_topic_{topic_slug}",
+                    article_url=art.url,
+                    title=art.title,
+                    summary_text=summary,
+                    timestamp=datetime.now(),
+                )
+        except Exception as e_summ:
+            logger.error("LLM summarization failed for %s: %s", art.url, e_summ)
+            summary = "[LLM summarization failed]"
+
+        summaries.append(f"**{art.title}**\n{art.url}\n{summary}\n")
+        seen_urls.add(art.url)
+
+    save_seen_links(seen_urls)
+
+    combined = "\n\n".join(summaries)
+    chunks = chunk_text(combined, config.EMBED_MAX_LENGTH)
+    for i, chunk in enumerate(chunks):
+        embed = discord.Embed(
+            title="Ground News Summaries" + ("" if i == 0 else f" (cont. {i+1})"),
+            description=chunk,
+            color=config.EMBED_COLOR["complete"],
+        )
+        if i == 0:
+            progress_message = await safe_message_edit(
+                progress_message,
+                interaction.channel,
+                content=None,
+                embed=embed,
+            )
+        else:
+            await safe_followup_send(interaction, embed=embed)
+
+    await send_tts_audio(interaction, combined, base_filename=f"groundtopic_{interaction.id}")
+
+    user_msg = MsgNode("user", f"/groundtopic {topic_slug} (limit {limit})", name=str(interaction.user.id))
     assistant_msg = MsgNode("assistant", combined, name=str(bot_instance.user.id))
     await bot_state_instance.append_history(interaction.channel_id, user_msg, config.MAX_MESSAGE_HISTORY)
     await bot_state_instance.append_history(interaction.channel_id, assistant_msg, config.MAX_MESSAGE_HISTORY)
@@ -2118,6 +2243,61 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             if acquired_lock:
                 scrape_lock.release()
                 logger.debug("Scrape lock released for /groundnews")
+
+
+    @bot_instance.tree.command(name="groundtopic", description="Scrapes a Ground News topic page and summarizes new articles.")
+    @app_commands.describe(
+        topic="Topic page to scrape.",
+        limit="Number of articles to fetch (max 50).",
+    )
+    @app_commands.choices(
+        topic=GROUND_NEWS_TOPIC_CHOICES
+    )
+    async def groundtopic_slash_command(
+        interaction: discord.Interaction,
+        topic: str,
+        limit: app_commands.Range[int, 1, 50] = 20,
+    ) -> None:
+        if not llm_client_instance or not bot_state_instance or not bot_instance or not bot_instance.user:
+            logger.error("groundtopic_slash_command: One or more bot components are None.")
+            await interaction.response.send_message("Bot components not ready. Cannot scrape Ground News.", ephemeral=True)
+            return
+
+        if interaction.channel_id is None:
+            await interaction.response.send_message("Error: This command must be used in a channel.", ephemeral=True)
+            return
+
+        scrape_lock = bot_state_instance.get_scrape_lock()
+        queue_notice = scrape_lock.locked()
+        acquired_lock = False
+        if queue_notice:
+            await interaction.response.send_message(
+                "Waiting for other scraping tasks to finish before fetching Ground News...",
+                ephemeral=True,
+            )
+            await scrape_lock.acquire()
+            acquired_lock = True
+            await interaction.followup.send(content="Starting Ground News scraping...")
+        else:
+            await scrape_lock.acquire()
+            acquired_lock = True
+            await interaction.response.defer(ephemeral=False)
+
+        try:
+            processed = await process_ground_news_topic(interaction, topic, limit)
+            if not processed:
+                await safe_followup_send(
+                    interaction,
+                    content="No new Ground News articles found.",
+                    ephemeral=True,
+                )
+        except Exception as e:
+            logger.error("Error in groundtopic_slash_command: %s", e, exc_info=True)
+            await interaction.followup.send(content=f"Failed to process Ground News articles. Error: {str(e)[:500]}")
+        finally:
+            if acquired_lock:
+                scrape_lock.release()
+                logger.debug("Scrape lock released for /groundtopic")
 
 
     @bot_instance.tree.command(name="ap", description="Describes an attached image with a creative AP Photo twist.")
