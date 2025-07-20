@@ -837,21 +837,27 @@ async def _scrape_ground_news_page(page_url: str, limit: int = 10) -> List[Groun
                 await asyncio.sleep(5)
 
                 clicks = 0
+                selectors = [
+                    "#more-stories-my-feed",
+                    "#more-stories-interest",
+                    "#more-stories",
+                    "#more_stories",
+                    "button[id*='more'][id*='stories']",
+                    "button:has-text('More stories')",
+                    "button:has-text('More Stories')",
+                    "button:has-text('See more stories')",
+                ]
+
                 for _ in range(config.GROUND_NEWS_SEE_MORE_CLICKS):
                     try:
-                        btn = await page.query_selector('#more-stories-my-feed')
-                        if not btn:
-                            btn = await page.query_selector('#more-stories-interest')
-                        if not btn:
-                            btn = await page.query_selector('#more-stories')
-                        if not btn:
-                            btn = await page.query_selector('#more_stories')
-                        if not btn:
-                            btn = await page.query_selector("button:has-text('More stories')")
-                        if not btn:
-                            btn = await page.query_selector("button:has-text('See more stories')")
+                        btn = None
+                        for selector in selectors:
+                            btn = await page.query_selector(selector)
+                            if btn:
+                                break
                         if not btn:
                             break
+
                         await btn.click()
                         clicks += 1
                         await asyncio.sleep(config.GROUND_NEWS_CLICK_DELAY_SECONDS)
