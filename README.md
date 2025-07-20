@@ -197,6 +197,7 @@ Below is a comprehensive list of environment variables used by DiscordSam, along
 *   `TTS_API_URL` (Default: `http://localhost:8880/v1/audio/speech`): The endpoint of your OpenAI TTS API compatible server.
 *   `TTS_VOICE` (Default: `af_sky+af+af_nicole`): The voice to be used for TTS generation. The format may depend on your TTS server.
 *   `TTS_MAX_AUDIO_BYTES` (Default: `8388608` (8MB)): Maximum size of a single generated TTS audio clip. Longer audio will be split into parts before uploading to stay under Discord's attachment limits.
+*   `TTS_SPEED` (Default: `1.3`): Playback speed multiplier for TTS audio. Use `1.0` for normal speed.
 
 **Web Features & Scraping:**
 

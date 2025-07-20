@@ -34,14 +34,16 @@ def load_whisper_model() -> Optional[Any]:
             WHISPER_MODEL = None 
     return WHISPER_MODEL
 
-async def tts_request(text: str, speed: float = 1.3) -> Optional[bytes]:
+async def tts_request(text: str, speed: Optional[float] = None) -> Optional[bytes]:
     if not text:
         return None
+    if speed is None:
+        speed = config.TTS_SPEED
     payload = {
         "input": text,
         "voice": config.TTS_VOICE,
-        "response_format": "mp3", 
-        "speed": speed 
+        "response_format": "mp3",
+        "speed": speed,
     }
     try:
         async with aiohttp.ClientSession() as session:
