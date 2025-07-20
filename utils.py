@@ -1,6 +1,9 @@
+import asyncio
+import time
 import re
+from collections import deque
 from datetime import timedelta
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Deque
 import psutil
 import logging
 import discord
@@ -13,6 +16,29 @@ logger = logging.getLogger(__name__)
 # For this refactor, we'll assume config can be imported if placed correctly.
 # If main_bot.py initializes config, then other modules import it from there or config.py
 from config import config
+
+
+class AsyncRateLimiter:
+    """Simple asynchronous rate limiter using a deque of timestamps."""
+
+    def __init__(self, max_calls: int, period: float) -> None:
+        self.max_calls = max_calls
+        self.period = period
+        self._timestamps: Deque[float] = deque()
+        self._lock = asyncio.Lock()
+
+    async def acquire(self) -> None:
+        """Block until making another call is allowed."""
+        while True:
+            async with self._lock:
+                now = time.monotonic()
+                while self._timestamps and now - self._timestamps[0] > self.period:
+                    self._timestamps.popleft()
+                if len(self._timestamps) < self.max_calls:
+                    self._timestamps.append(now)
+                    return
+                wait_for = self.period - (now - self._timestamps[0])
+            await asyncio.sleep(wait_for)
 
 
 def chunk_text(text: str, max_length: int = config.EMBED_MAX_LENGTH) -> List[str]:
