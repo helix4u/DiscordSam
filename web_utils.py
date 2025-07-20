@@ -224,7 +224,7 @@ async def scrape_website(
                         user_data_dir,
                         headless=config.HEADLESS_PLAYWRIGHT,
                         args=["--disable-blink-features=AutomationControlled", "--no-sandbox", "--disable-dev-shm-usage"],
-                        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+                        user_agent="Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"
                     )
                 else:
                     logger.warning("Using non-persistent context for scrape_website due to profile directory issue.")
@@ -233,7 +233,7 @@ async def scrape_website(
                         args=["--disable-blink-features=AutomationControlled", "--no-sandbox", "--disable-dev-shm-usage"]
                     )
                     context = await browser_instance_sw.new_context(
-                        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+                        user_agent="Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
                         java_script_enabled=True,
                         ignore_https_errors=True
                     )
@@ -372,7 +372,7 @@ async def scrape_latest_tweets(username_queried: str, limit: int = 10, progress_
                     context = await p.chromium.launch_persistent_context(
                         user_data_dir, headless=config.HEADLESS_PLAYWRIGHT,
                         args=["--disable-blink-features=AutomationControlled", "--no-sandbox", "--disable-dev-shm-usage"],
-                        user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36",
+                        user_agent="Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
                         slow_mo=150
                     )
                 else:
@@ -383,7 +383,7 @@ async def scrape_latest_tweets(username_queried: str, limit: int = 10, progress_
                         slow_mo=150
                     )
                     context = await browser_instance_st.new_context(
-                        user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36"
+                        user_agent="Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"
                     )
                 context_manager = context
                 page = await context_manager.new_page()
@@ -516,7 +516,7 @@ async def scrape_home_timeline(limit: int = 10, progress_callback: Optional[Call
                         user_data_dir,
                         headless=config.HEADLESS_PLAYWRIGHT,
                         args=["--disable-blink-features=AutomationControlled", "--no-sandbox", "--disable-dev-shm-usage"],
-                        user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36",
+                        user_agent="Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
                         slow_mo=150,
                     )
                 else:
@@ -527,7 +527,7 @@ async def scrape_home_timeline(limit: int = 10, progress_callback: Optional[Call
                         slow_mo=150,
                     )
                     context = await browser_instance_st.new_context(
-                        user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36",
+                        user_agent="Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
                     )
                 context_manager = context
                 page = await context_manager.new_page()
