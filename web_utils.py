@@ -17,7 +17,7 @@ import xml.etree.ElementTree
 
 # Assuming config is imported from config.py
 from config import config
-from utils import cleanup_playwright_processes, async_rate_limiter
+from utils import cleanup_playwright_processes
 from common_models import TweetData, GroundNewsArticle
 
 logger = logging.getLogger(__name__)
@@ -778,7 +778,6 @@ async def fetch_rss_entries(feed_url: str) -> List[Dict[str, Any]]:
         return []
 
 
-@async_rate_limiter(max_calls=3, period=60)
 async def _scrape_ground_news_page(page_url: str, limit: int = 10) -> List[GroundNewsArticle]:
     """Scrape a Ground News page for article links.
 
