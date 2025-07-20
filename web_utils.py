@@ -841,13 +841,7 @@ async def _scrape_ground_news_page(page_url: str, limit: int = 10) -> List[Groun
                     try:
                         btn = await page.query_selector('#more-stories-my-feed')
                         if not btn:
-                            btn = await page.query_selector('#more-stories-interest')
-                        if not btn:
                             btn = await page.query_selector('#more-stories')
-                        if not btn:
-                            btn = await page.query_selector('#more_stories')
-                        if not btn:
-                            btn = await page.query_selector("button:has-text('More stories')")
                         if not btn:
                             btn = await page.query_selector("button:has-text('See more stories')")
                         if not btn:
@@ -857,7 +851,7 @@ async def _scrape_ground_news_page(page_url: str, limit: int = 10) -> List[Groun
                         await asyncio.sleep(config.GROUND_NEWS_CLICK_DELAY_SECONDS)
                     except Exception as e_click:
                         logger.debug(
-                            "Error clicking 'More stories' on Ground News: %s",
+                            "Error clicking 'See more stories' on Ground News: %s",
                             e_click,
                         )
                         break
