@@ -1,6 +1,6 @@
 import re
 from datetime import timedelta
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Any
 import psutil
 import logging
 import discord
@@ -120,14 +120,44 @@ async def safe_followup_send(
 async def safe_message_edit(
     message: discord.Message,
     channel: discord.abc.Messageable,
-    **kwargs,
+    *,
+    cleanup_old: bool = True,
+    **kwargs: Any,
 ) -> discord.Message:
-    """Edit a message, or send a new one if the webhook token expired."""
+    """Edit a message safely.
+
+    Attempts to edit ``message`` with ``kwargs``. If the underlying webhook
+    has expired (HTTP 401 with code 50027), a new message is sent to
+    ``channel`` and, optionally, the old message is removed.
+
+    Parameters
+    ----------
+    message : :class:`discord.Message`
+        The message to edit.
+    channel : :class:`discord.abc.Messageable`
+        Channel used to send a replacement message if editing fails.
+    cleanup_old : bool, optional
+        Whether to delete ``message`` when a new one is sent due to webhook
+        expiration, by default ``True``.
+
+    Returns
+    -------
+    :class:`discord.Message`
+        The edited message, or the newly-sent replacement.
+    """
     try:
         await message.edit(**kwargs)
         return message
     except discord.HTTPException as e:
         if e.status == 401 and getattr(e, "code", None) == 50027:
-            logger.warning("Webhook token expired during edit; sending new message")
-            return await channel.send(**kwargs)
+            logger.warning(
+                "Webhook token expired during edit; sending new message"
+            )
+            new_msg = await channel.send(**kwargs)
+            if cleanup_old:
+                try:
+                    await message.delete()
+                except discord.HTTPException:
+                    pass
+            return new_msg
         raise

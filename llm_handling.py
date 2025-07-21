@@ -297,10 +297,17 @@ async def _stream_llm_handler(
         accumulated_delta_for_update = ""
 
         if current_initial_message:
-            initial_display_embed = discord.Embed(title=title, description=response_prefix + "⏳ Streaming response...", color=config.EMBED_COLOR["incomplete"])
-            await safe_message_edit(
-                current_initial_message, channel, embed=initial_display_embed
+            initial_display_embed = discord.Embed(
+                title=title,
+                description=response_prefix + "⏳ Streaming response...",
+                color=config.EMBED_COLOR["incomplete"],
             )
+            current_initial_message = await safe_message_edit(
+                current_initial_message,
+                channel,
+                embed=initial_display_embed,
+            )
+            sent_messages[0] = current_initial_message
 
         async for chunk_data in stream:
             delta_content = ""
@@ -324,11 +331,13 @@ async def _stream_llm_handler(
                     embed = discord.Embed(
                         title=title if i == 0 else f"{title} (cont.)",
                         description=chunk_content_part,
-                        color=config.EMBED_COLOR["incomplete"]
+                        color=config.EMBED_COLOR["incomplete"],
                     )
                     if i < len(sent_messages):
-                        await safe_message_edit(
-                            sent_messages[i], channel, embed=embed
+                        sent_messages[i] = await safe_message_edit(
+                            sent_messages[i],
+                            channel,
+                            embed=embed,
                         )
                     else:
                         if channel:
@@ -347,11 +356,13 @@ async def _stream_llm_handler(
                 embed = discord.Embed(
                     title=title if i == 0 else f"{title} (cont.)",
                     description=chunk_content_part,
-                    color=config.EMBED_COLOR["incomplete"]
+                    color=config.EMBED_COLOR["incomplete"],
                 )
                 if i < len(sent_messages):
-                    await safe_message_edit(
-                        sent_messages[i], channel, embed=embed
+                    sent_messages[i] = await safe_message_edit(
+                        sent_messages[i],
+                        channel,
+                        embed=embed,
                     )
                 elif channel:
                     sent_messages.append(await channel.send(embed=embed))
@@ -374,7 +385,11 @@ async def _stream_llm_handler(
                 color=config.EMBED_COLOR["complete"]
             )
             if i < len(sent_messages):
-                await safe_message_edit(sent_messages[i], channel, embed=embed)
+                sent_messages[i] = await safe_message_edit(
+                    sent_messages[i],
+                    channel,
+                    embed=embed,
+                )
             elif channel:
                 logger.warning(f"Sending new message for final chunk {i+1} of '{title}' as it wasn't in sent_messages.")
                 sent_messages.append(await channel.send(embed=embed))
@@ -387,7 +402,7 @@ async def _stream_llm_handler(
 
         if not full_response_content.strip() and sent_messages:
             empty_response_text = response_prefix + "\nSam didn't provide a response to the query."
-            await safe_message_edit(
+            sent_messages[0] = await safe_message_edit(
                 sent_messages[0],
                 channel,
                 embed=discord.Embed(
