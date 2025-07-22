@@ -27,21 +27,6 @@ relation_collection: Optional[chromadb.Collection] = None
 observation_collection: Optional[chromadb.Collection] = None
 tweets_collection: Optional[chromadb.Collection] = None # New collection for tweets
 
-
-def _parse_json_with_recovery(content: str) -> Optional[Dict[str, Any]]:
-    """Attempt to load JSON, trimming extraneous text if needed."""
-    try:
-        return json.loads(content)
-    except json.JSONDecodeError as exc:
-        logger.warning(f"Initial JSON parse failed: {exc}; attempting recovery.")
-        start = content.find('{')
-        end = content.rfind('}')
-        if start != -1 and end != -1 and end > start:
-            try:
-                return json.loads(content[start:end+1])
-            except json.JSONDecodeError as exc2:
-                logger.error(f"Trimmed JSON parse failed: {exc2}")
-        return None
 def initialize_chromadb() -> bool:
     global chroma_client, chat_history_collection, distilled_chat_summary_collection, \
            news_summary_collection, rss_summary_collection, timeline_summary_collection, entity_collection, \
@@ -205,25 +190,27 @@ Do not include any explanations or conversational text outside the JSON object.
                     raw_content = raw_content[:-3]
                 raw_content = raw_content.strip()
 
-            extracted_data = _parse_json_with_recovery(raw_content)
-            if extracted_data is None:
-                logger.error(f"extract_structured_data_llm: Failed to decode JSON from LLM response for {source_doc_id}. Content: {raw_content[:500]}")
-                return None
-            if not isinstance(extracted_data, dict) or \
-               not all(key in extracted_data for key in ["entities", "relations", "observations"]) or \
-               not isinstance(extracted_data["entities"], list) or \
-               not isinstance(extracted_data["relations"], list) or \
-               not isinstance(extracted_data["observations"], list):
-                logger.warning(f"extract_structured_data_llm: LLM response for {source_doc_id} was not the expected dict structure. Content: {raw_content[:500]}")
-                return None
+            try:
+                extracted_data = json.loads(raw_content)
+                if not isinstance(extracted_data, dict) or \
+                   not all(key in extracted_data for key in ["entities", "relations", "observations"]) or \
+                   not isinstance(extracted_data["entities"], list) or \
+                   not isinstance(extracted_data["relations"], list) or \
+                   not isinstance(extracted_data["observations"], list):
+                    logger.warning(f"extract_structured_data_llm: LLM response for {source_doc_id} was not the expected dict structure. Content: {raw_content[:500]}")
+                    return None
 
-            logger.info(
-                f"Successfully extracted structured data for {source_doc_id}: "
-                f"{len(extracted_data['entities'])} entities, "
-                f"{len(extracted_data['relations'])} relations, "
-                f"{len(extracted_data['observations'])} observations."
-            )
-            return extracted_data
+                logger.info(f"Successfully extracted structured data for {source_doc_id}: "
+                            f"{len(extracted_data['entities'])} entities, "
+                            f"{len(extracted_data['relations'])} relations, "
+                            f"{len(extracted_data['observations'])} observations.")
+                return extracted_data
+            except json.JSONDecodeError as json_e:
+                logger.error(f"extract_structured_data_llm: Failed to decode JSON from LLM response for {source_doc_id}. Error: {json_e}. Content: {raw_content[:500]}", exc_info=True)
+                return None
+        else:
+            logger.warning(f"extract_structured_data_llm: LLM returned no content for {source_doc_id}.")
+            return None
     except Exception as e:
         if "response_format" in str(e) and response_format_arg:
             logger.warning(f"extract_structured_data_llm: Failed with response_format, retrying without it for {source_doc_id}. Error: {e}")
@@ -245,26 +232,23 @@ Do not include any explanations or conversational text outside the JSON object.
                         if raw_content.endswith("```"):
                             raw_content = raw_content[:-3]
                         raw_content = raw_content.strip()
-                    extracted_data = _parse_json_with_recovery(raw_content)
-                    if extracted_data is None:
-                        logger.error(f"extract_structured_data_llm (retry): Failed to decode JSON from LLM response for {source_doc_id}. Content: {raw_content[:500]}")
-                        return None
-                    if not isinstance(extracted_data, dict) or  \
+                    extracted_data = json.loads(raw_content) # type: ignore
+                    if not isinstance(extracted_data, dict) or \
                        not all(key in extracted_data for key in ["entities", "relations", "observations"]):
                         logger.warning(f"extract_structured_data_llm (retry): LLM response for {source_doc_id} was not the expected dict structure. Content: {raw_content[:500]}")
                         return None
                     logger.info(f"Successfully extracted structured data (on retry) for {source_doc_id}.")
-                    return extracted_data
+                    return extracted_data # type: ignore
                 else:
                     logger.warning(f"extract_structured_data_llm (retry): LLM returned no content for {source_doc_id}.")
                     return None
-
             except Exception as retry_e:
                 logger.error(f"extract_structured_data_llm: Failed on retry for {source_doc_id}: {retry_e}", exc_info=True)
                 return None
         else:
             logger.error(f"extract_structured_data_llm: Failed to extract data for {source_doc_id}: {e}", exc_info=True)
             return None
+
 
 async def distill_conversation_to_sentence_llm(llm_client: Any, text_to_distill: str) -> Optional[str]:
     if not text_to_distill.strip():
