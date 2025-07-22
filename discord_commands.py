@@ -1024,48 +1024,20 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
         logger.info(f"Ingestion of ChatGPT export file '{file_path}' initiated by {interaction.user.name} ({interaction.user.id}).")
 
         if not os.path.exists(file_path):
-            await safe_followup_send(
-                interaction,
-                content=f"Error: File not found at the specified path: `{file_path}`",
-                ephemeral=True,
-            )
+            await interaction.followup.send(f"Error: File not found at the specified path: `{file_path}`", ephemeral=True)
             return
 
         try:
             parsed_conversations = parse_chatgpt_export(file_path)
             if not parsed_conversations:
-                await safe_followup_send(
-                    interaction,
-                    content=(
-                        "Could not parse any conversations from the file. It might be empty or in an unexpected format."
-                    ),
-                    ephemeral=True,
-                )
+                await interaction.followup.send("Could not parse any conversations from the file. It might be empty or in an unexpected format.", ephemeral=True)
                 return
 
-            count = await store_chatgpt_conversations_in_chromadb(
-                llm_client_instance, parsed_conversations
-            )
-            await safe_followup_send(
-                interaction,
-                content=(
-                    f"Successfully processed and stored {count} conversations (with distillations) from the export file into ChromaDB."
-                ),
-                ephemeral=True,
-            )
+            count = await store_chatgpt_conversations_in_chromadb(llm_client_instance, parsed_conversations)
+            await interaction.followup.send(f"Successfully processed and stored {count} conversations (with distillations) from the export file into ChromaDB.", ephemeral=True)
         except Exception as e_ingest:
-            logger.error(
-                f"Error during ChatGPT export ingestion process for file '{file_path}': {e_ingest}",
-                exc_info=True,
-            )
-            await safe_followup_send(
-                interaction,
-                content=(
-                    f"An error occurred during the ingestion process: {str(e_ingest)[:1000]}"
-                ),
-                ephemeral=True,
-                error_hint=" during ingest_chatgpt_export_command",
-            )
+            logger.error(f"Error during ChatGPT export ingestion process for file '{file_path}': {e_ingest}", exc_info=True)
+            await interaction.followup.send(f"An error occurred during the ingestion process: {str(e_ingest)[:1000]}", ephemeral=True)
 
     @ingest_chatgpt_export_command.error
     async def ingest_export_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
@@ -1076,12 +1048,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             if not interaction.response.is_done():
                 await interaction.response.send_message(f"An unexpected error occurred: {str(error)[:500]}", ephemeral=True)
             else:
-                await safe_followup_send(
-                    interaction,
-                    content=f"An unexpected error occurred: {str(error)[:500]}",
-                    ephemeral=True,
-                    error_hint=" in ingest_export_error",
-                )
+                await interaction.followup.send(f"An unexpected error occurred: {str(error)[:500]}", ephemeral=True)
 
 
     @bot_instance.tree.command(name="remindme", description="Sets a reminder. E.g., /remindme 1h30m Check the oven.")
