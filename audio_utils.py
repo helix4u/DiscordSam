@@ -47,7 +47,7 @@ async def tts_request(text: str, speed: Optional[float] = None) -> Optional[byte
     }
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.post(config.TTS_API_URL, json=payload, timeout=45) as resp:
+            async with session.post(config.TTS_API_URL, json=payload, timeout=90) as resp:
                 if resp.status == 200:
                     return await resp.read()
                 else:
