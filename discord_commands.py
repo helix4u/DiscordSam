@@ -1681,12 +1681,6 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                         interaction, content="Fetching next batch..."
                     )
 
-            if total > limit:
-                try:
-                    await progress_message.delete()
-                except discord.HTTPException:
-                    pass
-
             combined_total = "\n\n".join(batch_summaries)
 
             user_msg = MsgNode("user", f"/allrss (limit {limit})", name=str(interaction.user.id))
