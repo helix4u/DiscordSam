@@ -697,7 +697,7 @@ async def stream_llm_response_to_message(
                 pass
 
             try:
-                await target_message.author.send("Post-processing complete.")
+                post_msg = None
             except discord.HTTPException:
                 pass
 
