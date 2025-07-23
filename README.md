@@ -100,7 +100,7 @@ DiscordSam is a modular Python application designed for extensibility and mainta
     *   `_build_initial_prompt_messages()`: Constructs the complete prompt (system message, RAG context, conversation history, user query) to be sent to the LLM.
     *   `stream_llm_response_to_interaction()` and `stream_llm_response_to_message()`: Manage the streaming of LLM responses back to Discord, updating messages in real-time.
     *   Handles post-response actions like updating conversation history in `BotState`, triggering TTS via `audio_utils`, and ingesting the conversation into ChromaDB via `rag_chroma_manager`.
-    *   Shows a short "Post-processing" notification while the conversation is being archived and analyzed.
+    *   Shows a short "Post-processing" notification while the conversation is being archived and analyzed. Once complete, the progress message is removed and the user receives an ephemeral "Post-processing complete" notice (via DM for regular messages).
     *   `get_description_for_image()`: Uses a vision-capable LLM to describe images.
 
 7.  **RAG and ChromaDB Management (`rag_chroma_manager.py`)**:
