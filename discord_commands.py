@@ -1677,9 +1677,20 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 )
 
                 if batch_start + limit < total:
+                    old_progress = progress_message
                     progress_message = await safe_followup_send(
                         interaction, content="Fetching next batch..."
                     )
+                    try:
+                        await old_progress.delete()
+                    except discord.HTTPException:
+                        pass
+
+            if total > limit:
+                try:
+                    await progress_message.delete()
+                except discord.HTTPException:
+                    pass
 
             combined_total = "\n\n".join(batch_summaries)
 
