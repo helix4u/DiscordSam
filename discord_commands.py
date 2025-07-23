@@ -862,7 +862,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             description=f"Gathering news articles for '{search_topic}'...",
             color=config.EMBED_COLOR["incomplete"]
         )
-        await interaction.edit_original_response(embed=initial_embed)
+        progress_message = await interaction.edit_original_response(embed=initial_embed)
 
         try:
             max_articles_to_process = config.NEWS_MAX_LINKS_TO_PROCESS
@@ -876,7 +876,14 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                     description=f"Sorry, I couldn't find any initial search results for '{search_topic}'.",
                     color=config.EMBED_COLOR["error"]
                 )
-                await interaction.edit_original_response(embed=error_embed)
+                if interaction.channel:
+                    progress_message = await safe_message_edit(
+                        progress_message,
+                        interaction.channel,
+                        embed=error_embed,
+                    )
+                else:
+                    await interaction.edit_original_response(embed=error_embed)
                 return
 
             num_to_process = min(len(search_results), max_articles_to_process)
@@ -898,7 +905,14 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                     description=f"Processing article {i+1}/{num_to_process}: Scraping '{article_title}'...",
                     color=config.EMBED_COLOR["incomplete"]
                 )
-                await interaction.edit_original_response(embed=update_embed)
+                if interaction.channel:
+                    progress_message = await safe_message_edit(
+                        progress_message,
+                        interaction.channel,
+                        embed=update_embed,
+                    )
+                else:
+                    await interaction.edit_original_response(embed=update_embed)
 
                 if bot_state_instance and hasattr(bot_state_instance, 'update_last_playwright_usage_time'):
                     await bot_state_instance.update_last_playwright_usage_time() # Made awaitable
@@ -911,7 +925,14 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                     continue
 
                 update_embed.description = f"Processing article {i+1}/{num_to_process}: Summarizing '{article_title}'..."
-                await interaction.edit_original_response(embed=update_embed)
+                if interaction.channel:
+                    progress_message = await safe_message_edit(
+                        progress_message,
+                        interaction.channel,
+                        embed=update_embed,
+                    )
+                else:
+                    await interaction.edit_original_response(embed=update_embed)
 
                 summarization_prompt = (
                     f"You are an expert news summarizer. Please read the following article content, "
@@ -949,11 +970,25 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                     description=f"Could not process any articles to generate a briefing for '{topic}'.",
                     color=config.EMBED_COLOR["error"]
                 )
-                await interaction.edit_original_response(embed=error_embed)
+                if interaction.channel:
+                    progress_message = await safe_message_edit(
+                        progress_message,
+                        interaction.channel,
+                        embed=error_embed,
+                    )
+                else:
+                    await interaction.edit_original_response(embed=error_embed)
                 return
 
             update_embed.description = "All articles processed. Generating final news briefing..."
-            await interaction.edit_original_response(embed=update_embed)
+            if interaction.channel:
+                progress_message = await safe_message_edit(
+                    progress_message,
+                    interaction.channel,
+                    embed=update_embed,
+                )
+            else:
+                await interaction.edit_original_response(embed=update_embed)
 
             combined_summaries_text = "".join(article_summaries_for_briefing)
 
@@ -1003,9 +1038,16 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             )
             try:
                 if interaction.response.is_done():
-                     await interaction.edit_original_response(embed=error_embed, content=None) # Clear content
+                    if interaction.channel:
+                        progress_message = await safe_message_edit(
+                            progress_message,
+                            interaction.channel,
+                            embed=error_embed,
+                            content=None,
+                        )
+                    else:
+                        await interaction.edit_original_response(embed=error_embed, content=None)
                 else:
-                    # This case should ideally not be hit if defer() was successful
                     await interaction.response.send_message(embed=error_embed, ephemeral=True)
             except discord.HTTPException:
                 await interaction.followup.send(embed=error_embed, ephemeral=True)
@@ -1090,7 +1132,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             return
 
         await interaction.response.defer(ephemeral=False)
-        await interaction.edit_original_response(content=f"Getting ready to roast {url}...")
+        progress_message = await interaction.edit_original_response(content=f"Getting ready to roast {url}...")
 
         if bot_state_instance and hasattr(bot_state_instance, 'update_last_playwright_usage_time'):
             await bot_state_instance.update_last_playwright_usage_time() # Made awaitable
@@ -1100,10 +1142,25 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             webpage_text = await scrape_website(url)
             if not webpage_text or "Failed to scrape" in webpage_text or "Scraping timed out" in webpage_text:
                 error_message = f"Sorry, I couldn't properly roast {url}. Reason: {webpage_text or 'Could not retrieve any content from the page.'}"
-                await interaction.edit_original_response(content=error_message, embed=None) # Clear embed
+                if interaction.channel:
+                    progress_message = await safe_message_edit(
+                        progress_message,
+                        interaction.channel,
+                        content=error_message,
+                        embed=None,
+                    )
+                else:
+                    await interaction.edit_original_response(content=error_message, embed=None)  # Clear embed
                 return
 
-            await interaction.edit_original_response(content=f"Crafting a roast for {url} based on its content...")
+            if interaction.channel:
+                progress_message = await safe_message_edit(
+                    progress_message,
+                    interaction.channel,
+                    content=f"Crafting a roast for {url} based on its content...",
+                )
+            else:
+                await interaction.edit_original_response(content=f"Crafting a roast for {url} based on its content...")
 
             user_query_content = f"Analyze the following content from the webpage {url} and write a short, witty, and biting comedy roast routine about it. Be creative and funny, focusing on absurdities or humorous angles. Do not just summarize. Make it a roast!\n\nWebpage Content:\n{webpage_text}"
             user_msg_node = MsgNode("user", user_query_content, name=str(interaction.user.id))
@@ -1129,7 +1186,15 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             )
         except Exception as e:
             logger.error(f"Error in roast_slash_command for URL '{url}': {e}", exc_info=True)
-            await interaction.edit_original_response(content=f"Ouch, the roast attempt for {url} backfired on me! Error: {str(e)[:1000]}", embed=None)
+            if interaction.channel:
+                progress_message = await safe_message_edit(
+                    progress_message,
+                    interaction.channel,
+                    content=f"Ouch, the roast attempt for {url} backfired on me! Error: {str(e)[:1000]}",
+                    embed=None,
+                )
+            else:
+                await interaction.edit_original_response(content=f"Ouch, the roast attempt for {url} backfired on me! Error: {str(e)[:1000]}", embed=None)
 
     @bot_instance.tree.command(name="search", description="Performs a web search and summarizes results.")
     @app_commands.describe(query="Your search query.")
@@ -1145,15 +1210,30 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             return
 
         await interaction.response.defer(ephemeral=False)
-        await interaction.edit_original_response(content=f"Searching the web for: '{query}'...")
+        progress_message = await interaction.edit_original_response(content=f"Searching the web for: '{query}'...")
 
         try:
             search_results = await query_searx(query)
             if not search_results:
-                await interaction.edit_original_response(content=f"Sorry, I couldn't find any search results for '{query}'.", embed=None)
+                if interaction.channel:
+                    progress_message = await safe_message_edit(
+                        progress_message,
+                        interaction.channel,
+                        content=f"Sorry, I couldn't find any search results for '{query}'.",
+                        embed=None,
+                    )
+                else:
+                    await interaction.edit_original_response(content=f"Sorry, I couldn't find any search results for '{query}'.", embed=None)
                 return
 
-            await interaction.edit_original_response(content=f"Found {len(search_results)} results for '{query}'. Processing top results...")
+            if interaction.channel:
+                progress_message = await safe_message_edit(
+                    progress_message,
+                    interaction.channel,
+                    content=f"Found {len(search_results)} results for '{query}'. Processing top results...",
+                )
+            else:
+                await interaction.edit_original_response(content=f"Found {len(search_results)} results for '{query}'. Processing top results...")
 
             max_results_to_process = config.NEWS_MAX_LINKS_TO_PROCESS # Reuse similar config as /news
             num_to_process = min(len(search_results), max_results_to_process)
@@ -1175,7 +1255,15 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                     description=f"Processing result {i+1}/{num_to_process}: Scraping '{page_title}'...",
                     color=config.EMBED_COLOR["incomplete"]
                 )
-                await interaction.edit_original_response(embed=update_embed_search, content=None)
+                if interaction.channel:
+                    progress_message = await safe_message_edit(
+                        progress_message,
+                        interaction.channel,
+                        embed=update_embed_search,
+                        content=None,
+                    )
+                else:
+                    await interaction.edit_original_response(embed=update_embed_search, content=None)
 
                 if bot_state_instance and hasattr(bot_state_instance, 'update_last_playwright_usage_time'):
                     await bot_state_instance.update_last_playwright_usage_time()
@@ -1188,7 +1276,14 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                     continue
 
                 update_embed_search.description = f"Processing result {i+1}/{num_to_process}: Summarizing '{page_title}'..."
-                await interaction.edit_original_response(embed=update_embed_search)
+                if interaction.channel:
+                    progress_message = await safe_message_edit(
+                        progress_message,
+                        interaction.channel,
+                        embed=update_embed_search,
+                    )
+                else:
+                    await interaction.edit_original_response(embed=update_embed_search)
 
                 summarization_prompt_search = (
                     f"You are an expert summarizer. Please read the following web page content, "
@@ -1226,7 +1321,14 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                     description=f"Could not process any web pages to generate a summary for '{query}'.",
                     color=config.EMBED_COLOR["error"]
                 )
-                await interaction.edit_original_response(embed=error_embed_search)
+                if interaction.channel:
+                    progress_message = await safe_message_edit(
+                        progress_message,
+                        interaction.channel,
+                        embed=error_embed_search,
+                    )
+                else:
+                    await interaction.edit_original_response(embed=error_embed_search)
                 return
 
             final_update_embed = discord.Embed(
@@ -1234,7 +1336,14 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 description="All relevant pages processed. Generating final search summary...",
                 color=config.EMBED_COLOR["incomplete"]
             )
-            await interaction.edit_original_response(embed=final_update_embed)
+            if interaction.channel:
+                progress_message = await safe_message_edit(
+                    progress_message,
+                    interaction.channel,
+                    embed=final_update_embed,
+                )
+            else:
+                await interaction.edit_original_response(embed=final_update_embed)
 
             combined_page_summaries_text = "".join(page_summaries_for_final_synthesis)
 
@@ -1274,7 +1383,15 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             )
         except Exception as e:
             logger.error(f"Error in search_slash_command for query '{query}': {e}", exc_info=True)
-            await interaction.edit_original_response(content=f"Yikes, my search circuits are fuzzy! Failed to search for '{query}'. Error: {str(e)[:1000]}", embed=None)
+            if interaction.channel:
+                progress_message = await safe_message_edit(
+                    progress_message,
+                    interaction.channel,
+                    content=f"Yikes, my search circuits are fuzzy! Failed to search for '{query}'. Error: {str(e)[:1000]}",
+                    embed=None,
+                )
+            else:
+                await interaction.edit_original_response(content=f"Yikes, my search circuits are fuzzy! Failed to search for '{query}'. Error: {str(e)[:1000]}", embed=None)
 
     @bot_instance.tree.command(name="pol", description="Generates a sarcastic response to a political statement.")
     @app_commands.describe(statement="The political statement.")
@@ -1564,6 +1681,12 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                         interaction, content="Fetching next batch..."
                     )
 
+            if total > limit:
+                try:
+                    await progress_message.delete()
+                except discord.HTTPException:
+                    pass
+
             combined_total = "\n\n".join(batch_summaries)
 
             user_msg = MsgNode("user", f"/allrss (limit {limit})", name=str(interaction.user.id))
@@ -1653,10 +1776,16 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             )
 
         async def send_progress(message: str) -> None:
+            nonlocal progress_message
+            if not interaction.channel:
+                logger.error("Cannot send progress update for gettweets: interaction.channel is None")
+                return
             try:
-                await progress_message.edit(content=message)
-            except discord.HTTPException as e_prog:
-                logger.warning(f"Failed to send progress update for gettweets (edit original): {e_prog}")
+                progress_message = await safe_message_edit(
+                    progress_message,
+                    interaction.channel,
+                    content=message,
+                )
             except Exception as e_unexp:
                 logger.error(f"Unexpected error in send_progress for gettweets: {e_unexp}", exc_info=True)
 
@@ -1684,7 +1813,15 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 final_content_message = (
                     f"Finished scraping for @{clean_username}. No tweets found or profile might be private/inaccessible."
                 )
-                await progress_message.edit(content=final_content_message, embed=None)
+                if interaction.channel:
+                    progress_message = await safe_message_edit(
+                        progress_message,
+                        interaction.channel,
+                        content=final_content_message,
+                        embed=None,
+                    )
+                else:
+                    await progress_message.edit(content=final_content_message, embed=None)
                 return
 
             new_tweets_to_process = []
@@ -1706,7 +1843,15 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
 
             if not new_tweets_to_process:
                 final_content_message = f"No new tweets found for @{clean_username} since last check."
-                await progress_message.edit(content=final_content_message, embed=None)
+                if interaction.channel:
+                    progress_message = await safe_message_edit(
+                        progress_message,
+                        interaction.channel,
+                        content=final_content_message,
+                        embed=None,
+                    )
+                else:
+                    await progress_message.edit(content=final_content_message, embed=None)
                 # Still save, in case the cache file didn't exist for this user yet.
                 all_seen_tweet_ids_cache[clean_username] = user_seen_tweet_ids.union(processed_tweet_ids_current_run)
                 save_seen_tweet_ids(all_seen_tweet_ids_cache)
@@ -1827,7 +1972,15 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                     color=config.EMBED_COLOR["complete"]
                 )
                 if i == 0:
-                    await progress_message.edit(content=None, embed=embed)
+                    if interaction.channel:
+                        progress_message = await safe_message_edit(
+                            progress_message,
+                            interaction.channel,
+                            content=None,
+                            embed=embed,
+                        )
+                    else:
+                        await progress_message.edit(content=None, embed=embed)
                 else:
                     await interaction.followup.send(embed=embed)
 
@@ -1868,7 +2021,15 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 if interaction.response.is_done():
                     await interaction.followup.send(content=error_content, ephemeral=True)
                 else:
-                    await progress_message.edit(content=error_content, embed=None)
+                    if interaction.channel:
+                        progress_message = await safe_message_edit(
+                            progress_message,
+                            interaction.channel,
+                            content=error_content,
+                            embed=None,
+                        )
+                    else:
+                        await progress_message.edit(content=error_content, embed=None)
             except discord.HTTPException:
                 logger.warning(
                     f"Could not send final error message for gettweets @{user_to_fetch} to user (HTTPException)."
@@ -1932,10 +2093,16 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             )
 
         async def send_progress(message: str) -> None:
+            nonlocal progress_message
+            if not interaction.channel:
+                logger.error("Cannot send progress update for homefeed: interaction.channel is None")
+                return
             try:
-                await progress_message.edit(content=message)
-            except discord.HTTPException as e_prog:
-                logger.warning(f"Failed to send progress update for homefeed (edit original): {e_prog}")
+                progress_message = await safe_message_edit(
+                    progress_message,
+                    interaction.channel,
+                    content=message,
+                )
             except Exception as e_unexp:
                 logger.error(f"Unexpected error in send_progress for homefeed: {e_unexp}", exc_info=True)
 
@@ -1952,7 +2119,15 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
 
             if not fetched_tweets_data:
                 final_content_message = "Finished scraping home timeline. No tweets found or timeline inaccessible."
-                await progress_message.edit(content=final_content_message, embed=None)
+                if interaction.channel:
+                    progress_message = await safe_message_edit(
+                        progress_message,
+                        interaction.channel,
+                        content=final_content_message,
+                        embed=None,
+                    )
+                else:
+                    await progress_message.edit(content=final_content_message, embed=None)
                 return
 
             new_tweets_to_process = []
@@ -1971,7 +2146,15 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
 
             if not new_tweets_to_process:
                 final_content_message = "No new tweets found in the home timeline since last check."
-                await progress_message.edit(content=final_content_message, embed=None)
+                if interaction.channel:
+                    progress_message = await safe_message_edit(
+                        progress_message,
+                        interaction.channel,
+                        content=final_content_message,
+                        embed=None,
+                    )
+                else:
+                    await progress_message.edit(content=final_content_message, embed=None)
                 all_seen_tweet_ids_cache[home_key] = user_seen_tweet_ids.union(processed_tweet_ids_current_run)
                 save_seen_tweet_ids(all_seen_tweet_ids_cache)
                 return
@@ -2077,7 +2260,15 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                     color=config.EMBED_COLOR["complete"]
                 )
                 if i == 0:
-                    await progress_message.edit(content=None, embed=embed)
+                    if interaction.channel:
+                        progress_message = await safe_message_edit(
+                            progress_message,
+                            interaction.channel,
+                            content=None,
+                            embed=embed,
+                        )
+                    else:
+                        await progress_message.edit(content=None, embed=embed)
                 else:
                     await interaction.followup.send(embed=embed)
 
@@ -2118,7 +2309,15 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 if interaction.response.is_done():
                     await interaction.followup.send(content=error_content, ephemeral=True)
                 else:
-                    await progress_message.edit(content=error_content, embed=None)
+                    if interaction.channel:
+                        progress_message = await safe_message_edit(
+                            progress_message,
+                            interaction.channel,
+                            content=error_content,
+                            embed=None,
+                        )
+                    else:
+                        await progress_message.edit(content=error_content, embed=None)
             except discord.HTTPException:
                 logger.warning("Could not send final error message for homefeed to user (HTTPException).")
         finally:
