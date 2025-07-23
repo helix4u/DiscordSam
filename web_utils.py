@@ -395,7 +395,6 @@ async def scrape_latest_tweets(username_queried: str, limit: int = 10, progress_
                 try:
                     await page.wait_for_selector("article[data-testid='tweet']", timeout=30000)
                     logger.info("Initial tweet articles detected on page.")
-                    await asyncio.sleep(1.5); await page.keyboard.press("Escape"); await asyncio.sleep(0.5); await page.keyboard.press("Escape")
                 except PlaywrightTimeoutError:
                     logger.warning(f"Timed out waiting for initial tweet articles for @{username_queried}. Page might be empty or blocked."); return []
 
@@ -462,8 +461,8 @@ async def scrape_latest_tweets(username_queried: str, limit: int = 10, progress_
 
                     # Scroll down to load more tweets
                     try:
-                        await page.evaluate("window.scrollBy(0, window.innerHeight * 1.5);")
-                        await asyncio.sleep(random.uniform(3.0, 5.0))
+                        await page.evaluate("window.scrollBy(0, window.innerHeight * 1);")
+                        await asyncio.sleep(random.uniform(0.5, 2.0))
                     except PlaywrightTimeoutError:
                         logger.warning(f"Timeout during page scroll for @{username_queried}. Assuming end of content or page issue.")
                         break # Stop scrolling if it times out
@@ -489,7 +488,7 @@ async def scrape_latest_tweets(username_queried: str, limit: int = 10, progress_
     return tweets_collected[:limit]
 
 
-async def scrape_home_timeline(limit: int = 10, progress_callback: Optional[Callable[[str], Awaitable[None]]] = None) -> List[TweetData]:
+async def scrape_home_timeline(limit: int = 20, progress_callback: Optional[Callable[[str], Awaitable[None]]] = None) -> List[TweetData]:
     """Scrape tweets from the logged-in home timeline on X/Twitter."""
     logger.info(f"Scraping last {limit} tweets from the home timeline using Playwright JS execution.")
 
@@ -539,10 +538,6 @@ async def scrape_home_timeline(limit: int = 10, progress_callback: Optional[Call
                 try:
                     await page.wait_for_selector("article[data-testid='tweet']", timeout=30000)
                     logger.info("Initial tweet articles detected on home timeline.")
-                    await asyncio.sleep(1.5)
-                    await page.keyboard.press("Escape")
-                    await asyncio.sleep(0.5)
-                    await page.keyboard.press("Escape")
                 except PlaywrightTimeoutError:
                     logger.warning("Timed out waiting for initial tweet articles on home timeline. Page might be empty or blocked.")
                     return []
@@ -613,7 +608,7 @@ async def scrape_home_timeline(limit: int = 10, progress_callback: Optional[Call
 
                     try:
                         await page.evaluate("window.scrollBy(0, window.innerHeight * 1.5);")
-                        await asyncio.sleep(random.uniform(3.0, 5.0))
+                        await asyncio.sleep(random.uniform(0.5, 1.5))
                     except PlaywrightTimeoutError:
                         logger.warning("Timeout during page scroll on home timeline. Assuming end of content or page issue.")
                         break
@@ -778,7 +773,7 @@ async def fetch_rss_entries(feed_url: str) -> List[Dict[str, Any]]:
         return []
 
 
-async def _scrape_ground_news_page(page_url: str, limit: int = 10) -> List[GroundNewsArticle]:
+async def _scrape_ground_news_page(page_url: str, limit: int = 20) -> List[GroundNewsArticle]:
     """Scrape a Ground News page for article links.
 
     This helper is used by the ``scrape_ground_news_my`` and
@@ -790,7 +785,7 @@ async def _scrape_ground_news_page(page_url: str, limit: int = 10) -> List[Groun
     page_url : str
         The full URL of the Ground News page to scrape.
     limit : int, optional
-        Maximum number of article links to return, by default ``10``.
+        Maximum number of article links to return, by default ``20``.
 
     Returns
     -------
