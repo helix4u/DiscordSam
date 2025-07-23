@@ -598,7 +598,6 @@ async def stream_llm_response_to_interaction(
             await interaction.followup.send(
                 content="Post-processing complete.",
                 ephemeral=True,
-                delete_after=10,
             )
         except discord.HTTPException:
             pass
