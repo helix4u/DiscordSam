@@ -692,8 +692,12 @@ async def stream_llm_response_to_message(
 
         if post_msg:
             try:
-                await post_msg.edit(content="Post-processing complete.")
-                await post_msg.delete(delay=10)
+                await post_msg.delete()
+            except discord.HTTPException:
+                pass
+
+            try:
+                await target_message.author.send("Post-processing complete.")
             except discord.HTTPException:
                 pass
 
