@@ -572,6 +572,14 @@ async def stream_llm_response_to_interaction(
         chroma_ingest_history_with_response.append(assistant_response_node)
 
     if assistant_response_node:
+        progress_msg = None
+        try:
+            progress_msg = await interaction.followup.send(
+                content="\U0001F501 Post-processing...", ephemeral=True
+            )
+        except discord.HTTPException:
+            progress_msg = None
+
         await ingest_conversation_to_chromadb(
             llm_client,
             channel_id,
@@ -579,6 +587,12 @@ async def stream_llm_response_to_interaction(
             chroma_ingest_history_with_response,
             retrieved_snippets,
         )
+
+        if progress_msg:
+            try:
+                await progress_msg.edit(content="Post-processing complete.")
+            except discord.HTTPException:
+                pass
 
 
 async def stream_llm_response_to_message(
@@ -652,6 +666,14 @@ async def stream_llm_response_to_message(
         chroma_ingest_history_with_response.append(assistant_response_node)
 
     if assistant_response_node:
+        post_msg = None
+        try:
+            post_msg = await target_message.reply(
+                "\U0001F501 Post-processing...", mention_author=False
+            )
+        except discord.HTTPException:
+            post_msg = None
+
         await ingest_conversation_to_chromadb(
             llm_client,
             channel_id,
@@ -659,6 +681,12 @@ async def stream_llm_response_to_message(
             chroma_ingest_history_with_response,
             retrieved_snippets,
         )
+
+        if post_msg:
+            try:
+                await post_msg.edit(content="Post-processing complete.")
+            except discord.HTTPException:
+                pass
 
 
 async def get_description_for_image(llm_client: Any, image_path: str) -> str:
