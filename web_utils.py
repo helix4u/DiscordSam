@@ -277,7 +277,7 @@ async def scrape_website(
                         except Exception as e_scroll:
                             logger.warning(f"Error scrolling page {url}: {e_scroll}")
                             break
-                        await asyncio.sleep(1.5)  # Wait for content to load after scroll
+                        await asyncio.sleep(1.3)  # Wait for content to load after scroll
                         try:
                             new_height = await page.evaluate("document.body.scrollHeight")
                         except Exception as e_eval:
@@ -348,7 +348,7 @@ async def scrape_website(
     finally:
         await _graceful_close_playwright(page, context_manager, browser_instance_sw, profile_dir_usable)
 
-async def scrape_latest_tweets(username_queried: str, limit: int = 10, progress_callback: Optional[Callable[[str], Awaitable[None]]] = None) -> List[TweetData]:
+async def scrape_latest_tweets(username_queried: str, limit: int = 20, progress_callback: Optional[Callable[[str], Awaitable[None]]] = None) -> List[TweetData]:
     logger.info(f"Scraping last {limit} tweets for @{username_queried} (profile page, with replies) using Playwright JS execution.")
     tweets_collected: List[TweetData] = []
     seen_tweet_ids: set[str] = set()
@@ -406,7 +406,7 @@ async def scrape_latest_tweets(username_queried: str, limit: int = 10, progress_
                         clicked_count = await page.evaluate(JS_EXPAND_SHOWMORE_TWITTER, 5)
                         if clicked_count > 0:
                             logger.info(f"Clicked {clicked_count} 'Show more' elements on Twitter page.");
-                            await asyncio.sleep(1.5 + random.uniform(0.3, 0.9))
+                            await asyncio.sleep(random.uniform(0.5, 2.0))
                     except PlaywrightTimeoutError: # More specific error for JS execution timeout
                         logger.warning(f"Timeout during JS 'Show More' execution for @{username_queried}.")
                     except Exception as e_sm:
@@ -551,7 +551,7 @@ async def scrape_home_timeline(limit: int = 20, progress_callback: Optional[Call
                         clicked_count = await page.evaluate(JS_EXPAND_SHOWMORE_TWITTER, 5)
                         if clicked_count > 0:
                             logger.info(f"Clicked {clicked_count} 'Show more' elements on Twitter page.")
-                            await asyncio.sleep(1.5 + random.uniform(0.3, 0.9))
+                            await asyncio.sleep(random.uniform(0.5, 2.0))
                     except PlaywrightTimeoutError:
                         logger.warning("Timeout during JS 'Show More' execution on home timeline.")
                     except Exception as e_sm:
@@ -915,11 +915,11 @@ async def _scrape_ground_news_page(page_url: str, limit: int = 20) -> List[Groun
     return articles
 
 
-async def scrape_ground_news_my(limit: int = 10) -> List[GroundNewsArticle]:
+async def scrape_ground_news_my(limit: int = 20) -> List[GroundNewsArticle]:
     """Scrape the Ground News 'My Feed' page for article links."""
     return await _scrape_ground_news_page("https://ground.news/my", limit)
 
 
-async def scrape_ground_news_topic(topic_url: str, limit: int = 10) -> List[GroundNewsArticle]:
+async def scrape_ground_news_topic(topic_url: str, limit: int = 20) -> List[GroundNewsArticle]:
     """Scrape a specific Ground News topic page for article links."""
     return await _scrape_ground_news_page(topic_url, limit)
