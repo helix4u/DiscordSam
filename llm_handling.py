@@ -591,7 +591,6 @@ async def stream_llm_response_to_interaction(
         if progress_msg:
             try:
                 await progress_msg.edit(content="Post-processing complete.")
-                await progress_msg.delete(delay=10)
             except discord.HTTPException:
                 pass
 
