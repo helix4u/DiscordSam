@@ -1588,7 +1588,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
     @app_commands.describe(
         username="The X/Twitter username (without @).",
         preset_user="Choose a preset account instead of typing one.",
-        limit="Number of tweets to fetch (max 50)."
+        limit="Number of tweets to fetch (max 100)."
     )
     @app_commands.choices(
         preset_user=[app_commands.Choice(name=u, value=u) for u in DEFAULT_TWITTER_USERS]
@@ -1597,7 +1597,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
         interaction: discord.Interaction,
         username: str = "",
         preset_user: str = "",
-        limit: app_commands.Range[int, 1, 50] = 20,
+        limit: app_commands.Range[int, 1, 100] = 25,
     ):
         if not llm_client_instance or not bot_state_instance or not bot_instance or not bot_instance.user:
             logger.error("gettweets_slash_command: One or more bot components are None.")
@@ -1881,11 +1881,11 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
 
     @bot_instance.tree.command(name="homefeed", description="Fetches and summarizes tweets from your home timeline.")
     @app_commands.describe(
-        limit="Number of tweets to fetch (max 50)."
+        limit="Number of tweets to fetch (max 200)."
     )
     async def homefeed_slash_command(
         interaction: discord.Interaction,
-        limit: app_commands.Range[int, 1, 50] = 20,
+        limit: app_commands.Range[int, 1, 200] = 25,
     ):
         if not llm_client_instance or not bot_state_instance or not bot_instance or not bot_instance.user:
             logger.error("homefeed_slash_command: One or more bot components are None.")
