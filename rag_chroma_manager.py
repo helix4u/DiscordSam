@@ -214,7 +214,7 @@ Do not include any explanations or conversational text outside the JSON object.
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            max_tokens=4096, # Increased max_tokens for potentially larger JSON outputs
+            max_tokens=8192, # Increased max_tokens for potentially larger JSON outputs
             temperature=0.2,
             stream=False,
             **response_format_arg
@@ -363,7 +363,7 @@ async def synthesize_retrieved_contexts_llm(llm_client: Any, retrieved_contexts:
     try:
         logger.debug(f"Requesting context synthesis from model {config.FAST_LLM_MODEL}.")
         response = await llm_client.chat.completions.create(
-            model=config.FAST_LLM_MODEL,
+            model=config.LLM_MODEL,
             messages=[
                 {"role": "system", "content": "You are an expert context synthesizer."},
                 {"role": "user", "content": prompt}
