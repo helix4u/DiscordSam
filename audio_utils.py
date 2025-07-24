@@ -9,7 +9,7 @@ import discord
 import aiohttp
 from pydub import AudioSegment
 import torch 
-import whisper 
+import whisper
 import gc
 
 from config import config
@@ -21,17 +21,44 @@ logger = logging.getLogger(__name__)
 TTS_LOCK = asyncio.Lock()
 
 WHISPER_MODEL: Optional[Any] = None
+WHISPER_UNLOAD_TASK: Optional[asyncio.Task] = None
 
-def load_whisper_model() -> Optional[Any]: 
+def _schedule_whisper_unload() -> None:
+    """Schedule unloading the Whisper model after the configured TTL."""
+    global WHISPER_UNLOAD_TASK
+    if WHISPER_UNLOAD_TASK and not WHISPER_UNLOAD_TASK.done():
+        WHISPER_UNLOAD_TASK.cancel()
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        logger.warning("No running event loop; cannot schedule Whisper unload.")
+        return
+    WHISPER_UNLOAD_TASK = loop.create_task(_unload_whisper_after_delay())
+
+
+async def _unload_whisper_after_delay() -> None:
+    try:
+        await asyncio.sleep(config.WHISPER_TTL_MINUTES * 60)
+        global WHISPER_MODEL
+        if WHISPER_MODEL is not None:
+            logger.info("Whisper model TTL expired. Unloading model.")
+            WHISPER_MODEL = None
+            gc.collect()
+    except asyncio.CancelledError:
+        pass
+
+def load_whisper_model() -> Optional[Any]:
     global WHISPER_MODEL
     if WHISPER_MODEL is None:
         try:
             logger.info("Loading Whisper model...")
-            WHISPER_MODEL = whisper.load_model("large-v3-turbo") 
+            WHISPER_MODEL = whisper.load_model("large-v3-turbo")
             logger.info("Whisper model loaded successfully.")
         except Exception as e:
             logger.critical(f"Failed to load Whisper model: {e}", exc_info=True)
-            WHISPER_MODEL = None 
+            WHISPER_MODEL = None
+    if WHISPER_MODEL is not None:
+        _schedule_whisper_unload()
     return WHISPER_MODEL
 
 async def tts_request(text: str, speed: Optional[float] = None) -> Optional[bytes]:
@@ -199,7 +226,7 @@ def transcribe_audio_file(file_path: str) -> Optional[str]:
     
     if WHISPER_MODEL is None:
         logger.error("Whisper model is not loaded. Cannot transcribe audio.")
-        if load_whisper_model() is None: 
+        if load_whisper_model() is None:
              return None
 
     try:
@@ -209,7 +236,7 @@ def transcribe_audio_file(file_path: str) -> Optional[str]:
         transcribed_text = result.get("text") if isinstance(result, dict) else None
         if transcribed_text:
              logger.info(f"Transcription successful for {file_path}.")
-             return str(transcribed_text) 
+             return str(transcribed_text)
         else:
             logger.warning(f"Whisper transcription for {file_path} did not return 'text'. Result: {result}")
             return None
@@ -217,6 +244,7 @@ def transcribe_audio_file(file_path: str) -> Optional[str]:
         logger.error(f"Whisper transcription failed for {file_path}: {e}", exc_info=True)
         return None
     finally:
+        _schedule_whisper_unload()
         if torch.cuda.is_available():
             gc.collect()
             torch.cuda.empty_cache()
