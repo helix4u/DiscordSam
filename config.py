@@ -72,6 +72,7 @@ class Config:
         self.TTS_API_URL = os.getenv("TTS_API_URL", "http://localhost:8880/v1/audio/speech")
         self.TTS_VOICE = os.getenv("TTS_VOICE", "af_sky+af+af_nicole")
         self.TTS_ENABLED_DEFAULT = _get_bool("TTS_ENABLED_DEFAULT", True)
+        self.TTS_INCLUDE_THOUGHTS = _get_bool("TTS_INCLUDE_THOUGHTS", False)
         # Discord limits attachments from bots to 8MB on most servers.
         # Use 8MB as the default so TTS audio gets split automatically if needed.
         self.TTS_MAX_AUDIO_BYTES = _get_int("TTS_MAX_AUDIO_BYTES", 8 * 1024 * 1024)
