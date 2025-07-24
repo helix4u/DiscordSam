@@ -200,7 +200,6 @@ Below is a comprehensive list of environment variables used by DiscordSam, along
 *   `TTS_MAX_AUDIO_BYTES` (Default: `8388608` (8MB)): Maximum size of a single generated TTS audio clip. Longer audio will be split into parts before uploading to stay under Discord's attachment limits.
 *   `TTS_SPEED` (Default: `1.3`): Playback speed multiplier for TTS audio. Use `1.0` for normal speed.
 *   `TTS_INCLUDE_THOUGHTS` (Default: `false`): If `true`, content within `<think>...</think>` tags will also be spoken using TTS. When `false`, only the user-facing portion of the response is processed.
-*   `WHISPER_TTL_MINUTES` (Default: `5`): How long the Whisper speech-to-text model stays loaded after its last use. The model is unloaded when this time elapses.
 
 **Web Features & Scraping:**
 
