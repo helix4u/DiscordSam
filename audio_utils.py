@@ -169,7 +169,6 @@ async def send_tts_audio(
     if not config.TTS_ENABLED_DEFAULT or not text_to_speak:
         return
 
-    # Serialize TTS processing so audio messages don't overlap
     async with TTS_LOCK:
         think_pattern = re.compile(r"<think>(.*?)</think>", re.DOTALL | re.IGNORECASE)
         match = think_pattern.search(text_to_speak)
@@ -178,11 +177,17 @@ async def send_tts_audio(
             thought_text = match.group(1).strip()
             response_text = think_pattern.sub('', text_to_speak).strip()
 
-            logger.info("Found <think> tags. Processing thoughts and response separately for TTS.")
-            await _send_audio_segment(destination, thought_text, "thoughts", is_thought=True, base_filename=base_filename)
-            await asyncio.sleep(0.5)
+            if config.TTS_INCLUDE_THOUGHTS and thought_text:
+                logger.info("Found <think> tags. Sending thoughts and response for TTS.")
+                await _send_audio_segment(destination, thought_text, "thoughts", is_thought=True, base_filename=base_filename)
+                await asyncio.sleep(0.5)
+            else:
+                logger.info("Found <think> tags. Skipping thoughts for TTS as per config.")
+
             if response_text:
-                await _send_audio_segment(destination, response_text, "main_response", is_thought=False, base_filename=base_filename)
+                await _send_audio_segment(destination, response_text, "main_response" if config.TTS_INCLUDE_THOUGHTS else "full", is_thought=False, base_filename=base_filename)
+            else:
+                logger.info("No user-facing content left for TTS after removing <think> section.")
         else:
             logger.info("No <think> tags found. Processing full text for TTS.")
             await _send_audio_segment(destination, text_to_speak, "full", is_thought=False, base_filename=base_filename)
