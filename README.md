@@ -132,7 +132,7 @@ DiscordSam is a modular Python application designed for extensibility and mainta
 7.  After the stream:
     *   The user's message and the bot's full response are added to `BotState.message_history`.
     *   `audio_utils.send_tts_audio` is called (as a background task) if TTS is enabled.
-    *   `rag_chroma_manager.ingest_conversation_to_chromadb` stores the exchange, extracts structured data, and distills key sentences into ChromaDB.
+    *   `rag_chroma_manager.ingest_conversation_to_chromadb` stores **only** this final user question and bot answer (not the full prompt) and distills it for RAG.
 
 This modular architecture allows for easier development, testing, and modification of individual components without impacting the entire system.
 
@@ -221,7 +221,7 @@ Below is a comprehensive list of environment variables used by DiscordSam, along
 **ChromaDB (RAG & Long-Term Memory):**
 
 *   `CHROMA_DB_PATH` (Default: `./chroma_data`): The local file system path where ChromaDB will store its data.
-*   `CHROMA_COLLECTION_NAME` (Default: `long_term_memory`): Name of the ChromaDB collection for storing full conversation logs.
+*   `CHROMA_COLLECTION_NAME` (Default: `long_term_memory`): Name of the ChromaDB collection for storing recent conversation exchanges (user prompt and bot response).
 *   `CHROMA_DISTILLED_COLLECTION_NAME` (Default: `distilled_chat_summaries`): Name of the collection for storing concise, keyword-rich distilled summaries of conversations (used for primary RAG retrieval).
 *   `CHROMA_NEWS_SUMMARY_COLLECTION_NAME` (Default: `news_summaries`): Collection for storing summaries of news articles processed by the `/news` command.
 *   `CHROMA_RSS_SUMMARY_COLLECTION_NAME` (Default: `rss_summaries`): Collection for storing summaries of RSS feed items processed by the `/rss` command.
