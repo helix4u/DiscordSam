@@ -532,8 +532,11 @@ async def stream_llm_response_to_interaction(
                 interaction, full_response_content, f"interaction_{tts_base_id}"
             )
 
-            chroma_ingest_history_with_response = list(final_prompt_for_rag)
-            chroma_ingest_history_with_response.append(assistant_response_node)
+            # Only store the actual user question and final response for RAG
+            chroma_ingest_history_with_response = [
+                user_msg_node,
+                assistant_response_node,
+            ]
     else:
         full_response_content, final_prompt_for_rag = await _run_stream()
 
@@ -568,8 +571,11 @@ async def stream_llm_response_to_interaction(
 
         await send_tts_audio(interaction, full_response_content, f"interaction_{tts_base_id}")
 
-        chroma_ingest_history_with_response = list(final_prompt_for_rag)
-        chroma_ingest_history_with_response.append(assistant_response_node)
+        # Only store the visible exchange (user question + assistant response)
+        chroma_ingest_history_with_response = [
+            user_msg_node,
+            assistant_response_node,
+        ]
 
     if assistant_response_node:
         progress_msg = None
@@ -670,8 +676,11 @@ async def stream_llm_response_to_message(
             base_filename=f"message_{target_message.id}",
         )
 
-        chroma_ingest_history_with_response = list(final_prompt_for_rag)
-        chroma_ingest_history_with_response.append(assistant_response_node)
+        # Persist only the final visible exchange
+        chroma_ingest_history_with_response = [
+            user_msg_node,
+            assistant_response_node,
+        ]
 
     if assistant_response_node:
         post_msg = None
