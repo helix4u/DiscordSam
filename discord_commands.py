@@ -346,8 +346,35 @@ async def process_ground_news(
             logger.error("LLM summarization failed for %s: %s", art.url, e_summ)
             summary = "[LLM summarization failed]"
 
-        summaries.append(f"**{art.title}**\n{art.url}\n{summary}\n")
+        summary_line = f"**{art.title}**\n{art.url}\n{summary}\n"
+        summaries.append(summary_line)
         seen_urls.add(art.url)
+
+        user_msg_article = MsgNode(
+            "user",
+            f"/groundnews article {idx} (limit {limit})",
+            name=str(interaction.user.id),
+        )
+        assistant_msg_article = MsgNode(
+            "assistant",
+            summary_line,
+            name=str(bot_instance.user.id),
+        )
+        await bot_state_instance.append_history(
+            interaction.channel_id, user_msg_article, config.MAX_MESSAGE_HISTORY
+        )
+        await bot_state_instance.append_history(
+            interaction.channel_id,
+            assistant_msg_article,
+            config.MAX_MESSAGE_HISTORY,
+        )
+        await ingest_conversation_to_chromadb(
+            llm_client_instance,
+            interaction.channel_id,
+            interaction.user.id,
+            [user_msg_article, assistant_msg_article],
+            None,
+        )
 
     save_seen_links(seen_urls)
 
@@ -371,17 +398,7 @@ async def process_ground_news(
 
     await send_tts_audio(interaction, combined, base_filename=f"groundnews_{interaction.id}")
 
-    user_msg = MsgNode("user", f"/groundnews (limit {limit})", name=str(interaction.user.id))
-    assistant_msg = MsgNode("assistant", combined, name=str(bot_instance.user.id))
-    await bot_state_instance.append_history(interaction.channel_id, user_msg, config.MAX_MESSAGE_HISTORY)
-    await bot_state_instance.append_history(interaction.channel_id, assistant_msg, config.MAX_MESSAGE_HISTORY)
-    await ingest_conversation_to_chromadb(
-        llm_client_instance,
-        interaction.channel_id,
-        interaction.user.id,
-        [user_msg, assistant_msg],
-        None,
-    )
+
 
     return True
 
@@ -458,8 +475,35 @@ async def process_ground_news_topic(
             logger.error("LLM summarization failed for %s: %s", art.url, e_summ)
             summary = "[LLM summarization failed]"
 
-        summaries.append(f"**{art.title}**\n{art.url}\n{summary}\n")
+        summary_line = f"**{art.title}**\n{art.url}\n{summary}\n"
+        summaries.append(summary_line)
         seen_urls.add(art.url)
+
+        user_msg_article = MsgNode(
+            "user",
+            f"/groundtopic {topic_slug} article {idx} (limit {limit})",
+            name=str(interaction.user.id),
+        )
+        assistant_msg_article = MsgNode(
+            "assistant",
+            summary_line,
+            name=str(bot_instance.user.id),
+        )
+        await bot_state_instance.append_history(
+            interaction.channel_id, user_msg_article, config.MAX_MESSAGE_HISTORY
+        )
+        await bot_state_instance.append_history(
+            interaction.channel_id,
+            assistant_msg_article,
+            config.MAX_MESSAGE_HISTORY,
+        )
+        await ingest_conversation_to_chromadb(
+            llm_client_instance,
+            interaction.channel_id,
+            interaction.user.id,
+            [user_msg_article, assistant_msg_article],
+            None,
+        )
 
     save_seen_links(seen_urls)
 
@@ -482,18 +526,6 @@ async def process_ground_news_topic(
             await safe_followup_send(interaction, embed=embed)
 
     await send_tts_audio(interaction, combined, base_filename=f"groundtopic_{interaction.id}")
-
-    user_msg = MsgNode("user", f"/groundtopic {topic_slug} (limit {limit})", name=str(interaction.user.id))
-    assistant_msg = MsgNode("assistant", combined, name=str(bot_instance.user.id))
-    await bot_state_instance.append_history(interaction.channel_id, user_msg, config.MAX_MESSAGE_HISTORY)
-    await bot_state_instance.append_history(interaction.channel_id, assistant_msg, config.MAX_MESSAGE_HISTORY)
-    await ingest_conversation_to_chromadb(
-        llm_client_instance,
-        interaction.channel_id,
-        interaction.user.id,
-        [user_msg, assistant_msg],
-        None,
-    )
 
     return True
 

@@ -447,6 +447,7 @@ DiscordSam offers a variety of slash commands for diverse functionalities. Here'
         2.  Skips any links already recorded in `ground_news_seen.json`.
         3.  Scrapes each new article with `web_utils.scrape_website` and summarizes it using the fast LLM.
         4.  Displays the summaries (title, link, short summary) in Discord embeds and updates the cache.
+        5.  Each article summary is ingested into ChromaDB individually as it is processed.
     *   **Requirements:** You must already be logged in to Ground News using Playwright's persistent profile (`.pw-profile`). If not logged in, the command will likely return no articles.
     *   **Output:** Embeds containing summaries for each newly found Ground News article.
 
@@ -460,6 +461,7 @@ DiscordSam offers a variety of slash commands for diverse functionalities. Here'
         2.  Skips links already recorded in `ground_news_seen.json`.
         3.  Scrapes and summarizes each new article via the fast LLM.
         4.  Displays summaries in Discord embeds and updates the cache.
+        5.  Each article summary is ingested into ChromaDB individually as it is processed.
     *   **Requirements:** Same as `/groundnews` &mdash; you must be logged in with Playwright's persistent profile.
     *   **Output:** Embeds containing summaries for each new topic article.
 
