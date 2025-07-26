@@ -322,6 +322,7 @@ async def process_ground_news(
         return False
 
     summaries: List[str] = []
+    progress_ephemeral: Optional[discord.Message] = None
     for idx, art in enumerate(new_articles[:limit], 1):
         if idx > 1:
             # Rate limit scraping
@@ -388,13 +389,22 @@ async def process_ground_news(
             assistant_msg_article,
             config.MAX_MESSAGE_HISTORY,
         )
-        progress_ephemeral = None
-        try:
-            progress_ephemeral = await interaction.followup.send(
-                content="\U0001F501 Post-processing...", ephemeral=True
-            )
-        except discord.HTTPException:
-            progress_ephemeral = None
+        if progress_ephemeral:
+            try:
+                progress_ephemeral = await safe_message_edit(
+                    progress_ephemeral,
+                    interaction.channel,
+                    content="\U0001F501 Post-processing...",
+                )
+            except Exception:
+                progress_ephemeral = None
+        if progress_ephemeral is None:
+            try:
+                progress_ephemeral = await interaction.followup.send(
+                    content="\U0001F501 Post-processing...", ephemeral=True
+                )
+            except discord.HTTPException:
+                progress_ephemeral = None
 
         await ingest_conversation_to_chromadb(
             llm_client_instance,
@@ -406,15 +416,24 @@ async def process_ground_news(
 
         if progress_ephemeral:
             try:
-                await progress_ephemeral.delete()
+                progress_ephemeral = await safe_message_edit(
+                    progress_ephemeral,
+                    interaction.channel,
+                    content="Post-processing complete.",
+                )
+            except Exception:
+                try:
+                    await progress_ephemeral.delete()
+                except discord.HTTPException:
+                    pass
+                progress_ephemeral = None
+        else:
+            try:
+                progress_ephemeral = await interaction.followup.send(
+                    content="Post-processing complete.", ephemeral=True
+                )
             except discord.HTTPException:
-                pass
-        try:
-            await interaction.followup.send(
-                content="Post-processing complete.", ephemeral=True
-            )
-        except discord.HTTPException:
-            pass
+                progress_ephemeral = None
 
     save_seen_links(seen_urls)
 
@@ -471,6 +490,7 @@ async def process_ground_news_topic(
         return False
 
     summaries: List[str] = []
+    progress_ephemeral: Optional[discord.Message] = None
     for idx, art in enumerate(new_articles[:limit], 1):
         if idx > 1:
             # Rate limit scraping
@@ -537,13 +557,22 @@ async def process_ground_news_topic(
             assistant_msg_article,
             config.MAX_MESSAGE_HISTORY,
         )
-        progress_ephemeral = None
-        try:
-            progress_ephemeral = await interaction.followup.send(
-                content="\U0001F501 Post-processing...", ephemeral=True
-            )
-        except discord.HTTPException:
-            progress_ephemeral = None
+        if progress_ephemeral:
+            try:
+                progress_ephemeral = await safe_message_edit(
+                    progress_ephemeral,
+                    interaction.channel,
+                    content="\U0001F501 Post-processing...",
+                )
+            except Exception:
+                progress_ephemeral = None
+        if progress_ephemeral is None:
+            try:
+                progress_ephemeral = await interaction.followup.send(
+                    content="\U0001F501 Post-processing...", ephemeral=True
+                )
+            except discord.HTTPException:
+                progress_ephemeral = None
 
         await ingest_conversation_to_chromadb(
             llm_client_instance,
@@ -555,15 +584,24 @@ async def process_ground_news_topic(
 
         if progress_ephemeral:
             try:
-                await progress_ephemeral.delete()
+                progress_ephemeral = await safe_message_edit(
+                    progress_ephemeral,
+                    interaction.channel,
+                    content="Post-processing complete.",
+                )
+            except Exception:
+                try:
+                    await progress_ephemeral.delete()
+                except discord.HTTPException:
+                    pass
+                progress_ephemeral = None
+        else:
+            try:
+                progress_ephemeral = await interaction.followup.send(
+                    content="Post-processing complete.", ephemeral=True
+                )
             except discord.HTTPException:
-                pass
-        try:
-            await interaction.followup.send(
-                content="Post-processing complete.", ephemeral=True
-            )
-        except discord.HTTPException:
-            pass
+                progress_ephemeral = None
 
     save_seen_links(seen_urls)
 
