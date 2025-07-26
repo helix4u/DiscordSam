@@ -100,7 +100,7 @@ DiscordSam is a modular Python application designed for extensibility and mainta
     *   `_build_initial_prompt_messages()`: Constructs the complete prompt (system message, RAG context, conversation history, user query) to be sent to the LLM.
     *   `stream_llm_response_to_interaction()` and `stream_llm_response_to_message()`: Manage the streaming of LLM responses back to Discord, updating messages in real-time.
     *   Handles post-response actions like updating conversation history in `BotState`, triggering TTS via `audio_utils`, and ingesting the conversation into ChromaDB via `rag_chroma_manager`.
-    *   Shows a short "Post-processing" notification while the conversation is being archived and analyzed. Once complete, the progress message is removed and the user receives an ephemeral "Post-processing complete" notice (via DM for regular messages).
+    *   Shows a short "Post-processing" notification while conversations and other ingestion tasks (e.g., RSS or Ground News summaries) are archived and analyzed. Once complete, the progress message is removed and the user receives an ephemeral "Post-processing complete" notice (via DM for regular messages).
     *   `get_description_for_image()`: Uses a vision-capable LLM to describe images.
 
 7.  **RAG and ChromaDB Management (`rag_chroma_manager.py`)**:
@@ -377,7 +377,7 @@ DiscordSam offers a variety of slash commands for diverse functionalities. Here'
         5.  Displays the summaries (title, publication date in your local time, link, summary) in Discord embeds. If the content is long, it's chunked into multiple embeds.
         6.  Updates the `rss_seen.json` cache.
         7.  Provides TTS for the combined summaries if enabled.
-        8.  The user's command and the bot's full summarized response are added to short-term history and ingested into ChromaDB.
+        8.  The user's command and the bot's full summarized response are added to short-term history and ingested into ChromaDB. A brief ephemeral "Post-processing..." notice appears while this occurs.
         9.  If no new entries are found, the bot replies with an ephemeral message instead of posting publicly.
     *   **Output:** One or more embed messages containing summaries of new RSS feed entries, each showing the title, local publication date, link, and summary.
 
@@ -390,7 +390,7 @@ DiscordSam offers a variety of slash commands for diverse functionalities. Here'
         2.  Combines and sorts all new entries by publication time using the user's local timezone.
         3.  Processes articles in batches of `limit`, scraping and summarizing each just like `/rss`.
         4.  After each batch, sends an embed with the summaries and optional TTS before moving to the next batch.
-        5.  Each batch's summary is immediately archived to ChromaDB so RAG stays updated throughout the run.
+        5.  Each batch's summary is immediately archived to ChromaDB so RAG stays updated throughout the run, showing a short ephemeral "Post-processing..." indicator.
     *   **Output:** Summaries are delivered in batches of `limit` entries until all new articles are processed.
 
 *   **`/gettweets [username] [preset_user] [limit]`**
@@ -405,7 +405,7 @@ DiscordSam offers a variety of slash commands for diverse functionalities. Here'
         3.  Sends the text of these tweets to the LLM with a prompt to analyze and summarize the main themes, topics, and overall sentiment.
         4.  Streams this summary back to the Discord channel as a new message flow.
         5.  Provides TTS for the summary if enabled.
-        6.  Stores newly fetched tweets in the `CHROMA_TWEETS_COLLECTION_NAME` collection for future retrieval.
+        6.  Stores newly fetched tweets in the `CHROMA_TWEETS_COLLECTION_NAME` collection for future retrieval. A short ephemeral "Post-processing..." message indicates when this archival happens.
     *   **Output:**
         *   Embed(s) containing the raw fetched tweets.
         *   A new set of messages (embeds) containing the LLM-generated summary of the tweets. Progress updates are sent during scraping.
@@ -420,7 +420,7 @@ DiscordSam offers a variety of slash commands for diverse functionalities. Here'
         3.  Sends the text of these tweets to the LLM with a prompt to analyze and summarize the main themes, topics, and overall sentiment.
         4.  Streams this summary back to the Discord channel as a new message flow.
         5.  Provides TTS for the summary if enabled.
-        6.  Stores newly fetched tweets in the `CHROMA_TWEETS_COLLECTION_NAME` collection for future retrieval.
+        6.  Stores newly fetched tweets in the `CHROMA_TWEETS_COLLECTION_NAME` collection for future retrieval. A short ephemeral "Post-processing..." message indicates when this archival happens.
     *   **Output:**
         *   Embed(s) containing the raw fetched tweets.
         *   A new set of messages (embeds) containing the LLM-generated summary of the tweets. Progress updates are sent during scraping.
@@ -435,7 +435,7 @@ DiscordSam offers a variety of slash commands for diverse functionalities. Here'
         3.  Displays the raw fetched tweets in Discord embeds, chunked if necessary. Any images are downloaded and described via the vision LLM, and these descriptions are included with the tweet text.
         4.  Sends these tweets to the LLM to generate a brief summary, streamed back to the channel.
         5.  Provides TTS for each summary if enabled.
-        6.  Stores newly fetched tweets in the `CHROMA_TWEETS_COLLECTION_NAME` collection for future retrieval.
+        6.  Stores newly fetched tweets in the `CHROMA_TWEETS_COLLECTION_NAME` collection for future retrieval. A short ephemeral "Post-processing..." message indicates when this archival happens.
     *   **Output:** A series of embeds and summaries for each default account. If no new tweets are found for any account, the bot replies with an ephemeral message.
 
 *   **`/groundnews [limit]`**
@@ -447,7 +447,7 @@ DiscordSam offers a variety of slash commands for diverse functionalities. Here'
         2.  Skips any links already recorded in `ground_news_seen.json`.
         3.  Scrapes each new article with `web_utils.scrape_website` and summarizes it using the fast LLM.
         4.  Displays the summaries (title, link, short summary) in Discord embeds and updates the cache.
-        5.  Each article summary is ingested into ChromaDB individually as it is processed.
+        5.  Each article summary is ingested into ChromaDB individually as it is processed, with a brief ephemeral "Post-processing..." message shown during ingestion.
     *   **Requirements:** You must already be logged in to Ground News using Playwright's persistent profile (`.pw-profile`). If not logged in, the command will likely return no articles.
     *   **Output:** Embeds containing summaries for each newly found Ground News article.
 
@@ -461,7 +461,7 @@ DiscordSam offers a variety of slash commands for diverse functionalities. Here'
         2.  Skips links already recorded in `ground_news_seen.json`.
         3.  Scrapes and summarizes each new article via the fast LLM.
         4.  Displays summaries in Discord embeds and updates the cache.
-        5.  Each article summary is ingested into ChromaDB individually as it is processed.
+        5.  Each article summary is ingested into ChromaDB individually as it is processed, accompanied by a brief ephemeral "Post-processing..." message.
     *   **Requirements:** Same as `/groundnews` &mdash; you must be logged in with Playwright's persistent profile.
     *   **Output:** Embeds containing summaries for each new topic article.
 

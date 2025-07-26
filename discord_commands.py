@@ -266,6 +266,14 @@ async def process_rss_feed(
     assistant_msg = MsgNode("assistant", combined, name=str(bot_instance.user.id))
     await bot_state_instance.append_history(interaction.channel_id, user_msg, config.MAX_MESSAGE_HISTORY)
     await bot_state_instance.append_history(interaction.channel_id, assistant_msg, config.MAX_MESSAGE_HISTORY)
+    progress_msg = None
+    try:
+        progress_msg = await interaction.followup.send(
+            content="\U0001F501 Post-processing...", ephemeral=True
+        )
+    except discord.HTTPException:
+        progress_msg = None
+
     await ingest_conversation_to_chromadb(
         llm_client_instance,
         interaction.channel_id,
@@ -273,6 +281,18 @@ async def process_rss_feed(
         [user_msg, assistant_msg],
         None,
     )
+
+    if progress_msg:
+        try:
+            await progress_msg.delete()
+        except discord.HTTPException:
+            pass
+    try:
+        await interaction.followup.send(
+            content="Post-processing complete.", ephemeral=True
+        )
+    except discord.HTTPException:
+        pass
 
     return True
 
@@ -368,6 +388,14 @@ async def process_ground_news(
             assistant_msg_article,
             config.MAX_MESSAGE_HISTORY,
         )
+        progress_ephemeral = None
+        try:
+            progress_ephemeral = await interaction.followup.send(
+                content="\U0001F501 Post-processing...", ephemeral=True
+            )
+        except discord.HTTPException:
+            progress_ephemeral = None
+
         await ingest_conversation_to_chromadb(
             llm_client_instance,
             interaction.channel_id,
@@ -375,6 +403,18 @@ async def process_ground_news(
             [user_msg_article, assistant_msg_article],
             None,
         )
+
+        if progress_ephemeral:
+            try:
+                await progress_ephemeral.delete()
+            except discord.HTTPException:
+                pass
+        try:
+            await interaction.followup.send(
+                content="Post-processing complete.", ephemeral=True
+            )
+        except discord.HTTPException:
+            pass
 
     save_seen_links(seen_urls)
 
@@ -497,6 +537,14 @@ async def process_ground_news_topic(
             assistant_msg_article,
             config.MAX_MESSAGE_HISTORY,
         )
+        progress_ephemeral = None
+        try:
+            progress_ephemeral = await interaction.followup.send(
+                content="\U0001F501 Post-processing...", ephemeral=True
+            )
+        except discord.HTTPException:
+            progress_ephemeral = None
+
         await ingest_conversation_to_chromadb(
             llm_client_instance,
             interaction.channel_id,
@@ -504,6 +552,18 @@ async def process_ground_news_topic(
             [user_msg_article, assistant_msg_article],
             None,
         )
+
+        if progress_ephemeral:
+            try:
+                await progress_ephemeral.delete()
+            except discord.HTTPException:
+                pass
+        try:
+            await interaction.followup.send(
+                content="Post-processing complete.", ephemeral=True
+            )
+        except discord.HTTPException:
+            pass
 
     save_seen_links(seen_urls)
 
@@ -1724,6 +1784,14 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                     assistant_msg,
                     config.MAX_MESSAGE_HISTORY,
                 )
+                progress_note = None
+                try:
+                    progress_note = await interaction.followup.send(
+                        content="\U0001F501 Post-processing...", ephemeral=True
+                    )
+                except discord.HTTPException:
+                    progress_note = None
+
                 await ingest_conversation_to_chromadb(
                     llm_client_instance,
                     interaction.channel_id,
@@ -1731,6 +1799,18 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                     [user_msg, assistant_msg],
                     None,
                 )
+
+                if progress_note:
+                    try:
+                        await progress_note.delete()
+                    except discord.HTTPException:
+                        pass
+                try:
+                    await interaction.followup.send(
+                        content="Post-processing complete.", ephemeral=True
+                    )
+                except discord.HTTPException:
+                    pass
 
                 if batch_start + limit < total:
                     old_progress = progress_message
@@ -2435,6 +2515,14 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             )
             await bot_state_instance.append_history(interaction.channel_id, user_msg, config.MAX_MESSAGE_HISTORY)
             await bot_state_instance.append_history(interaction.channel_id, assistant_msg, config.MAX_MESSAGE_HISTORY)
+            progress_note = None
+            try:
+                progress_note = await interaction.followup.send(
+                    content="\U0001F501 Post-processing...", ephemeral=True
+                )
+            except discord.HTTPException:
+                progress_note = None
+
             await ingest_conversation_to_chromadb(
                 llm_client_instance,
                 interaction.channel_id,
@@ -2442,6 +2530,18 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 [user_msg, assistant_msg],
                 None,
             )
+
+            if progress_note:
+                try:
+                    await progress_note.delete()
+                except discord.HTTPException:
+                    pass
+            try:
+                await interaction.followup.send(
+                    content="Post-processing complete.", ephemeral=True
+                )
+            except discord.HTTPException:
+                pass
         except Exception as e:
             logger.error(f"Error in alltweets_slash_command: {e}", exc_info=True)
             await interaction.followup.send(content=f"Failed to process tweets. Error: {str(e)[:500]}")
