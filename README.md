@@ -390,6 +390,7 @@ DiscordSam offers a variety of slash commands for diverse functionalities. Here'
         2.  Combines and sorts all new entries by publication time using the user's local timezone.
         3.  Processes articles in batches of `limit`, scraping and summarizing each just like `/rss`.
         4.  After each batch, sends an embed with the summaries and optional TTS before moving to the next batch.
+        5.  Each batch's summary is immediately archived to ChromaDB so RAG stays updated throughout the run.
     *   **Output:** Summaries are delivered in batches of `limit` entries until all new articles are processed.
 
 *   **`/gettweets [username] [preset_user] [limit]`**

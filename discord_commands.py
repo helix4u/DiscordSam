@@ -1676,6 +1676,30 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                     base_filename=f"rss_{interaction.id}_{batch_start // limit + 1}",
                 )
 
+                user_msg = MsgNode(
+                    "user",
+                    f"/allrss batch {batch_start // limit + 1} (limit {limit})",
+                    name=str(interaction.user.id),
+                )
+                assistant_msg = MsgNode(
+                    "assistant", combined, name=str(bot_instance.user.id)
+                )
+                await bot_state_instance.append_history(
+                    interaction.channel_id, user_msg, config.MAX_MESSAGE_HISTORY
+                )
+                await bot_state_instance.append_history(
+                    interaction.channel_id,
+                    assistant_msg,
+                    config.MAX_MESSAGE_HISTORY,
+                )
+                await ingest_conversation_to_chromadb(
+                    llm_client_instance,
+                    interaction.channel_id,
+                    interaction.user.id,
+                    [user_msg, assistant_msg],
+                    None,
+                )
+
                 if batch_start + limit < total:
                     old_progress = progress_message
                     progress_message = await safe_followup_send(
@@ -1692,19 +1716,9 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 except discord.HTTPException:
                     pass
 
+            # Store a final combined summary if needed in the future, but
+            # ingestion now happens per batch when the TTS audio is sent.
             combined_total = "\n\n".join(batch_summaries)
-
-            user_msg = MsgNode("user", f"/allrss (limit {limit})", name=str(interaction.user.id))
-            assistant_msg = MsgNode("assistant", combined_total, name=str(bot_instance.user.id))
-            await bot_state_instance.append_history(interaction.channel_id, user_msg, config.MAX_MESSAGE_HISTORY)
-            await bot_state_instance.append_history(interaction.channel_id, assistant_msg, config.MAX_MESSAGE_HISTORY)
-            await ingest_conversation_to_chromadb(
-                llm_client_instance,
-                interaction.channel_id,
-                interaction.user.id,
-                [user_msg, assistant_msg],
-                None,
-            )
         except Exception as e:
             logger.error(f"Error in allrss_slash_command: {e}", exc_info=True)
             await interaction.followup.send(content=f"Failed to process RSS feeds. Error: {str(e)[:500]}")
