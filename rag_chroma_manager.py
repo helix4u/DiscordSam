@@ -507,8 +507,14 @@ async def retrieve_and_prepare_rag_context(llm_client: Any, query: str, n_result
                     full_convo_docs_result = chat_history_collection.get(ids=unique_full_convo_ids_to_fetch, include=["documents"])
                     if full_convo_docs_result and full_convo_docs_result.get('documents'):
                         valid_docs = [doc for doc in full_convo_docs_result['documents'] if isinstance(doc, str)]
+                        max_chars = getattr(config, 'RAG_MAX_FULL_CONVO_CHARS', 20000)
                         for doc_text in valid_docs:
-                            retrieved_contexts_raw.append((doc_text, "chat_history_via_distilled"))
+                            truncated_doc = doc_text[-max_chars:] if len(doc_text) > max_chars else doc_text
+                            if len(doc_text) > max_chars:
+                                logger.debug(
+                                    f"RAG: Truncated chat_history_via_distilled document from {len(doc_text)} to {max_chars} chars."
+                                )
+                            retrieved_contexts_raw.append((truncated_doc, "chat_history_via_distilled"))
                         logger.info(f"RAG: Retrieved {len(valid_docs)} full conversation texts via distilled sentences.")
                     else:
                         logger.warning(f"RAG: Could not retrieve some/all full conversation documents for IDs: {unique_full_convo_ids_to_fetch}. Result: {full_convo_docs_result}")
@@ -551,8 +557,15 @@ async def retrieve_and_prepare_rag_context(llm_client: Any, query: str, n_result
                     # Ensure that res["documents"][0] is a list of strings
                     docs_from_collection = [doc for doc in res["documents"][0] if isinstance(doc, str)]
                     if docs_from_collection:
+                        max_chars = getattr(config, 'RAG_MAX_FULL_CONVO_CHARS', 20000)
                         for doc_text in docs_from_collection:
-                            retrieved_contexts_raw.append((doc_text, name)) # Use collection 'name' as source
+                            truncated_doc = doc_text
+                            if name == 'chat_history' and len(doc_text) > max_chars:
+                                truncated_doc = doc_text[-max_chars:]
+                                logger.debug(
+                                    f"RAG: Truncated chat_history document from {len(doc_text)} to {max_chars} chars."
+                                )
+                            retrieved_contexts_raw.append((truncated_doc, name))
                         logger.info(f"RAG: Retrieved {len(docs_from_collection)} documents from '{name}' collection.")
                     else:
                         logger.info(f"RAG: No documents found in '{name}' collection for the query.")

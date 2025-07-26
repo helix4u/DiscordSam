@@ -232,6 +232,7 @@ Below is a comprehensive list of environment variables used by DiscordSam, along
 *   `CHROMA_OBSERVATIONS_COLLECTION_NAME` (Default: `observations_collection`): Collection for storing extracted key observations or facts.
 *   `RAG_NUM_DISTILLED_SENTENCES_TO_FETCH` (Default: `3`): How many relevant distilled sentences/summaries to fetch from `CHROMA_DISTILLED_COLLECTION_NAME` for RAG context.
 *   `RAG_NUM_COLLECTION_DOCS_TO_FETCH` (Default: `3`): How many relevant documents to fetch from other ChromaDB collections (news, timeline, entities, etc.) for RAG context.
+*   `RAG_MAX_FULL_CONVO_CHARS` (Default: `20000`): When retrieving full conversation logs for RAG context, only the last N characters of each log will be used, trimming the oldest text from the beginning.
 *   `ENABLE_MEMORY_MERGE` (Default: `false`): Set to `true` to merge retrieved memory snippets with new conversation summaries after each response.
 *   `TIMELINE_PRUNE_DAYS` (Default: `30`): How many days of chat history to retain in the main `CHROMA_COLLECTION_NAME` before the daily `timeline_pruner_task` summarizes and moves it to `CHROMA_TIMELINE_SUMMARY_COLLECTION_NAME`.
 
