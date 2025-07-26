@@ -56,7 +56,7 @@ DEFAULT_RSS_FEEDS = [
     ("Google News", "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en"),
     ("CBS News - US", "https://www.cbsnews.com/latest/rss/us"),
     ("The Daily Beast", "https://www.thedailybeast.com/arc/outboundfeeds/rss/articles/"),
-    ("Yahoo News", "https://www.yahoo.com/news/rss"),
+    ("DoD Releases", "https://www.defense.gov/DesktopModules/ArticleCS/RSS.ashx?ContentType=9&Site=945&max=10"),
     ("ABC Politics Headlines", "https://abcnews.go.com/abcnews/politicsheadlines"),
     ("ABC US Headlines", "https://abcnews.go.com/abcnews/usheadlines"),
     ("SAN", "https://san.com/feed/"),
