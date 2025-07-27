@@ -96,14 +96,14 @@ DEFAULT_TWITTER_USERS = [
     "ap",
     "cspan",
     "thehill",
-    "atrupar",
-    "kslcom",
+    "JDVance",
+    "FBI",
     "wutangkids",
-    "sama",
+    "DNIGabbard",
     "CNBC",
     "ABC",
-    "testingcatalog",
-    "WesRothMoney",
+    "TriciaOhio",
+    "ICEgov",
 ]
 
 # Available Ground News topic pages for the /groundtopic command
