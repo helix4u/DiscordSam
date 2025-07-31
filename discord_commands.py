@@ -408,7 +408,6 @@ async def process_ground_news(
                 None,
             ),
             progress_message=progress_ephemeral,
-            followup_interaction=interaction,
         )
 
     save_seen_links(seen_urls)
@@ -559,7 +558,6 @@ async def process_ground_news_topic(
                 None,
             ),
             progress_message=progress_ephemeral,
-            followup_interaction=interaction,
         )
 
     save_seen_links(seen_urls)
