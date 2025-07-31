@@ -119,6 +119,8 @@ DiscordSam is a modular Python application designed for extensibility and mainta
     *   **`rss_cache.py`**: Manages a local cache of seen RSS feed items to avoid reprocessing.
     *   **`timeline_pruner.py`**: Contains logic for the background task that prunes and summarizes old chat history from ChromaDB.
     *   **`rag_cleanup.py`**: Utility script that removes distilled summary entries referencing conversation IDs that no longer exist in the main chat history collection.
+    *   **`open_chatgpt_login.py`**: Launches a persistent Playwright browser so you can log into ChatGPT (or other services) once and reuse the saved cookies.
+    *   **`llm_request_processor.py`**: Optional worker for processing queued LLM requests separately from the Discord event loop.
 
 **Data Flow Example (User sends a message mentioning the bot):**
 
@@ -158,6 +160,9 @@ This modular architecture allows for easier development, testing, and modificati
 *   **CUDA-enabled GPU:**
     *   Strongly recommended for faster Whisper audio transcription (especially with fp16).
     *   Also beneficial for running local LLMs if they support GPU acceleration.
+*   **Playwright login profile (optional):**
+    *   Some scraping features (e.g., ChatGPT transcript imports, Ground News, Twitter home timeline) require a logged-in browser profile.
+    *   Run `python open_chatgpt_login.py` once to open a persistent Playwright browser (`.pw-profile`) and sign in to the necessary services.
 
 ---
 
@@ -235,6 +240,7 @@ Below is a comprehensive list of environment variables used by DiscordSam, along
 *   `RAG_MAX_FULL_CONVO_CHARS` (Default: `20000`): When retrieving full conversation logs for RAG context, only the last N characters of each log will be used, trimming the oldest text from the beginning.
 *   `ENABLE_MEMORY_MERGE` (Default: `false`): Set to `true` to merge retrieved memory snippets with new conversation summaries after each response.
 *   `TIMELINE_PRUNE_DAYS` (Default: `30`): How many days of chat history to retain in the main `CHROMA_COLLECTION_NAME` before the daily `timeline_pruner_task` summarizes and moves it to `CHROMA_TIMELINE_SUMMARY_COLLECTION_NAME`.
+    *   The summarized timeline entries are stored in a separate collection so the main history stays small while older context remains searchable.
 
 **Discord Embed & Streaming Settings:**
 
@@ -254,7 +260,7 @@ Below is a comprehensive list of environment variables used by DiscordSam, along
 
 1.  **Clone the repository:**
     ```bash
-    git clone https://github.com/username/repository.git # Replace with your repository's URL or skip if already cloned
+    git clone https://github.com/helix4u/DiscordSam.git
     cd DiscordSam
     ```
 
@@ -399,14 +405,15 @@ DiscordSam offers a variety of slash commands for diverse functionalities. Here'
     *   **Arguments:**
         *   `username` (Optional): The X/Twitter username (without the '@').
         *   `preset_user` (Optional): Choose a username from a predefined list. If both `username` and `preset_user` are provided, `username` takes precedence. One must be provided.
-        *   `limit` (Optional, Default: 10): The maximum number of tweets to fetch (max 50).
+        *   `limit` (Optional, Default: 25): The maximum number of tweets to fetch (max 100).
     *   **Behavior:**
         1.  Uses `web_utils.scrape_latest_tweets` (Playwright with JS execution) to scrape recent tweets from the user's profile (specifically their "with_replies" timeline).
         2.  Displays the raw fetched tweets (timestamp, author, content, link) in Discord embeds, chunked if necessary. Any images are downloaded and described via the vision LLM, and these descriptions are included with the tweet text.
         3.  Sends the text of these tweets to the LLM with a prompt to analyze and summarize the main themes, topics, and overall sentiment.
         4.  Streams this summary back to the Discord channel as a new message flow.
         5.  Provides TTS for the summary if enabled.
-        6.  Stores newly fetched tweets in the `CHROMA_TWEETS_COLLECTION_NAME` collection for future retrieval. A short ephemeral "Post-processing..." message indicates when this archival happens.
+        6.  Stores newly fetched tweets in the `CHROMA_TWEETS_COLLECTION_NAME` collection for future retrieval and records their IDs so they aren't resummarized later. A short ephemeral "Post-processing..." message indicates when this archival happens.
+        7.  If another scraping task is running, the bot sends an ephemeral "waiting for other scraping tasks" notice while it queues your request.
     *   **Output:**
         *   Embed(s) containing the raw fetched tweets.
         *   A new set of messages (embeds) containing the LLM-generated summary of the tweets. Progress updates are sent during scraping.
@@ -414,14 +421,15 @@ DiscordSam offers a variety of slash commands for diverse functionalities. Here'
 *   **`/homefeed [limit]`**
     *   **Purpose:** Fetches and summarizes tweets from the logged-in X/Twitter home timeline.
     *   **Arguments:**
-        *   `limit` (Optional, Default: 10): The maximum number of tweets to fetch (max 50).
+        *   `limit` (Optional, Default: 25): The maximum number of tweets to fetch (max 200).
     *   **Behavior:**
         1.  Uses `web_utils.scrape_home_timeline` (Playwright with JS execution) to scrape tweets from `https://x.com/home`.
         2.  Displays the raw fetched tweets (timestamp, author, content, link) in Discord embeds, chunked if necessary. Any images are downloaded and described via the vision LLM, and these descriptions are included with the tweet text.
         3.  Sends the text of these tweets to the LLM with a prompt to analyze and summarize the main themes, topics, and overall sentiment.
         4.  Streams this summary back to the Discord channel as a new message flow.
         5.  Provides TTS for the summary if enabled.
-        6.  Stores newly fetched tweets in the `CHROMA_TWEETS_COLLECTION_NAME` collection for future retrieval. A short ephemeral "Post-processing..." message indicates when this archival happens.
+        6.  Stores newly fetched tweets in the `CHROMA_TWEETS_COLLECTION_NAME` collection for future retrieval and records their IDs so they aren't resummarized later. A short ephemeral "Post-processing..." message indicates when this archival happens.
+        7.  If another scraping task is running, the bot sends an ephemeral "waiting for other scraping tasks" notice while it queues your request.
     *   **Output:**
         *   Embed(s) containing the raw fetched tweets.
         *   A new set of messages (embeds) containing the LLM-generated summary of the tweets. Progress updates are sent during scraping.
@@ -442,13 +450,14 @@ DiscordSam offers a variety of slash commands for diverse functionalities. Here'
 *   **`/groundnews [limit]`**
     *   **Purpose:** Scrapes the Ground News "My Feed" page and summarizes new articles.
     *   **Arguments:**
-        *   `limit` (Optional, Default: 10): Maximum number of articles to process (max 50).
+        *   `limit` (Optional, Default: 20): Maximum number of articles to process (max 50).
     *   **Behavior:**
         1.  Uses `web_utils.scrape_ground_news_my` (Playwright) to extract "See the Story" links, scrolling the page to load more items if necessary.
         2.  Skips any links already recorded in `ground_news_seen.json`.
         3.  Scrapes each new article with `web_utils.scrape_website` and summarizes it using the fast LLM.
         4.  Displays the summaries (title, link, short summary) in Discord embeds and updates the cache.
         5.  Each article summary is ingested into ChromaDB individually as it is processed, with a brief ephemeral "Post-processing..." message shown during ingestion.
+        6.  If another scraping task is running, you will see an ephemeral "waiting for other scraping tasks" notice until the global scrape lock is free.
     *   **Requirements:** You must already be logged in to Ground News using Playwright's persistent profile (`.pw-profile`). If not logged in, the command will likely return no articles.
     *   **Output:** Embeds containing summaries for each newly found Ground News article.
 
@@ -456,13 +465,14 @@ DiscordSam offers a variety of slash commands for diverse functionalities. Here'
     *   **Purpose:** Scrapes a specified Ground News topic page and summarizes new articles.
     *   **Arguments:**
         *   `topic` (Required): The topic to fetch, chosen from a preset list.
-        *   `limit` (Optional, Default: 10): Maximum number of articles to process (max 50).
+        *   `limit` (Optional, Default: 20): Maximum number of articles to process (max 50).
     *   **Behavior:**
         1.  Uses `web_utils.scrape_ground_news_topic` to extract "See the Story" links from the selected topic page.
         2.  Skips links already recorded in `ground_news_seen.json`.
         3.  Scrapes and summarizes each new article via the fast LLM.
         4.  Displays summaries in Discord embeds and updates the cache.
         5.  Each article summary is ingested into ChromaDB individually as it is processed, accompanied by a brief ephemeral "Post-processing..." message.
+        6.  If another scraping task is running, you will see an ephemeral "waiting for other scraping tasks" notice until the global scrape lock is free.
     *   **Requirements:** Same as `/groundnews` &mdash; you must be logged in with Playwright's persistent profile.
     *   **Output:** Embeds containing summaries for each new topic article.
 
@@ -524,7 +534,18 @@ If you encounter issues, the console output containing these logs is the first p
 
 ---
 
-## 11. Troubleshooting
+## 11. Maintenance & Auxiliary Scripts
+
+Several helper scripts are provided for upkeep and optional functionality:
+
+* **`timeline_pruner.py`** – Summarizes chat logs older than `TIMELINE_PRUNE_DAYS` and stores the results in `CHROMA_TIMELINE_SUMMARY_COLLECTION_NAME`. This runs daily via a background task but can also be executed manually.
+* **`rag_cleanup.py`** – Removes distilled summaries that reference conversations which no longer exist in the main history collection.
+* **`open_chatgpt_login.py`** – Launches a persistent Playwright browser (`.pw-profile`) so you can log into ChatGPT or other sites once and reuse the saved cookies.
+* **`llm_request_processor.py`** – Experimental worker that processes queued LLM requests separately from the Discord bot. Start it with `python llm_request_processor.py` if you wish to try concurrent request handling.
+
+---
+
+## 12. Troubleshooting
 
 *   **Playwright Processes:** If Chromium or Playwright processes remain running after scraping, the bot has a built-in task (`cleanup_playwright_task` in `discord_events.py`) that attempts to clean them up periodically based on `PLAYWRIGHT_CLEANUP_INTERVAL_MINUTES` and `PLAYWRIGHT_IDLE_CLEANUP_THRESHOLD_MINUTES`. You can also manually kill these processes if needed.
 *   **Model Not Found Errors:** Ensure the model names specified in your `.env` file (e.g., `LLM`, `VISION_LLM_MODEL`, `FAST_LLM_MODEL`) exactly match the models loaded and available on your LLM server at `LOCAL_SERVER_URL`.
@@ -533,7 +554,7 @@ If you encounter issues, the console output containing these logs is the first p
 
 ---
 
-## 12. Potential Future Directions
+## 13. Potential Future Directions
 
 DiscordSam is a project with significant potential for growth. Here are some ideas for future enhancements:
 
@@ -549,7 +570,7 @@ DiscordSam is a project with significant potential for growth. Here are some ide
 
 ---
 
-## 13. Support / Issues / Contributing
+## 14. Support / Issues / Contributing
 
 Found a bug? Have a feature request? Want to contribute?
 
