@@ -18,6 +18,7 @@ from utils import (
     cleanup_playwright_processes,
     safe_followup_send,
     safe_message_edit,
+    start_post_processing_task,
 )
 # Import functions for post-stream processing
 from rag_chroma_manager import ingest_conversation_to_chromadb
@@ -586,27 +587,17 @@ async def stream_llm_response_to_interaction(
         except discord.HTTPException:
             progress_msg = None
 
-        await ingest_conversation_to_chromadb(
-            llm_client,
-            channel_id,
-            interaction.user.id,
-            chroma_ingest_history_with_response,
-            retrieved_snippets,
+        start_post_processing_task(
+            ingest_conversation_to_chromadb(
+                llm_client,
+                channel_id,
+                interaction.user.id,
+                chroma_ingest_history_with_response,
+                retrieved_snippets,
+            ),
+            progress_message=progress_msg,
+            followup_interaction=interaction,
         )
-
-        if progress_msg:
-            try:
-                await progress_msg.delete()
-            except discord.HTTPException:
-                pass
-
-        try:
-            await interaction.followup.send(
-                content="Post-processing complete.",
-                ephemeral=True,
-            )
-        except discord.HTTPException:
-            pass
 
 
 async def stream_llm_response_to_message(
@@ -691,24 +682,16 @@ async def stream_llm_response_to_message(
         except discord.HTTPException:
             post_msg = None
 
-        await ingest_conversation_to_chromadb(
-            llm_client,
-            channel_id,
-            target_message.author.id,
-            chroma_ingest_history_with_response,
-            retrieved_snippets,
+        start_post_processing_task(
+            ingest_conversation_to_chromadb(
+                llm_client,
+                channel_id,
+                target_message.author.id,
+                chroma_ingest_history_with_response,
+                retrieved_snippets,
+            ),
+            progress_message=post_msg,
         )
-
-        if post_msg:
-            try:
-                await post_msg.delete()
-            except discord.HTTPException:
-                pass
-
-            try:
-                post_msg = None
-            except discord.HTTPException:
-                pass
 
 
 async def get_description_for_image(llm_client: Any, image_path: str) -> str:

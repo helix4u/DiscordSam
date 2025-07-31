@@ -1,6 +1,7 @@
+import asyncio
 import re
 from datetime import timedelta
-from typing import List, Optional, Tuple, Any
+from typing import List, Optional, Tuple, Any, Coroutine
 import psutil
 import logging
 import discord
@@ -161,3 +162,44 @@ async def safe_message_edit(
                     pass
             return new_msg
         raise
+
+
+def start_post_processing_task(
+    coro: Coroutine[Any, Any, Any],
+    *,
+    progress_message: Optional[discord.Message] = None,
+    followup_interaction: Optional[discord.Interaction] = None,
+) -> asyncio.Task:
+    """Run ``coro`` in the background and handle progress cleanup.
+
+    Parameters
+    ----------
+    coro:
+        The coroutine performing the post-processing work.
+    progress_message:
+        Optional message indicating progress. It will be deleted when
+        ``coro`` finishes.
+    followup_interaction:
+        If provided, an ephemeral "Post-processing complete" message will
+        be sent via ``interaction.followup`` when done.
+    """
+
+    async def _runner() -> None:
+        try:
+            await coro
+        finally:
+            if progress_message:
+                try:
+                    await progress_message.delete()
+                except discord.HTTPException:
+                    pass
+            if followup_interaction:
+                try:
+                    await followup_interaction.followup.send(
+                        content="Post-processing complete.",
+                        ephemeral=True,
+                    )
+                except discord.HTTPException:
+                    pass
+
+    return asyncio.create_task(_runner())
