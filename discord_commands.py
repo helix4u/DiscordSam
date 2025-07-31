@@ -44,6 +44,7 @@ from utils import (
     chunk_text,
     safe_followup_send,
     safe_message_edit,
+    start_post_processing_task,
 )
 from rss_cache import load_seen_entries, save_seen_entries
 from twitter_cache import load_seen_tweet_ids, save_seen_tweet_ids # New import
@@ -274,25 +275,17 @@ async def process_rss_feed(
     except discord.HTTPException:
         progress_msg = None
 
-    await ingest_conversation_to_chromadb(
-        llm_client_instance,
-        interaction.channel_id,
-        interaction.user.id,
-        [user_msg, assistant_msg],
-        None,
+    start_post_processing_task(
+        ingest_conversation_to_chromadb(
+            llm_client_instance,
+            interaction.channel_id,
+            interaction.user.id,
+            [user_msg, assistant_msg],
+            None,
+        ),
+        progress_message=progress_msg,
+        followup_interaction=interaction,
     )
-
-    if progress_msg:
-        try:
-            await progress_msg.delete()
-        except discord.HTTPException:
-            pass
-    try:
-        await interaction.followup.send(
-            content="Post-processing complete.", ephemeral=True
-        )
-    except discord.HTTPException:
-        pass
 
     return True
 
@@ -406,34 +399,17 @@ async def process_ground_news(
             except discord.HTTPException:
                 progress_ephemeral = None
 
-        await ingest_conversation_to_chromadb(
-            llm_client_instance,
-            interaction.channel_id,
-            interaction.user.id,
-            [user_msg_article, assistant_msg_article],
-            None,
+        start_post_processing_task(
+            ingest_conversation_to_chromadb(
+                llm_client_instance,
+                interaction.channel_id,
+                interaction.user.id,
+                [user_msg_article, assistant_msg_article],
+                None,
+            ),
+            progress_message=progress_ephemeral,
+            followup_interaction=interaction,
         )
-
-        if progress_ephemeral:
-            try:
-                progress_ephemeral = await safe_message_edit(
-                    progress_ephemeral,
-                    interaction.channel,
-                    content="Post-processing complete.",
-                )
-            except Exception:
-                try:
-                    await progress_ephemeral.delete()
-                except discord.HTTPException:
-                    pass
-                progress_ephemeral = None
-        else:
-            try:
-                progress_ephemeral = await interaction.followup.send(
-                    content="Post-processing complete.", ephemeral=True
-                )
-            except discord.HTTPException:
-                progress_ephemeral = None
 
     save_seen_links(seen_urls)
 
@@ -574,34 +550,17 @@ async def process_ground_news_topic(
             except discord.HTTPException:
                 progress_ephemeral = None
 
-        await ingest_conversation_to_chromadb(
-            llm_client_instance,
-            interaction.channel_id,
-            interaction.user.id,
-            [user_msg_article, assistant_msg_article],
-            None,
+        start_post_processing_task(
+            ingest_conversation_to_chromadb(
+                llm_client_instance,
+                interaction.channel_id,
+                interaction.user.id,
+                [user_msg_article, assistant_msg_article],
+                None,
+            ),
+            progress_message=progress_ephemeral,
+            followup_interaction=interaction,
         )
-
-        if progress_ephemeral:
-            try:
-                progress_ephemeral = await safe_message_edit(
-                    progress_ephemeral,
-                    interaction.channel,
-                    content="Post-processing complete.",
-                )
-            except Exception:
-                try:
-                    await progress_ephemeral.delete()
-                except discord.HTTPException:
-                    pass
-                progress_ephemeral = None
-        else:
-            try:
-                progress_ephemeral = await interaction.followup.send(
-                    content="Post-processing complete.", ephemeral=True
-                )
-            except discord.HTTPException:
-                progress_ephemeral = None
 
     save_seen_links(seen_urls)
 
@@ -1830,25 +1789,17 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 except discord.HTTPException:
                     progress_note = None
 
-                await ingest_conversation_to_chromadb(
-                    llm_client_instance,
-                    interaction.channel_id,
-                    interaction.user.id,
-                    [user_msg, assistant_msg],
-                    None,
+                start_post_processing_task(
+                    ingest_conversation_to_chromadb(
+                        llm_client_instance,
+                        interaction.channel_id,
+                        interaction.user.id,
+                        [user_msg, assistant_msg],
+                        None,
+                    ),
+                    progress_message=progress_note,
+                    followup_interaction=interaction,
                 )
-
-                if progress_note:
-                    try:
-                        await progress_note.delete()
-                    except discord.HTTPException:
-                        pass
-                try:
-                    await interaction.followup.send(
-                        content="Post-processing complete.", ephemeral=True
-                    )
-                except discord.HTTPException:
-                    pass
 
                 if batch_start + limit < total:
                     old_progress = progress_message
@@ -2561,25 +2512,17 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             except discord.HTTPException:
                 progress_note = None
 
-            await ingest_conversation_to_chromadb(
-                llm_client_instance,
-                interaction.channel_id,
-                interaction.user.id,
-                [user_msg, assistant_msg],
-                None,
+            start_post_processing_task(
+                ingest_conversation_to_chromadb(
+                    llm_client_instance,
+                    interaction.channel_id,
+                    interaction.user.id,
+                    [user_msg, assistant_msg],
+                    None,
+                ),
+                progress_message=progress_note,
+                followup_interaction=interaction,
             )
-
-            if progress_note:
-                try:
-                    await progress_note.delete()
-                except discord.HTTPException:
-                    pass
-            try:
-                await interaction.followup.send(
-                    content="Post-processing complete.", ephemeral=True
-                )
-            except discord.HTTPException:
-                pass
         except Exception as e:
             logger.error(f"Error in alltweets_slash_command: {e}", exc_info=True)
             await interaction.followup.send(content=f"Failed to process tweets. Error: {str(e)[:500]}")
