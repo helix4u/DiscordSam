@@ -137,7 +137,12 @@ async def llm_request_processor_task(bot_state: BotState, llm_client: Any, bot_i
 
                                 await interaction.edit_original_response(content=f"Processing article {i_news+1}/{num_to_process}: Summarizing '{article_title}'...")
                                 summarization_prompt = (
-                                    f"You are an expert news summarizer... Article Content:\n{scraped_content[:config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT*2]}" # Abridged
+                                    f"You are an expert news summarizer. Please read the following article content, "
+                                    f"which was found when searching for the topic '{search_topic}'. Extract the key factual"
+                                    f" news points and provide a detailed yet concise summary (2-4 sentences) relevant to this topic. "
+                                    f"Focus on who, what, when, where, and why if applicable. Avoid opinions or speculation not present in the text.\n\n"
+                                    f"Article Title: {article_title}\n"
+                                    f"Article Content:\n{scraped_content[:config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT*2]}"
                                 )
                                 summary_response = await llm_client.chat.completions.create(
                                     model=config.FAST_LLM_MODEL, messages=[{"role": "user", "content": summarization_prompt}],
@@ -158,7 +163,13 @@ async def llm_request_processor_task(bot_state: BotState, llm_client: Any, bot_i
                             await interaction.edit_original_response(content="All articles processed. Generating final news briefing...")
                             combined_summaries_text = "".join(article_summaries_for_briefing)
                             final_briefing_prompt_content = (
-                                f"You are Sam, a news anchor... Collected Article Summaries:\n{combined_summaries_text}" # Abridged
+                                f"You are Sam, a news anchor delivering a concise and objective briefing. "
+                                f"The following are summaries of news articles related to the topic: '{topic}'. "
+                                f"Synthesize this information into a coherent news report. Start with a clear headline for the briefing. "
+                                f"Present the key developments and information from the summaries. Maintain a neutral and informative tone. "
+                                f"Do not add external information or opinions not present in the provided summaries.\n\n"
+                                f"Topic: {topic}\n\n"
+                                f"Collected Article Summaries:\n{combined_summaries_text}"
                             )
                             user_msg_node_for_briefing = MsgNode("user", final_briefing_prompt_content, name=str(interaction.user.id))
                             rag_query_for_briefing = f"news briefing about {topic}"
@@ -262,7 +273,9 @@ async def llm_request_processor_task(bot_state: BotState, llm_client: Any, bot_i
                                 else: await interaction.followup.send(embed=embed_tweets)
 
                             user_query_content_for_summary = (
-                                f"Please analyze and summarize tweets from @{username}: \n{raw_tweets_display_str[:config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT]}"
+                                f"Please analyze and summarize the main themes, topics discussed, and overall sentiment "
+                                f"from @{username}'s recent tweets provided below. Extract key points and present a concise yet detailed overview of this snapshot in time. "
+                                f"Do not just re-list the tweets.\n\nRecent Tweets:\n{raw_tweets_display_str[:config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT]}"
                             )
                             user_msg_node_tweets = MsgNode("user", user_query_content_for_summary, name=str(interaction.user.id))
                             rag_query_tweets = f"summary of tweets from @{username}"
