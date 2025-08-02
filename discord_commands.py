@@ -52,6 +52,8 @@ from ground_news_cache import load_seen_links, save_seen_links
 
 logger = logging.getLogger(__name__)
 
+SUMMARY_SYSTEM_PROMPT = "You are an expert news summarizer."
+
 # Default RSS feeds users can choose from with the /rss command
 DEFAULT_RSS_FEEDS = [
     ("Google News", "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en"),
@@ -219,7 +221,10 @@ async def process_rss_feed(
         try:
             response = await llm_client_instance.chat.completions.create(
                 model=config.FAST_LLM_MODEL,
-                messages=[{"role": "user", "content": prompt}],
+                messages=[
+                    {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
+                    {"role": "user", "content": prompt}
+                ],
                 max_tokens=500,
                 temperature=0.5,
                 stream=False,
@@ -275,17 +280,16 @@ async def process_rss_feed(
     except discord.HTTPException:
         progress_msg = None
 
-    start_post_processing_task(
-        ingest_conversation_to_chromadb(
-            llm_client_instance,
-            interaction.channel_id,
-            interaction.user.id,
-            [user_msg, assistant_msg],
-            None,
-        ),
-        progress_message=progress_msg,
-        followup_interaction=interaction,
-    )
+        start_post_processing_task(
+            ingest_conversation_to_chromadb(
+                llm_client_instance,
+                interaction.channel_id,
+                interaction.user.id,
+                [user_msg, assistant_msg],
+                None,
+            ),
+            progress_message=progress_msg,
+        )
 
     return True
 
@@ -342,7 +346,10 @@ async def process_ground_news(
         try:
             response = await llm_client_instance.chat.completions.create(
                 model=config.FAST_LLM_MODEL,
-                messages=[{"role": "user", "content": prompt}],
+                messages=[
+                    {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
+                    {"role": "user", "content": prompt}
+                ],
                 max_tokens=500,
                 temperature=0.5,
                 stream=False,
@@ -492,7 +499,10 @@ async def process_ground_news_topic(
         try:
             response = await llm_client_instance.chat.completions.create(
                 model=config.FAST_LLM_MODEL,
-                messages=[{"role": "user", "content": prompt}],
+                messages=[
+                    {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
+                    {"role": "user", "content": prompt}
+                ],
                 max_tokens=500,
                 temperature=0.5,
                 stream=False,
@@ -603,6 +613,10 @@ async def describe_image(image_url: str) -> Optional[str]:
         image_url_for_llm = f"data:image/jpeg;base64,{base64_image}"
 
         prompt_messages = [
+            {
+                "role": "system",
+                "content": "You are a helpful assistant that describes images for visually impaired users."
+            },
             {
                 "role": "user",
                 "content": [
@@ -1033,7 +1047,10 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 try:
                     summary_response = await llm_client_instance.chat.completions.create(
                         model=config.FAST_LLM_MODEL,
-                        messages=[{"role": "user", "content": summarization_prompt}],
+                        messages=[
+                            {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
+                            {"role": "user", "content": summarization_prompt}
+                        ],
                         max_tokens=250,
                         temperature=0.3,
                         stream=False
@@ -1384,7 +1401,10 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 try:
                     summary_response_search = await llm_client_instance.chat.completions.create(
                         model=config.FAST_LLM_MODEL,
-                        messages=[{"role": "user", "content": summarization_prompt_search}],
+                        messages=[
+                            {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
+                            {"role": "user", "content": summarization_prompt_search}
+                        ],
                         max_tokens=250,
                         temperature=0.3,
                         stream=False
@@ -1715,7 +1735,10 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                     try:
                         response = await llm_client_instance.chat.completions.create(
                             model=config.FAST_LLM_MODEL,
-                            messages=[{"role": "user", "content": prompt}],
+                            messages=[
+                                {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
+                                {"role": "user", "content": prompt}
+                            ],
                             max_tokens=500,
                             temperature=0.5,
                             stream=False,
@@ -1796,7 +1819,6 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                         None,
                     ),
                     progress_message=progress_note,
-                    followup_interaction=interaction,
                 )
 
                 if batch_start + limit < total:
@@ -2519,7 +2541,6 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                     None,
                 ),
                 progress_message=progress_note,
-                followup_interaction=interaction,
             )
         except Exception as e:
             logger.error(f"Error in alltweets_slash_command: {e}", exc_info=True)

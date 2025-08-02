@@ -596,7 +596,6 @@ async def stream_llm_response_to_interaction(
                 retrieved_snippets,
             ),
             progress_message=progress_msg,
-            followup_interaction=interaction,
         )
 
 
@@ -717,6 +716,10 @@ async def get_description_for_image(llm_client: Any, image_path: str) -> str:
             return "[Error: Vision model not configured for image description.]"
 
         prompt_messages = [
+            {
+                "role": "system",
+                "content": "You are a helpful assistant that describes images for visually impaired users."
+            },
             {
                 "role": "user",
                 "content": [

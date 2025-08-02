@@ -145,7 +145,11 @@ async def llm_request_processor_task(bot_state: BotState, llm_client: Any, bot_i
                                     f"Article Content:\n{scraped_content[:config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT*2]}"
                                 )
                                 summary_response = await llm_client.chat.completions.create(
-                                    model=config.FAST_LLM_MODEL, messages=[{"role": "user", "content": summarization_prompt}],
+                                    model=config.FAST_LLM_MODEL,
+                                    messages=[
+                                        {"role": "system", "content": "You are an expert news summarizer."},
+                                        {"role": "user", "content": summarization_prompt}
+                                    ],
                                     max_tokens=250, temperature=0.3, stream=False
                                 )
                                 if summary_response.choices and summary_response.choices[0].message and summary_response.choices[0].message.content:
