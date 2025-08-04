@@ -22,8 +22,6 @@ DiscordSam is an advanced, context-aware Discord bot designed to provide intelli
 *   **Multimedia Interaction:**
     *   Analyze and describe attached images (with a creative "AP Photo" twist using a vision LLM).
     *   Transcribe attached audio files using a local Whisper model.
-*   **Image Generation (InvokeAI):**
-    *   Generate images from text prompts using a locally hosted InvokeAI server with optional model selection.
 *   **Text-to-Speech (TTS):**
     *   Voice responses for bot messages via an OpenAI TTS API compatible server.
     *   Separate TTS for "thoughts" (content within `<think>...</think>` tags) vs. main response if configured.
@@ -205,13 +203,8 @@ Below is a comprehensive list of environment variables used by DiscordSam, along
 *   `TTS_API_URL` (Default: `http://localhost:8880/v1/audio/speech`): The endpoint of your OpenAI TTS API compatible server.
 *   `TTS_VOICE` (Default: `af_sky+af+af_nicole`): The voice to be used for TTS generation. The format may depend on your TTS server.
 *   `TTS_MAX_AUDIO_BYTES` (Default: `8388608` (8MB)): Maximum size of a single generated TTS audio clip. Longer audio will be split into parts before uploading to stay under Discord's attachment limits.
-    *   `TTS_SPEED` (Default: `1.3`): Playback speed multiplier for TTS audio. Use `1.0` for normal speed.
-    *   `TTS_INCLUDE_THOUGHTS` (Default: `false`): If `true`, content within `<think>...</think>` tags will also be spoken using TTS. When `false`, only the user-facing portion of the response is processed.
-
-**Image Generation (InvokeAI):**
-
-*   `INVOKEAI_API_URL` (Default: `http://localhost:9090/api/v1/generate`): Full InvokeAI generation endpoint used for the `/invoke` image generation command. Adjust if your server exposes the API at a different path.
-*   `INVOKEAI_MODEL` (Optional): Default model name to use for image generation when the `/invoke` command does not specify one.
+*   `TTS_SPEED` (Default: `1.3`): Playback speed multiplier for TTS audio. Use `1.0` for normal speed.
+*   `TTS_INCLUDE_THOUGHTS` (Default: `false`): If `true`, content within `<think>...</think>` tags will also be spoken using TTS. When `false`, only the user-facing portion of the response is processed.
 
 **Web Features & Scraping:**
 
@@ -483,19 +476,6 @@ DiscordSam offers a variety of slash commands for diverse functionalities. Here'
     *   **Requirements:** Same as `/groundnews` &mdash; you must be logged in with Playwright's persistent profile.
     *   **Output:** Embeds containing summaries for each new topic article.
 
-*   **`/invoke <prompt> [width] [height] [steps] [model]`**
-    *   **Purpose:** Generates an image based on the supplied text prompt using the configured InvokeAI server.
-    *   **Arguments:**
-        *   `prompt` (Required): The description of the image to generate.
-        *   `width` (Optional, Default: 512): Image width in pixels.
-        *   `height` (Optional, Default: 512): Image height in pixels.
-        *   `steps` (Optional, Default: 30): Number of diffusion steps to perform.
-        *   `model` (Optional): Model name to use for generation. Defaults to `INVOKEAI_MODEL` if set.
-    *   **Behavior:**
-        1.  Sends the prompt and parameters to the InvokeAI REST API.
-        2.  Waits for the response and uploads the first generated image to Discord.
-    *   **Output:** The generated image posted in the channel.
-
 *   **`/ap <image> [user_prompt]`**
     *   **Purpose:** Describes an attached image in the style of an Associated Press (AP) photo caption, with a humorous twist: a randomly chosen celebrity is creatively inserted as the main subject.
     *   **Arguments:**
@@ -526,7 +506,6 @@ DiscordSam offers a variety of slash commands for diverse functionalities. Here'
     *   Your LLM server (e.g., LM Studio, Ollama) must be active and accessible at the `LOCAL_SERVER_URL`. Ensure the correct models specified in your `.env` file (e.g., `LLM`, `VISION_LLM_MODEL`) are loaded and available on this server.
     *   If `TTS_ENABLED_DEFAULT` is `true`, your TTS server must be running and accessible at `TTS_API_URL`.
     *   If you plan to use the `/search` or `/news` commands, your SearXNG instance must be running and accessible at `SEARX_URL`.
-    *   If you plan to use the `/invoke` command, ensure your InvokeAI server is running and accessible at `INVOKEAI_API_URL`.
 
 2.  **Verify your `.env` file:** Double-check that it's correctly configured, especially the `DISCORD_BOT_TOKEN` and all server URLs and model names.
 
@@ -570,7 +549,7 @@ Several helper scripts are provided for upkeep and optional functionality:
 
 *   **Playwright Processes:** If Chromium or Playwright processes remain running after scraping, the bot has a built-in task (`cleanup_playwright_task` in `discord_events.py`) that attempts to clean them up periodically based on `PLAYWRIGHT_CLEANUP_INTERVAL_MINUTES` and `PLAYWRIGHT_IDLE_CLEANUP_THRESHOLD_MINUTES`. You can also manually kill these processes if needed.
 *   **Model Not Found Errors:** Ensure the model names specified in your `.env` file (e.g., `LLM`, `VISION_LLM_MODEL`, `FAST_LLM_MODEL`) exactly match the models loaded and available on your LLM server at `LOCAL_SERVER_URL`.
-*   **Connection Errors:** Verify that all specified server URLs (`LOCAL_SERVER_URL`, `TTS_API_URL`, `SEARX_URL`, `INVOKEAI_API_URL`) are correct and that the respective services are running and accessible from where the bot is running.
+*   **Connection Errors:** Verify that all specified server URLs (`LOCAL_SERVER_URL`, `TTS_API_URL`, `SEARX_URL`) are correct and that the respective services are running and accessible from where the bot is running.
 *   **Permissions:** If slash commands don't appear or certain commands fail, check the bot's permissions in your Discord server settings. It generally needs permissions to read messages, send messages, use embeds, attach files, and use slash commands. Some commands like `/clearhistory` or `/ingest_chatgpt_export` might require 'Manage Messages'.
 
 ---

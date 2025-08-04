@@ -6,7 +6,6 @@ import os
 import base64
 import random
 import asyncio
-import io
 from typing import Any, Optional, List  # Keep existing imports
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
@@ -50,7 +49,6 @@ from utils import (
 from rss_cache import load_seen_entries, save_seen_entries
 from twitter_cache import load_seen_tweet_ids, save_seen_tweet_ids # New import
 from ground_news_cache import load_seen_links, save_seen_links
-from invokeai_utils import generate_invokeai_image
 
 logger = logging.getLogger(__name__)
 
@@ -2656,48 +2654,6 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             if acquired_lock:
                 scrape_lock.release()
                 logger.debug("Scrape lock released for /groundtopic")
-
-
-    @bot_instance.tree.command(name="invoke", description="Generates an image using the InvokeAI server.")
-    @app_commands.describe(
-        prompt="Text prompt for the image.",
-        width="Image width in pixels.",
-        height="Image height in pixels.",
-        steps="Number of diffusion steps.",
-        model="Model to use (optional)."
-    )
-    async def invoke_slash_command(
-        interaction: discord.Interaction,
-        prompt: str,
-        width: app_commands.Range[int, 64, 2048] = 512,
-        height: app_commands.Range[int, 64, 2048] = 512,
-        steps: app_commands.Range[int, 1, 150] = 30,
-        model: Optional[str] = None,
-    ) -> None:
-        if not config.INVOKEAI_API_URL:
-            await interaction.response.send_message(
-                "InvokeAI API URL is not configured.", ephemeral=True
-            )
-            return
-
-        await interaction.response.defer()
-        logger.info(
-            "InvokeAI generation requested by %s (%s)",
-            interaction.user.name,
-            interaction.user.id,
-        )
-
-        image_bytes = await generate_invokeai_image(
-            prompt=prompt, width=width, height=height, steps=steps, model=model
-        )
-        if not image_bytes:
-            await interaction.edit_original_response(
-                content="Failed to generate image via InvokeAI."
-            )
-            return
-
-        file = discord.File(io.BytesIO(image_bytes), filename="invokeai.png")
-        await interaction.edit_original_response(content=prompt, attachments=[file])
 
 
     @bot_instance.tree.command(name="ap", description="Describes an attached image with a creative AP Photo twist.")
