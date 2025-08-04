@@ -22,6 +22,7 @@ DiscordSam is an advanced, context-aware Discord bot designed to provide intelli
 *   **Multimedia Interaction:**
     *   Analyze and describe attached images (with a creative "AP Photo" twist using a vision LLM).
     *   Transcribe attached audio files using a local Whisper model.
+    *   Generate images using a local InvokeAI server.
 *   **Text-to-Speech (TTS):**
     *   Voice responses for bot messages via an OpenAI TTS API compatible server.
     *   Separate TTS for "thoughts" (content within `<think>...</think>` tags) vs. main response if configured.
@@ -253,6 +254,11 @@ Below is a comprehensive list of environment variables used by DiscordSam, along
 **Image Processing (Attachments & Vision):**
 
 *   `MAX_IMAGES_PER_MESSAGE` (Default: `1`): The maximum number of images attached to a single Discord message that the bot will process and send to the vision LLM.
+
+**Image Generation (InvokeAI):**
+
+*   `INVOKEAI_API_URL` (Default: `http://localhost:9090`): Base URL of your InvokeAI server.
+*   `INVOKEAI_MODEL` (Default: `sdxl`): Default model used when generating images.
 
 ---
 
@@ -490,6 +496,15 @@ DiscordSam offers a variety of slash commands for diverse functionalities. Here'
         6.  Provides TTS for the description if enabled.
     *   **Output:** An embed message, updated live, containing the AP-style photo description featuring the celebrity.
 
+*   **`/invoke <prompt>`**
+    *   **Purpose:** Generates an image using your local InvokeAI server.
+    *   **Arguments:**
+        *   `prompt` (Required): Text description of the desired image.
+    *   **Behavior:**
+        1.  Sends the prompt to the InvokeAI API (`INVOKEAI_API_URL`) using the configured model.
+        2.  Uploads the resulting image to the channel when generation completes.
+    *   **Output:** The generated image file posted in the channel.
+
 *   **`/clearhistory`**
     *   **Purpose:** Clears the bot's short-term conversational memory (message history) for the current channel. This does not affect long-term memory in ChromaDB.
     *   **Arguments:** None.
@@ -506,6 +521,7 @@ DiscordSam offers a variety of slash commands for diverse functionalities. Here'
     *   Your LLM server (e.g., LM Studio, Ollama) must be active and accessible at the `LOCAL_SERVER_URL`. Ensure the correct models specified in your `.env` file (e.g., `LLM`, `VISION_LLM_MODEL`) are loaded and available on this server.
     *   If `TTS_ENABLED_DEFAULT` is `true`, your TTS server must be running and accessible at `TTS_API_URL`.
     *   If you plan to use the `/search` or `/news` commands, your SearXNG instance must be running and accessible at `SEARX_URL`.
+    *   If you plan to use the `/invoke` command, your InvokeAI server must be running and accessible at `INVOKEAI_API_URL`.
 
 2.  **Verify your `.env` file:** Double-check that it's correctly configured, especially the `DISCORD_BOT_TOKEN` and all server URLs and model names.
 
