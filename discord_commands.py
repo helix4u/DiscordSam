@@ -4,7 +4,6 @@ from discord import app_commands  # type: ignore
 from discord.ext import commands  # For bot type hint
 import os
 import base64
-import io
 import random
 import asyncio
 from typing import Any, Optional, List  # Keep existing imports
@@ -2733,65 +2732,6 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
         except Exception as e:
             logger.error(f"Error in ap_slash_command for image '{image.filename}': {e}", exc_info=True)
             await interaction.edit_original_response(content=f"My camera lens for the AP command seems to be cracked! Error: {str(e)[:1000]}", embed=None)
-
-    @bot_instance.tree.command(name="invoke", description="Generates an image using your local InvokeAI server.")
-    @app_commands.describe(prompt="The text prompt for the image.")
-    async def invoke_slash_command(interaction: discord.Interaction, prompt: str) -> None:
-        if not config.INVOKEAI_API_URL:
-            await interaction.response.send_message("InvokeAI server URL is not configured.", ephemeral=True)
-            return
-
-        await interaction.response.defer()
-
-        try:
-            async with aiohttp.ClientSession() as session:
-                url = f"{config.INVOKEAI_API_URL.rstrip('/')}/api/v1/generation/text-to-image"
-                payload = {"prompt": prompt, "model": config.INVOKEAI_MODEL}
-                async with session.post(url, json=payload) as resp:
-                    if resp.status != 200:
-                        text = await resp.text()
-                        logger.error(f"InvokeAI API error {resp.status}: {text}")
-                        await safe_followup_send(
-                            interaction,
-                            content=f"InvokeAI API error: {resp.status}",
-                            ephemeral=True,
-                        )
-                        return
-                    data = await resp.json()
-        except Exception as e:
-            logger.error(
-                "invoke_slash_command: Error contacting InvokeAI: %s", e, exc_info=True
-            )
-            await safe_followup_send(
-                interaction, content="Failed to reach InvokeAI server.", ephemeral=True
-            )
-            return
-
-        try:
-            images = data.get("images") or data.get("artifacts") or []
-            if not images:
-                await safe_followup_send(
-                    interaction, content="InvokeAI returned no images.", ephemeral=True
-                )
-                return
-            image_b64 = images[0].get("data") or images[0].get("base64")
-            if not image_b64:
-                await safe_followup_send(
-                    interaction,
-                    content="InvokeAI response missing image data.",
-                    ephemeral=True,
-                )
-                return
-            image_bytes = base64.b64decode(image_b64)
-            file = discord.File(io.BytesIO(image_bytes), filename="invokeai.png")
-            await safe_followup_send(interaction, file=file)
-        except Exception as e:
-            logger.error(
-                "invoke_slash_command: Failed to process image: %s", e, exc_info=True
-            )
-            await safe_followup_send(
-                interaction, content="Failed to process image from InvokeAI.", ephemeral=True
-            )
 
     @bot_instance.tree.command(name="clearhistory", description="Clears the bot's short-term message history for this channel.")
     @app_commands.checks.has_permissions(manage_messages=True)
