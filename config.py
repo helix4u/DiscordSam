@@ -78,6 +78,11 @@ class Config:
         self.TTS_MAX_AUDIO_BYTES = _get_int("TTS_MAX_AUDIO_BYTES", 8 * 1024 * 1024)
         self.TTS_SPEED = _get_float("TTS_SPEED", 1.3)
 
+        self.INVOKEAI_API_URL = os.getenv(
+            "INVOKEAI_API_URL", "http://localhost:9090/api/v1/generate"
+        )
+        self.INVOKEAI_MODEL = os.getenv("INVOKEAI_MODEL", "")
+
         self.SEARX_URL = os.getenv("SEARX_URL", "http://192.168.1.3:9092/search")
         # Changed default for SEARX_PREFERENCES to an empty string.
         # Users should set complex preferences via the environment variable.
