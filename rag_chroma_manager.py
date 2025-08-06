@@ -6,6 +6,7 @@ import json
 import re
 import random
 import ast
+from dateparser.search import search_dates
 
 
 import chromadb
@@ -68,11 +69,12 @@ def _parse_json_with_recovery(content: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-def _parse_relative_date_range(query: str) -> Optional[Tuple[datetime, datetime]]:
-    """Detect common relative date phrases in ``query`` and return a date range.
+def _parse_date_range(query: str) -> Optional[Tuple[datetime, datetime]]:
+    """Detect date expressions in ``query`` and return a date range.
 
-    Supports phrases like ``yesterday``, ``today``, ``last week`` and
-    ``last <weekday>``. Returned datetimes are naive and span the full day(s).
+    Handles relative phrases like ``yesterday`` or ``last week`` as well as
+    absolute dates such as ``March 3 2024``. Returned datetimes are naive and
+    span the full day(s).
     """
 
     q_lower = query.lower()
@@ -122,6 +124,19 @@ def _parse_relative_date_range(query: str) -> Optional[Tuple[datetime, datetime]
         start = target.replace(hour=0, minute=0, second=0, microsecond=0)
         end = start + timedelta(days=1) - timedelta(microseconds=1)
         return start, end
+
+    # Attempt to parse absolute date expressions
+    try:
+        results = search_dates(query, settings={"RELATIVE_BASE": now})
+    except Exception:
+        results = None
+    if results:
+        dts = [dt for _, dt in results]
+        if dts:
+            dts.sort()
+            start = dts[0].replace(hour=0, minute=0, second=0, microsecond=0)
+            end = dts[-1].replace(hour=23, minute=59, second=59, microsecond=999999)
+            return start, end
 
     return None
 
@@ -529,7 +544,7 @@ async def retrieve_and_prepare_rag_context(
         return None, None
 
     retrieved_contexts_raw: List[Tuple[str, str]] = [] # Stores tuples of (document_text, source_collection_name)
-    date_range = _parse_relative_date_range(query) if isinstance(query, str) else None
+    date_range = _parse_date_range(query) if isinstance(query, str) else None
     if date_range:
         logger.info(
             "RAG: Detected relative date range %s to %s in query.",
@@ -604,9 +619,10 @@ async def retrieve_and_prepare_rag_context(
         if date_range:
             start_dt, end_dt = date_range
             start_iso, end_iso = start_dt.isoformat(), end_dt.isoformat()
+            # Prioritize sources with explicit timestamps like tweets
             date_collections = [
-                ("rss", rss_summary_collection),
                 ("tweets", tweets_collection),
+                ("rss", rss_summary_collection),
                 ("news", news_summary_collection),
                 ("timeline", timeline_summary_collection),
             ]
@@ -614,12 +630,33 @@ async def retrieve_and_prepare_rag_context(
                 if not coll:
                     continue
                 try:
-                    # Chroma only supports numeric range filters. Timestamps are stored as ISO strings,
-                    # so retrieve all docs and filter client-side.
-                    res = coll.get(include=["documents", "metadatas"])
+                    query_texts_list = [query] if isinstance(query, str) else query
+                    n_range_results = min(
+                        getattr(config, "RAG_NUM_COLLECTION_DOCS_TO_FETCH", 3),
+                        getattr(config, "RAG_MAX_DATE_RANGE_DOCS", 100),
+                    )
+                    res = coll.query(
+                        query_texts=query_texts_list,
+                        n_results=n_range_results,
+                        where={
+                            "$and": [
+                                {"timestamp": {"$gte": start_iso}},
+                                {"timestamp": {"$lte": end_iso}},
+                            ]
+                        },
+                        include=["documents", "metadatas"],
+                    )
                     docs_with_ts: List[Tuple[str, datetime]] = []
-                    if res and res.get("documents") and res.get("metadatas"):
-                        for doc_text, meta in zip(res["documents"], res["metadatas"]):
+                    if (
+                        res
+                        and res.get("documents")
+                        and res["documents"]
+                        and res.get("metadatas")
+                        and res["metadatas"]
+                    ):
+                        docs = res["documents"][0]
+                        metas = res["metadatas"][0]
+                        for doc_text, meta in zip(docs, metas):
                             if not isinstance(doc_text, str) or not isinstance(meta, dict):
                                 continue
                             ts = meta.get("timestamp")
@@ -633,17 +670,11 @@ async def retrieve_and_prepare_rag_context(
                                 docs_with_ts.append((doc_text, ts_dt))
                     if docs_with_ts:
                         docs_with_ts.sort(key=lambda x: x[1], reverse=True)
-                        max_docs = getattr(config, "RAG_MAX_DATE_RANGE_DOCS", 100)
-                        if len(docs_with_ts) > max_docs:
-                            logger.debug(
-                                f"RAG: Limiting '{name}' date-range docs from {len(docs_with_ts)} to {max_docs}."
-                            )
-                        limited_docs = docs_with_ts[:max_docs]
-                        for doc_text, _ in limited_docs:
+                        for doc_text, _ in docs_with_ts:
                             retrieved_contexts_raw.append((doc_text, name))
                         collections_with_date_docs.add(name)
                         logger.info(
-                            f"RAG: Retrieved {len(limited_docs)} '{name}' documents for date range {start_iso} to {end_iso}."
+                            f"RAG: Retrieved {len(docs_with_ts)} '{name}' documents for date range {start_iso} to {end_iso}."
                         )
                 except Exception as e_date:
                     logger.error(
