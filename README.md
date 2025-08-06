@@ -240,6 +240,7 @@ Below is a comprehensive list of environment variables used by DiscordSam, along
 *   `RAG_NUM_COLLECTION_DOCS_TO_FETCH` (Default: `3`): How many relevant documents to fetch from other ChromaDB collections (news, timeline, entities, etc.) for RAG context.
 *   `RAG_MAX_FULL_CONVO_CHARS` (Default: `20000`): When retrieving full conversation logs for RAG context, only the last N characters of each log will be used, trimming the oldest text from the beginning.
 *   `RAG_MAX_DATE_RANGE_DOCS` (Default: `100`): Maximum number of documents per collection to include when using date-range retrieval, preventing oversized context windows.
+*   When a user query contains explicit dates, the bot first searches within that date range for tweets, RSS items, news summaries, and timeline entries before running broader similarity-based lookups.
 *   `ENABLE_MEMORY_MERGE` (Default: `false`): Set to `true` to merge retrieved memory snippets with new conversation summaries after each response.
 *   `TIMELINE_PRUNE_DAYS` (Default: `30`): How many days of chat history to retain in the main `CHROMA_COLLECTION_NAME` before the daily `timeline_pruner_task` summarizes and moves it to `CHROMA_TIMELINE_SUMMARY_COLLECTION_NAME`.
     *   The summarized timeline entries are stored in a separate collection so the main history stays small while older context remains searchable.
