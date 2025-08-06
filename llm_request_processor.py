@@ -14,6 +14,7 @@ from config import config # For gettweets and other command-specific configs
 import base64 # For ap_command
 import random # For ap_command
 import os # For ingest_command
+from logit_biases import LOGIT_BIAS_EM_DASH_STR
 
 # Need to import the inline Pydantic models from discord_commands if they are not moved to common_models
 # For now, assuming they will be moved or this processor will be adapted.
@@ -150,7 +151,10 @@ async def llm_request_processor_task(bot_state: BotState, llm_client: Any, bot_i
                                         {"role": "system", "content": "You are an expert news summarizer."},
                                         {"role": "user", "content": summarization_prompt}
                                     ],
-                                    max_tokens=250, temperature=0.3, stream=False
+                                    max_tokens=250,
+                                    temperature=0.3,
+                                    stream=False,
+                                    logit_bias=LOGIT_BIAS_EM_DASH_STR,
                                 )
                                 if summary_response.choices and summary_response.choices[0].message and summary_response.choices[0].message.content:
                                     article_summary = summary_response.choices[0].message.content.strip()

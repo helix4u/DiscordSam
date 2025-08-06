@@ -13,6 +13,7 @@ from chromadb.errors import InternalError
 
 from config import config
 from common_models import MsgNode
+from logit_biases import LOGIT_BIAS_EM_DASH_STR
 
 
 logger = logging.getLogger(__name__)
@@ -214,9 +215,10 @@ Do not include any explanations or conversational text outside the JSON object.
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            max_tokens=8192, # Increased max_tokens for potentially larger JSON outputs
+            max_tokens=8192,  # Increased max_tokens for potentially larger JSON outputs
             temperature=0.2,
             stream=False,
+            logit_bias=LOGIT_BIAS_EM_DASH_STR,
             **response_format_arg
         )
 
@@ -260,7 +262,8 @@ Do not include any explanations or conversational text outside the JSON object.
                     ],
                     max_tokens=2048,
                     temperature=0.2,
-                    stream=False
+                    stream=False,
+                    logit_bias=LOGIT_BIAS_EM_DASH_STR,
                 )
                 if response.choices and response.choices[0].message and response.choices[0].message.content:
                     raw_content = response.choices[0].message.content.strip()
@@ -317,7 +320,8 @@ async def distill_conversation_to_sentence_llm(llm_client: Any, text_to_distill:
             ],
             max_tokens=2048,
             temperature=0.5,
-            stream=False
+            stream=False,
+            logit_bias=LOGIT_BIAS_EM_DASH_STR,
         )
         if response.choices and response.choices[0].message and response.choices[0].message.content:
             distilled = response.choices[0].message.content.strip()
@@ -370,7 +374,8 @@ async def synthesize_retrieved_contexts_llm(llm_client: Any, retrieved_contexts:
             ],
             max_tokens=3072,
             temperature=0.6,
-            stream=False
+            stream=False,
+            logit_bias=LOGIT_BIAS_EM_DASH_STR,
         )
         if response.choices and response.choices[0].message and response.choices[0].message.content:
             synthesized_context = response.choices[0].message.content.strip()
@@ -417,6 +422,7 @@ async def merge_memory_snippet_with_summary_llm(
             max_tokens=2048,
             temperature=0.4,
             stream=False,
+            logit_bias=LOGIT_BIAS_EM_DASH_STR,
         )
         if response.choices and response.choices[0].message and response.choices[0].message.content:
             return response.choices[0].message.content.strip()
