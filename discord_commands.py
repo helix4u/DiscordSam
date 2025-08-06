@@ -38,6 +38,7 @@ from web_utils import (
     scrape_ground_news_topic,
     fetch_rss_entries
 )
+from logit_biases import LOGIT_BIAS_EM_DASH_STR
 from audio_utils import send_tts_audio
 from utils import (
     parse_time_string_to_delta,
@@ -228,6 +229,7 @@ async def process_rss_feed(
                 max_tokens=500,
                 temperature=0.5,
                 stream=False,
+                logit_bias=LOGIT_BIAS_EM_DASH_STR,
             )
             summary = response.choices[0].message.content.strip() if response.choices else ""
             if summary and summary != "[LLM summarization failed]":
@@ -353,6 +355,7 @@ async def process_ground_news(
                 max_tokens=500,
                 temperature=0.5,
                 stream=False,
+                logit_bias=LOGIT_BIAS_EM_DASH_STR,
             )
             summary = response.choices[0].message.content.strip() if response.choices else ""
             if summary and summary != "[LLM summarization failed]":
@@ -506,6 +509,7 @@ async def process_ground_news_topic(
                 max_tokens=500,
                 temperature=0.5,
                 stream=False,
+                logit_bias=LOGIT_BIAS_EM_DASH_STR,
             )
             summary = response.choices[0].message.content.strip() if response.choices else ""
             if summary and summary != "[LLM summarization failed]":
@@ -631,6 +635,7 @@ async def describe_image(image_url: str) -> Optional[str]:
             messages=prompt_messages,
             max_tokens=150,
             temperature=0.3,
+            logit_bias=LOGIT_BIAS_EM_DASH_STR,
         )
         if response.choices and response.choices[0].message and response.choices[0].message.content:
             return response.choices[0].message.content.strip()
@@ -1053,7 +1058,8 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                         ],
                         max_tokens=250,
                         temperature=0.3,
-                        stream=False
+                        stream=False,
+                        logit_bias=LOGIT_BIAS_EM_DASH_STR,
                     )
                     if summary_response.choices and summary_response.choices[0].message and summary_response.choices[0].message.content:
                         article_summary = summary_response.choices[0].message.content.strip()
@@ -1407,7 +1413,8 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                         ],
                         max_tokens=250,
                         temperature=0.3,
-                        stream=False
+                        stream=False,
+                        logit_bias=LOGIT_BIAS_EM_DASH_STR,
                     )
                     if summary_response_search.choices and summary_response_search.choices[0].message and summary_response_search.choices[0].message.content:
                         page_summary = summary_response_search.choices[0].message.content.strip()
@@ -1742,6 +1749,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                             max_tokens=500,
                             temperature=0.5,
                             stream=False,
+                            logit_bias=LOGIT_BIAS_EM_DASH_STR,
                         )
                         summary = response.choices[0].message.content.strip() if response.choices else ""
                         if summary and summary != "[LLM summarization failed]":
