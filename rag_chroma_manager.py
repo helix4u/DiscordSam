@@ -617,7 +617,7 @@ async def retrieve_and_prepare_rag_context(
                     # Chroma only supports numeric range filters. Timestamps are stored as ISO strings,
                     # so retrieve all docs and filter client-side.
                     res = coll.get(include=["documents", "metadatas"])
-                    docs: List[str] = []
+                    docs_with_ts: List[Tuple[str, datetime]] = []
                     if res and res.get("documents") and res.get("metadatas"):
                         for doc_text, meta in zip(res["documents"], res["metadatas"]):
                             if not isinstance(doc_text, str) or not isinstance(meta, dict):
@@ -630,13 +630,20 @@ async def retrieve_and_prepare_rag_context(
                             except ValueError:
                                 continue
                             if start_dt <= ts_dt <= end_dt:
-                                docs.append(doc_text)
-                    if docs:
-                        for doc_text in docs:
+                                docs_with_ts.append((doc_text, ts_dt))
+                    if docs_with_ts:
+                        docs_with_ts.sort(key=lambda x: x[1], reverse=True)
+                        max_docs = getattr(config, "RAG_MAX_DATE_RANGE_DOCS", 100)
+                        if len(docs_with_ts) > max_docs:
+                            logger.debug(
+                                f"RAG: Limiting '{name}' date-range docs from {len(docs_with_ts)} to {max_docs}."
+                            )
+                        limited_docs = docs_with_ts[:max_docs]
+                        for doc_text, _ in limited_docs:
                             retrieved_contexts_raw.append((doc_text, name))
                         collections_with_date_docs.add(name)
                         logger.info(
-                            f"RAG: Retrieved {len(docs)} '{name}' documents for date range {start_iso} to {end_iso}."
+                            f"RAG: Retrieved {len(limited_docs)} '{name}' documents for date range {start_iso} to {end_iso}."
                         )
                 except Exception as e_date:
                     logger.error(
