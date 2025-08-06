@@ -39,6 +39,16 @@ def detect_urls(message_text: str) -> List[str]:
     url_pattern = re.compile(r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+')
     return url_pattern.findall(message_text)
 
+RELATIVE_DATE_PATTERN = re.compile(
+    r'\b('
+    r'yesterday|today|tomorrow|tonight|'
+    r'this\s+(?:morning|afternoon|evening)|'
+    r'last\s+\w+|next\s+\w+|'
+    r'\d+\s+(?:seconds?|minutes?|hours?|days?|weeks?|months?|years?)\s+(?:ago|from\\s+now)|'
+    r'in\s+\d+\s+(?:seconds?|minutes?|hours?|days?|weeks?|months?|years?)'
+    r')\b',
+    re.IGNORECASE,
+)
 
 def append_absolute_dates(
     text: str, current_time: Optional[datetime] = None
@@ -58,6 +68,7 @@ def append_absolute_dates(
     str
         Text where each detected relative date phrase is followed by its
         absolute representation, e.g. ``"tomorrow (2024-05-10 00:00 UTC)"``.
+        Phrases already containing explicit dates are left unmodified.
     """
 
     if not text:
@@ -70,6 +81,8 @@ def append_absolute_dates(
 
     for phrase, dt in results:
         if "(" in phrase:
+            continue
+        if not RELATIVE_DATE_PATTERN.search(phrase):
             continue
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=current_time.tzinfo)
