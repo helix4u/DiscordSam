@@ -524,11 +524,10 @@ async def retrieve_and_prepare_rag_context(
     n_results_sentences: int = config.RAG_NUM_DISTILLED_SENTENCES_TO_FETCH,
 ) -> Tuple[Optional[str], Optional[List[Tuple[str, str]]]]:
     query = append_absolute_dates(query)
-    if not chroma_client or not distilled_chat_summary_collection or not chat_history_collection:
+    if not chroma_client:
         logger.warning("ChromaDB collections not available, skipping RAG context retrieval.")
         return None, None
 
-    retrieved_contexts_raw: List[Tuple[str, str]] = [] # Stores tuples of (document_text, source_collection_name)
     date_range = _parse_relative_date_range(query) if isinstance(query, str) else None
     if date_range:
         logger.info(
@@ -536,6 +535,62 @@ async def retrieve_and_prepare_rag_context(
             date_range[0].isoformat(),
             date_range[1].isoformat(),
         )
+        if not rss_summary_collection:
+            logger.warning("RAG: RSS summary collection not available, skipping date-range retrieval.")
+            return None, None
+        try:
+            start_dt, end_dt = date_range
+            start_iso, end_iso = start_dt.isoformat(), end_dt.isoformat()
+            retrieved_contexts_raw: List[Tuple[str, str]] = []
+            res = rss_summary_collection.get(include=["documents", "metadatas"])
+            docs_with_ts: List[Tuple[str, datetime]] = []
+            if res and res.get("documents") and res.get("metadatas"):
+                for doc_text, meta in zip(res["documents"], res["metadatas"]):
+                    if not isinstance(doc_text, str) or not isinstance(meta, dict):
+                        continue
+                    ts = meta.get("timestamp")
+                    if not isinstance(ts, str):
+                        continue
+                    try:
+                        ts_dt = datetime.fromisoformat(ts)
+                    except ValueError:
+                        continue
+                    if start_dt <= ts_dt <= end_dt:
+                        docs_with_ts.append((doc_text, ts_dt))
+            if docs_with_ts:
+                docs_with_ts.sort(key=lambda x: x[1], reverse=True)
+                max_docs = getattr(config, "RAG_MAX_DATE_RANGE_DOCS", 100)
+                if len(docs_with_ts) > max_docs:
+                    logger.debug(
+                        f"RAG: Limiting 'rss' date-range docs from {len(docs_with_ts)} to {max_docs}."
+                    )
+                limited_docs = docs_with_ts[:max_docs]
+                for doc_text, _ in limited_docs:
+                    retrieved_contexts_raw.append((doc_text, "rss"))
+                logger.info(
+                    f"RAG: Retrieved {len(limited_docs)} 'rss' documents for date range {start_iso} to {end_iso}."
+                )
+            if not retrieved_contexts_raw:
+                logger.info(
+                    f"RAG: No RSS documents found for date range {start_iso} to {end_iso}."
+                )
+                return None, None
+            synthesized_context = await synthesize_retrieved_contexts_llm(
+                llm_client, retrieved_contexts_raw, query
+            )
+            return synthesized_context, retrieved_contexts_raw
+        except Exception as e_date:
+            logger.error(
+                f"RAG: Error retrieving date-filtered documents from 'rss': {e_date}",
+                exc_info=True,
+            )
+            return None, None
+
+    if not distilled_chat_summary_collection or not chat_history_collection:
+        logger.warning("ChromaDB collections not available, skipping RAG context retrieval.")
+        return None, None
+
+    retrieved_contexts_raw: List[Tuple[str, str]] = [] # Stores tuples of (document_text, source_collection_name)
 
     try:
         logger.debug(f"RAG: Querying distilled_chat_summary_collection for query: '{query[:50]}...' (n_results={n_results_sentences})")
