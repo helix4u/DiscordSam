@@ -1,6 +1,6 @@
 import logging
 from uuid import uuid4
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import List, Optional, Any, Dict, Union, Tuple
 import json
 import re
@@ -64,64 +64,6 @@ def _parse_json_with_recovery(content: str) -> Optional[Dict[str, Any]]:
         last_error = exc3
 
     logger.error("Trimmed JSON parse failed: %s", last_error)
-    return None
-
-
-def _parse_relative_date_range(query: str) -> Optional[Tuple[datetime, datetime]]:
-    """Detect common relative date phrases in ``query`` and return a date range.
-
-    Supports phrases like ``yesterday``, ``today``, ``last week`` and
-    ``last <weekday>``. Returned datetimes are naive and span the full day(s).
-    """
-
-    q_lower = query.lower()
-    now = datetime.now()
-
-    if "yesterday" in q_lower:
-        target = now - timedelta(days=1)
-        start = target.replace(hour=0, minute=0, second=0, microsecond=0)
-        end = start + timedelta(days=1) - timedelta(microseconds=1)
-        return start, end
-
-    if "today" in q_lower:
-        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        end = start + timedelta(days=1) - timedelta(microseconds=1)
-        return start, end
-
-    if "last week" in q_lower or "past week" in q_lower:
-        end = now
-        start = end - timedelta(days=7)
-        return start, end
-
-    # Match "last monday", "last tuesday", etc.
-    weekdays = [
-        "monday",
-        "tuesday",
-        "wednesday",
-        "thursday",
-        "friday",
-        "saturday",
-        "sunday",
-    ]
-    match = re.search(r"last (monday|tuesday|wednesday|thursday|friday|saturday|sunday)", q_lower)
-    if match:
-        target_idx = weekdays.index(match.group(1))
-        days_ago = (now.weekday() - target_idx) % 7 + 7
-        target = now - timedelta(days=days_ago)
-        start = target.replace(hour=0, minute=0, second=0, microsecond=0)
-        end = start + timedelta(days=1) - timedelta(microseconds=1)
-        return start, end
-
-    # Match standalone weekday (e.g., "monday")
-    match = re.search(r"\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b", q_lower)
-    if match:
-        target_idx = weekdays.index(match.group(1))
-        days_ago = (now.weekday() - target_idx) % 7
-        target = now - timedelta(days=days_ago)
-        start = target.replace(hour=0, minute=0, second=0, microsecond=0)
-        end = start + timedelta(days=1) - timedelta(microseconds=1)
-        return start, end
-
     return None
 
 
@@ -523,13 +465,6 @@ async def retrieve_and_prepare_rag_context(llm_client: Any, query: str, n_result
         return None, None
 
     retrieved_contexts_raw: List[Tuple[str, str]] = [] # Stores tuples of (document_text, source_collection_name)
-    date_range = _parse_relative_date_range(query) if isinstance(query, str) else None
-    if date_range:
-        logger.info(
-            "RAG: Detected relative date range %s to %s in query.",
-            date_range[0].isoformat(),
-            date_range[1].isoformat(),
-        )
 
     try:
         logger.debug(f"RAG: Querying distilled_chat_summary_collection for query: '{query[:50]}...' (n_results={n_results_sentences})")
@@ -594,37 +529,6 @@ async def retrieve_and_prepare_rag_context(llm_client: Any, query: str, n_result
             else:
                 logger.warning("RAG: chat_history_collection is None, cannot fetch full conversation documents.")
 
-        collections_with_date_docs: set[str] = set()
-        if date_range:
-            start_iso, end_iso = date_range[0].isoformat(), date_range[1].isoformat()
-            date_collections = [
-                ("rss", rss_summary_collection),
-                ("tweets", tweets_collection),
-                ("news", news_summary_collection),
-                ("timeline", timeline_summary_collection),
-            ]
-            for name, coll in date_collections:
-                if not coll:
-                    continue
-                try:
-                    res = coll.get(
-                        where={"timestamp": {"$gte": start_iso, "$lte": end_iso}},
-                        include=["documents"],
-                    )
-                    docs = [doc for doc in (res.get("documents") or []) if isinstance(doc, str)] if res else []
-                    if docs:
-                        for doc_text in docs:
-                            retrieved_contexts_raw.append((doc_text, name))
-                        collections_with_date_docs.add(name)
-                        logger.info(
-                            f"RAG: Retrieved {len(docs)} '{name}' documents for date range {start_iso} to {end_iso}."
-                        )
-                except Exception as e_date:
-                    logger.error(
-                        f"RAG: Error retrieving date-filtered documents from '{name}': {e_date}",
-                        exc_info=True,
-                    )
-
         n_results_collections = config.RAG_NUM_COLLECTION_DOCS_TO_FETCH
         additional_collections = [
             ("chat_history", chat_history_collection),
@@ -640,11 +544,6 @@ async def retrieve_and_prepare_rag_context(llm_client: Any, query: str, n_result
         for name, collection_obj in additional_collections:
             if not collection_obj:
                 logger.debug(f"RAG: Collection '{name}' is not available, skipping.")
-                continue
-            if date_range and name in collections_with_date_docs:
-                logger.debug(
-                    f"RAG: Skipping unfiltered query for '{name}' due to date-specific retrieval."
-                )
                 continue
             try:
                 logger.debug(
