@@ -1,9 +1,10 @@
 """Utility constants for logit bias settings."""
 from typing import Dict
 
-# Mapping of token IDs representing the em dash and common variants to a
-# strong negative bias. This discourages the model from producing these tokens.
-LOGIT_BIAS_EM_DASH: Dict[int, int] = {
+# Mapping of token IDs representing characters we want to strongly
+# discourage the model from producing. Initially this targeted em dashes but
+# now also includes various emojis and other tokens.
+LOGIT_BIAS_UNWANTED_TOKENS: Dict[int, int] = {
       2322: -100,  # '\u2014'
       2733: -100,  # ' \u2014'
       8290: -100,  # '\u2014\u2014'
@@ -56,6 +57,8 @@ LOGIT_BIAS_EM_DASH: Dict[int, int] = {
 }
 
 # The OpenAI API expects string keys for the logit_bias mapping.
-LOGIT_BIAS_EM_DASH_STR: Dict[str, int] = {str(k): v for k, v in LOGIT_BIAS_EM_DASH.items()}
+LOGIT_BIAS_UNWANTED_TOKENS_STR: Dict[str, int] = {
+    str(k): v for k, v in LOGIT_BIAS_UNWANTED_TOKENS.items()
+}
 
-__all__ = ["LOGIT_BIAS_EM_DASH_STR"]
+__all__ = ["LOGIT_BIAS_UNWANTED_TOKENS_STR"]

@@ -23,7 +23,7 @@ from utils import (
 # Import functions for post-stream processing
 from rag_chroma_manager import ingest_conversation_to_chromadb
 from audio_utils import send_tts_audio
-from logit_biases import LOGIT_BIAS_EM_DASH_STR
+from logit_biases import LOGIT_BIAS_UNWANTED_TOKENS_STR
 
 
 logger = logging.getLogger(__name__)
@@ -181,7 +181,7 @@ async def get_simplified_llm_stream(
             max_tokens=config.MAX_COMPLETION_TOKENS,
             stream=True,
             temperature=0.7,
-            logit_bias=LOGIT_BIAS_EM_DASH_STR,
+            logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
         )
         return final_llm_stream, prompt_messages
     except Exception as e:
@@ -746,7 +746,7 @@ async def get_description_for_image(llm_client: Any, image_path: str) -> str:
                 else 300
             ),  # Use a specific max_tokens for descriptions
             temperature=0.3,  # Lower temperature for more factual descriptions
-            logit_bias=LOGIT_BIAS_EM_DASH_STR,
+            logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
         )
 
         if response.choices and response.choices[0].message and response.choices[0].message.content:
