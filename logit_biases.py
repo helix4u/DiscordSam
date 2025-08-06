@@ -44,6 +44,15 @@ LOGIT_BIAS_EM_DASH: Dict[int, int] = {
     190702: -100,  # '\u2014with'
     196615: -100,  # '\u2014we'
     197618: -100,  # '\u2014even'
+    85594: -100,   # 🧠 brain
+    52141: -100,   # ⚖️ scales
+    67376: -100,   # 🤖 robot
+    45784: -100,   # 🔥 fire
+    72770: -100,   # 😊 smiley
+    11100: -100,   # 😂 tears of joy
+    49867: -100,   # 👍 thumbs up
+    15064: -100,   # ✅ checkmark
+    # Add more as needed
 }
 
 # The OpenAI API expects string keys for the logit_bias mapping.
