@@ -6,6 +6,7 @@ import json
 import re
 import random
 import ast
+from dateparser.search import search_dates
 
 
 import chromadb
@@ -122,6 +123,23 @@ def _parse_relative_date_range(query: str) -> Optional[Tuple[datetime, datetime]
         start = target.replace(hour=0, minute=0, second=0, microsecond=0)
         end = start + timedelta(days=1) - timedelta(microseconds=1)
         return start, end
+
+    # Fallback: look for explicit date expressions like "March 3 2024" or "2024-03-03"
+    try:
+        found_dates = search_dates(query)
+    except Exception:
+        found_dates = None
+
+    if found_dates:
+        dt_list = [dt for _, dt in found_dates]
+        if dt_list:
+            dt_list.sort()
+            start = dt_list[0].replace(hour=0, minute=0, second=0, microsecond=0)
+            if len(dt_list) > 1:
+                end = dt_list[-1].replace(hour=23, minute=59, second=59, microsecond=999999)
+            else:
+                end = start + timedelta(days=1) - timedelta(microseconds=1)
+            return start, end
 
     return None
 
@@ -605,10 +623,11 @@ async def retrieve_and_prepare_rag_context(
             start_dt, end_dt = date_range
             start_iso, end_iso = start_dt.isoformat(), end_dt.isoformat()
             date_collections = [
-                ("rss", rss_summary_collection),
                 ("tweets", tweets_collection),
                 ("news", news_summary_collection),
+                ("rss", rss_summary_collection),
                 ("timeline", timeline_summary_collection),
+                ("chat_history", chat_history_collection),
             ]
             for name, coll in date_collections:
                 if not coll:
