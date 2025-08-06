@@ -14,6 +14,7 @@ from chromadb.errors import InternalError
 from config import config
 from common_models import MsgNode
 from logit_biases import LOGIT_BIAS_UNWANTED_TOKENS_STR
+from utils import append_absolute_dates
 
 
 logger = logging.getLogger(__name__)
@@ -459,7 +460,12 @@ async def update_retrieved_memories(
         except Exception as e_add:
             logger.error(f"Failed to store merged memory update {doc_id}: {e_add}", exc_info=True)
 
-async def retrieve_and_prepare_rag_context(llm_client: Any, query: str, n_results_sentences: int = config.RAG_NUM_DISTILLED_SENTENCES_TO_FETCH) -> Tuple[Optional[str], Optional[List[Tuple[str, str]]]]:
+async def retrieve_and_prepare_rag_context(
+    llm_client: Any,
+    query: str,
+    n_results_sentences: int = config.RAG_NUM_DISTILLED_SENTENCES_TO_FETCH,
+) -> Tuple[Optional[str], Optional[List[Tuple[str, str]]]]:
+    query = append_absolute_dates(query)
     if not chroma_client or not distilled_chat_summary_collection or not chat_history_collection:
         logger.warning("ChromaDB collections not available, skipping RAG context retrieval.")
         return None, None

@@ -22,7 +22,11 @@ from llm_handling import (
 from rag_chroma_manager import (
     retrieve_and_prepare_rag_context
 )
-from utils import detect_urls, cleanup_playwright_processes
+from utils import (
+    detect_urls,
+    cleanup_playwright_processes,
+    append_absolute_dates,
+)
 from web_utils import scrape_website, fetch_youtube_transcript
 from audio_utils import transcribe_audio_file, send_tts_audio, load_whisper_model
 from timeline_pruner import prune_and_summarize
@@ -241,7 +245,18 @@ def setup_events_and_tasks(bot: commands.Bot, llm_client_in: Any, bot_state_in: 
                         logger.error(f"Error processing audio attachment '{attachment.filename}': {e}", exc_info=True)
                     break
 
-        current_message_content_parts.append({"type": "text", "text": user_message_text_for_processing if user_message_text_for_processing else ""})
+        user_message_text_for_processing = append_absolute_dates(
+            user_message_text_for_processing
+        )
+
+        current_message_content_parts.append(
+            {
+                "type": "text",
+                "text": user_message_text_for_processing
+                if user_message_text_for_processing
+                else "",
+            }
+        )
 
         image_added_to_prompt = False; images_processed_count = 0
         if message.attachments:
