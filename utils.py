@@ -1,10 +1,11 @@
 import asyncio
 import re
-from datetime import timedelta
-from typing import List, Optional, Tuple, Any, Coroutine
-import psutil
+from datetime import datetime, timezone, timedelta
+from typing import Any, Coroutine, List, Optional, Tuple
 import logging
+import psutil
 import discord
+from dateparser.search import search_dates
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,51 @@ def detect_urls(message_text: str) -> List[str]:
     # Basic URL detection, can be improved for more complex cases
     url_pattern = re.compile(r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+')
     return url_pattern.findall(message_text)
+
+
+def append_absolute_dates(
+    text: str, current_time: Optional[datetime] = None
+) -> str:
+    """Annotate relative date phrases in ``text`` with absolute timestamps.
+
+    Parameters
+    ----------
+    text:
+        The input text potentially containing relative date expressions.
+    current_time:
+        Reference time used to resolve relative phrases. Defaults to the
+        current UTC time.
+
+    Returns
+    -------
+    str
+        Text where each detected relative date phrase is followed by its
+        absolute representation, e.g. ``"tomorrow (2024-05-10 00:00 UTC)"``.
+    """
+
+    if not text:
+        return text
+
+    current_time = current_time or datetime.now(timezone.utc)
+    results = search_dates(text, settings={"RELATIVE_BASE": current_time})
+    if not results:
+        return text
+
+    for phrase, dt in results:
+        if "(" in phrase:
+            continue
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=current_time.tzinfo)
+        pattern = re.compile(
+            rf"({re.escape(phrase)})(?!\s*\()",
+            re.IGNORECASE,
+        )
+        text = pattern.sub(
+            f"{phrase} ({dt.astimezone().strftime('%Y-%m-%d %H:%M %Z')})",
+            text,
+        )
+
+    return text
 
 def clean_text_for_tts(text: str) -> str:
     if not text: return ""

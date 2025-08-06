@@ -13,6 +13,7 @@ DiscordSam is an advanced, context-aware Discord bot designed to provide intelli
     *   Conversations are "distilled" into keyword-rich sentences for efficient semantic search.
     *   Extracts structured data (entities, relations, observations) from conversations to build a knowledge base.
     *   Can ingest ChatGPT export files to import prior conversation history.
+    *   Automatically annotates relative date expressions with exact timestamps to improve date-based retrieval.
 *   **Web Capabilities:**
     *   Scrape website content (with Playwright, falling back to BeautifulSoup) and YouTube transcripts.
     *   Generate textual descriptions of webpage screenshots using a vision LLM.
