@@ -4,7 +4,7 @@ import base64
 import os
 from typing import List, Any, Optional, Union, Tuple, cast
 import discord
-from openai import AsyncStream, OpenAIError # type: ignore
+from openai import AsyncStream, OpenAIError, BadRequestError  # type: ignore
 from datetime import datetime
 
 # Assuming config is imported from config.py
@@ -24,6 +24,8 @@ from utils import (
 from rag_chroma_manager import ingest_conversation_to_chromadb
 from audio_utils import send_tts_audio
 from logit_biases import LOGIT_BIAS_UNWANTED_TOKENS_STR
+from openai_api import create_chat_completion, extract_text
+from openai import BadRequestError
 
 
 logger = logging.getLogger(__name__)
@@ -162,39 +164,65 @@ async def get_simplified_llm_stream(
     llm_client: Any,
     prompt_messages: List[MsgNode],
     is_vision_request: bool
-) -> Tuple[Optional[AsyncStream], List[MsgNode]]:
+) -> Tuple[Optional[Any], List[MsgNode]]:
     if not prompt_messages:
         raise ValueError("Prompt messages cannot be empty for get_simplified_llm_stream.")
 
-    logger.info(f"Streaming final response. Vision request: {is_vision_request}")
+    logger.info(f"Requesting final response. Vision request: {is_vision_request}")
 
     final_stream_model = config.VISION_LLM_MODEL if is_vision_request else config.LLM_MODEL
-    logger.info(f"Using model for final streaming response: {final_stream_model}")
+    logger.info(f"Using model for final response: {final_stream_model}")
+    api_messages = [msg_node.to_dict() for msg_node in prompt_messages]
     try:
-        api_messages = []
-        for msg_node in prompt_messages:
-            api_messages.append(msg_node.to_dict())
-
-        final_llm_stream = await llm_client.chat.completions.create(
+        final_llm_stream = await create_chat_completion(
+            llm_client,
+            api_messages,
             model=final_stream_model,
-            messages=api_messages,
             max_tokens=config.MAX_COMPLETION_TOKENS,
-            stream=True,
             temperature=0.7,
             logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
+            stream=config.LLM_STREAMING,
         )
         return final_llm_stream, prompt_messages
+    except BadRequestError as e:
+        err_param = (getattr(e, "body", {}) or {}).get("error", {}).get("param")
+        if config.LLM_STREAMING and err_param == "stream":
+            logger.warning(
+                f"Streaming not supported for model {final_stream_model}; retrying without stream."
+            )
+            try:
+                final_response = await create_chat_completion(
+                    llm_client,
+                    api_messages,
+                    model=final_stream_model,
+                    max_tokens=config.MAX_COMPLETION_TOKENS,
+                    temperature=0.7,
+                    logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
+                    stream=False,
+                )
+                return final_response, prompt_messages
+            except Exception as inner_e:
+                e = inner_e
+        logger.error(
+            f"Failed to create LLM response for model {final_stream_model}: {e}",
+            exc_info=True,
+        )
     except Exception as e:
-        logger.error(f"Failed to create LLM stream for final response with model {final_stream_model}: {e}", exc_info=True)
-        try:
-            for i, msg in enumerate(prompt_messages):
-                content_detail = str(msg.content)
-                if isinstance(msg.content, list):
-                    content_detail = f"List of {len(msg.content)} parts: {[item.get('type') if isinstance(item,dict) else type(item) for item in msg.content]}"
-                logger.error(f"Problematic prompt message [{i}]: Role='{msg.role}', ContentType='{type(msg.content)}', Content='{content_detail[:500]}'")
-        except Exception as log_e:
-            logger.error(f"Error during logging of problematic messages: {log_e}")
-        return None, prompt_messages
+        logger.error(
+            f"Failed to create LLM response with model {final_stream_model}: {e}",
+            exc_info=True,
+        )
+    try:
+        for i, msg in enumerate(prompt_messages):
+            content_detail = str(msg.content)
+            if isinstance(msg.content, list):
+                content_detail = f"List of {len(msg.content)} parts: {[item.get('type') if isinstance(item,dict) else type(item) for item in msg.content]}"
+            logger.error(
+                f"Problematic prompt message [{i}]: Role='{msg.role}', ContentType='{type(msg.content)}', Content='{content_detail[:500]}'"
+            )
+    except Exception as log_e:
+        logger.error(f"Error during logging of problematic messages: {log_e}")
+    return None, prompt_messages
 
 async def _stream_llm_handler(
     interaction_or_message: Union[discord.Interaction, discord.Message],
@@ -301,37 +329,70 @@ async def _stream_llm_handler(
         last_edit_time = asyncio.get_event_loop().time()
         accumulated_delta_for_update = ""
 
-        if current_initial_message:
-            initial_display_embed = discord.Embed(
-                title=title,
-                description=response_prefix + "⏳ Streaming response...",
-                color=config.EMBED_COLOR["incomplete"],
-            )
-            current_initial_message = await safe_message_edit(
-                current_initial_message,
-                channel,
-                embed=initial_display_embed,
-            )
-            sent_messages[0] = current_initial_message
+        if config.LLM_STREAMING and hasattr(stream, "__aiter__"):
+            if current_initial_message:
+                initial_display_embed = discord.Embed(
+                    title=title,
+                    description=response_prefix + "⏳ Streaming response...",
+                    color=config.EMBED_COLOR["incomplete"],
+                )
+                current_initial_message = await safe_message_edit(
+                    current_initial_message,
+                    channel,
+                    embed=initial_display_embed,
+                )
+                sent_messages[0] = current_initial_message
 
-        async for chunk_data in stream:
-            delta_content = ""
-            if chunk_data.choices and chunk_data.choices[0].delta:
-                delta_content = chunk_data.choices[0].delta.content or ""
+            async for chunk_data in stream:
+                delta_content = ""
+                if config.USE_RESPONSES_API:
+                    event_type = getattr(chunk_data, "type", "")
+                    if event_type == "response.output_text.delta":
+                        delta_content = getattr(chunk_data, "delta", "") or ""
+                    else:
+                        continue
+                else:
+                    if chunk_data.choices and chunk_data.choices[0].delta:
+                        delta_content = chunk_data.choices[0].delta.content or ""
 
-            if delta_content:
-                full_response_content += delta_content
-                accumulated_delta_for_update += delta_content
+                if delta_content:
+                    full_response_content += delta_content
+                    accumulated_delta_for_update += delta_content
 
-            current_time = asyncio.get_event_loop().time()
-            if accumulated_delta_for_update and \
-               (current_time - last_edit_time >= (1.0 / config.EDITS_PER_SECOND) or \
-                len(accumulated_delta_for_update) > 200):
+                current_time = asyncio.get_event_loop().time()
+                if accumulated_delta_for_update and \
+                   (current_time - last_edit_time >= (1.0 / config.EDITS_PER_SECOND) or \
+                    len(accumulated_delta_for_update) > 200):
 
+                    display_text = response_prefix + full_response_content
+                    text_chunks = chunk_text(display_text, config.EMBED_MAX_LENGTH)
+                    accumulated_delta_for_update = ""
+
+                    for i, chunk_content_part in enumerate(text_chunks):
+                        embed = discord.Embed(
+                            title=title if i == 0 else f"{title} (cont.)",
+                            description=chunk_content_part,
+                            color=config.EMBED_COLOR["incomplete"],
+                        )
+                        if i < len(sent_messages):
+                            sent_messages[i] = await safe_message_edit(
+                                sent_messages[i],
+                                channel,
+                                embed=embed,
+                            )
+                        else:
+                            if channel:
+                                new_msg = await channel.send(embed=embed)
+                                sent_messages.append(new_msg)
+                            else:
+                                logger.error(f"Cannot send overflow chunk {i+1} for '{title}': channel is None.")
+                                break
+                    last_edit_time = current_time
+                    await asyncio.sleep(config.STREAM_EDIT_THROTTLE_SECONDS)
+
+            if accumulated_delta_for_update:
                 display_text = response_prefix + full_response_content
                 text_chunks = chunk_text(display_text, config.EMBED_MAX_LENGTH)
-                accumulated_delta_for_update = ""
-
                 for i, chunk_content_part in enumerate(text_chunks):
                     embed = discord.Embed(
                         title=title if i == 0 else f"{title} (cont.)",
@@ -344,34 +405,12 @@ async def _stream_llm_handler(
                             channel,
                             embed=embed,
                         )
-                    else:
-                        if channel:
-                            new_msg = await channel.send(embed=embed)
-                            sent_messages.append(new_msg)
-                        else:
-                            logger.error(f"Cannot send overflow chunk {i+1} for '{title}': channel is None.")
-                            break
-                last_edit_time = current_time
+                    elif channel:
+                        sent_messages.append(await channel.send(embed=embed))
                 await asyncio.sleep(config.STREAM_EDIT_THROTTLE_SECONDS)
+        else:
+            full_response_content = extract_text(stream)
 
-        if accumulated_delta_for_update:
-            display_text = response_prefix + full_response_content
-            text_chunks = chunk_text(display_text, config.EMBED_MAX_LENGTH)
-            for i, chunk_content_part in enumerate(text_chunks):
-                embed = discord.Embed(
-                    title=title if i == 0 else f"{title} (cont.)",
-                    description=chunk_content_part,
-                    color=config.EMBED_COLOR["incomplete"],
-                )
-                if i < len(sent_messages):
-                    sent_messages[i] = await safe_message_edit(
-                        sent_messages[i],
-                        channel,
-                        embed=embed,
-                    )
-                elif channel:
-                    sent_messages.append(await channel.send(embed=embed))
-            await asyncio.sleep(config.STREAM_EDIT_THROTTLE_SECONDS)
 
         final_display_text = response_prefix + full_response_content
         final_chunks = chunk_text(final_display_text, config.EMBED_MAX_LENGTH)
@@ -737,20 +776,21 @@ async def get_description_for_image(llm_client: Any, image_path: str) -> str:
         ]
 
         logger.debug(f"Sending image description request to model: {config.VISION_LLM_MODEL}")
-        response = await llm_client.chat.completions.create(
+        response = await create_chat_completion(
+            llm_client,
+            prompt_messages,
             model=config.VISION_LLM_MODEL,
-            messages=prompt_messages,
             max_tokens=(
                 config.MAX_COMPLETION_TOKENS_IMAGE_DESCRIPTION
                 if hasattr(config, "MAX_COMPLETION_TOKENS_IMAGE_DESCRIPTION")
                 else 300
-            ),  # Use a specific max_tokens for descriptions
-            temperature=0.3,  # Lower temperature for more factual descriptions
+            ),
+            temperature=0.3,
             logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
         )
 
-        if response.choices and response.choices[0].message and response.choices[0].message.content:
-            description = response.choices[0].message.content.strip()
+        description = extract_text(response)
+        if description:
             logger.info(f"Successfully generated description for image {image_path}: {description[:100]}...")
             return description
         else:
