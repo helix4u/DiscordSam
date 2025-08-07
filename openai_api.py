@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Sequence
+import logging
 
 from config import config
+
+logger = logging.getLogger(__name__)
 
 
 async def create_chat_completion(
@@ -28,8 +31,8 @@ async def create_chat_completion(
         max_tokens: Maximum tokens for the response. For Chat Completions this
             is sent as ``max_completion_tokens``; for Responses it becomes
             ``max_output_tokens``.
-        temperature: Sampling temperature. Ignored when using Responses API.
-        logit_bias: Optional logit bias dict (only supported in Chat Completions).
+        temperature: Sampling temperature. Some Responses models may not support it.
+        logit_bias: Optional logit bias dict applied to both APIs.
         stream: Whether to request a streaming response.
 
     Returns:
@@ -74,9 +77,15 @@ async def create_chat_completion(
     }
     if max_tokens is not None:
         params["max_output_tokens"] = max_tokens
-    # Some Responses models do not support temperature; omit to avoid errors
 
-    return await llm_client.responses.create(**params)
+    extra_body: Dict[str, Any] = {}
+    if logit_bias:
+        extra_body["logit_bias"] = logit_bias
+
+    return await llm_client.responses.create(
+        **params,
+        extra_body=extra_body or None,
+    )
 
 
 def extract_text(response: Any) -> str:
