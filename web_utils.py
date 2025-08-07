@@ -654,7 +654,7 @@ async def query_searx(query: str) -> List[Dict[str, Any]]:
                 response.raise_for_status()
                 results_json = await response.json()
                 return results_json.get('results', [])[:5]
-    except aioh_utils.pyttp.ClientError as e:
+    except aiohttp.ClientError as e:
         logger.error(f"Searx query failed for '{query}': {e}")
     except json.JSONDecodeError:
         logger.error(f"Failed to decode JSON response from Searx for query '{query}'")
