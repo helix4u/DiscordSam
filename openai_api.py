@@ -80,12 +80,16 @@ async def create_chat_completion(
 
 
 def extract_text(response: Any) -> str:
-    """Extract the assistant text from a response object."""
+    """Extract the assistant text from a response object.
+
+    For providers that include separate reasoning output, only the actual
+    assistant message is returned. Reasoning segments are ignored so that
+    downstream consumers (e.g. JSON parsers) receive clean model output.
+    """
+
     if not config.USE_RESPONSES_API:
         try:
-            return (
-                response.choices[0].message.content.strip()
-            )
+            return response.choices[0].message.content.strip()
         except Exception:
             return ""
 
@@ -93,6 +97,8 @@ def extract_text(response: Any) -> str:
     parts: List[str] = []
     for item in getattr(response, "output", []) or []:
         for content in getattr(item, "content", []) or []:
+            if getattr(content, "type", "") == "reasoning":
+                continue
             text = getattr(content, "text", "")
             if text:
                 parts.append(text)
