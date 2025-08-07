@@ -61,6 +61,7 @@ class Config:
         self.LLM_API_KEY = os.getenv("LLM_API_KEY", "")
         self.LLM_SUPPORTS_JSON_MODE = _get_bool("LLM_SUPPORTS_JSON_MODE", False) # New Flag
         self.USE_RESPONSES_API = _get_bool("USE_RESPONSES_API", False)
+        self.LLM_STREAMING = _get_bool("LLM_STREAMING", False)
         self.SYSTEM_PROMPT_FILE = os.getenv("SYSTEM_PROMPT_FILE", "system_prompt.md")
 
         self.ALLOWED_CHANNEL_IDS = _parse_int_list("ALLOWED_CHANNEL_IDS")
