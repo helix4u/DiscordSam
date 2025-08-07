@@ -15,7 +15,6 @@ from config import config
 from common_models import MsgNode
 from logit_biases import LOGIT_BIAS_UNWANTED_TOKENS_STR
 from utils import append_absolute_dates
-from openai_api import create_chat_completion, extract_text
 
 
 logger = logging.getLogger(__name__)
@@ -269,21 +268,21 @@ Do not include any explanations or conversational text outside the JSON object.
         if getattr(config, "LLM_SUPPORTS_JSON_MODE", False):
              response_format_arg = {"response_format": {"type": "json_object"}}
 
-        response = await create_chat_completion(
-            llm_client,
-            [
+        response = await llm_client.chat.completions.create(
+            model=config.FAST_LLM_MODEL,
+            messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            model=config.FAST_LLM_MODEL,
-            max_tokens=8192,
+            max_tokens=8192,  # Increased max_tokens for potentially larger JSON outputs
             temperature=0.2,
+            stream=False,
             logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
-            **response_format_arg,
+            **response_format_arg
         )
 
-        raw_content = extract_text(response)
-        if raw_content:
+        if response.choices and response.choices[0].message and response.choices[0].message.content:
+            raw_content = response.choices[0].message.content.strip()
 
             if raw_content.startswith("```json"):
                 raw_content = raw_content[7:]
@@ -312,23 +311,21 @@ Do not include any explanations or conversational text outside the JSON object.
             return extracted_data
     except Exception as e:
         if "response_format" in str(e) and response_format_arg:
-            logger.warning(
-                f"extract_structured_data_llm: Failed with response_format, retrying without it for {source_doc_id}. Error: {e}"
-            )
+            logger.warning(f"extract_structured_data_llm: Failed with response_format, retrying without it for {source_doc_id}. Error: {e}")
             try:
-                response = await create_chat_completion(
-                    llm_client,
-                    [
+                response = await llm_client.chat.completions.create(
+                    model=config.FAST_LLM_MODEL,
+                    messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt}
                     ],
-                    model=config.FAST_LLM_MODEL,
                     max_tokens=2048,
                     temperature=0.2,
+                    stream=False,
                     logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
                 )
-                raw_content = extract_text(response)
-                if raw_content:
+                if response.choices and response.choices[0].message and response.choices[0].message.content:
+                    raw_content = response.choices[0].message.content.strip()
                     if raw_content.startswith("```json"):
                         raw_content = raw_content[7:]
                         if raw_content.endswith("```"):
@@ -336,15 +333,11 @@ Do not include any explanations or conversational text outside the JSON object.
                         raw_content = raw_content.strip()
                     extracted_data = _parse_json_with_recovery(raw_content)
                     if extracted_data is None:
-                        logger.error(
-                            f"extract_structured_data_llm (retry): Failed to decode JSON from LLM response for {source_doc_id}. Content: {raw_content[:500]}"
-                        )
+                        logger.error(f"extract_structured_data_llm (retry): Failed to decode JSON from LLM response for {source_doc_id}. Content: {raw_content[:500]}")
                         return None
-                    if not isinstance(extracted_data, dict) or \
+                    if not isinstance(extracted_data, dict) or  \
                        not all(key in extracted_data for key in ["entities", "relations", "observations"]):
-                        logger.warning(
-                            f"extract_structured_data_llm (retry): LLM response for {source_doc_id} was not the expected dict structure. Content: {raw_content[:500]}"
-                        )
+                        logger.warning(f"extract_structured_data_llm (retry): LLM response for {source_doc_id} was not the expected dict structure. Content: {raw_content[:500]}")
                         return None
                     logger.info(f"Successfully extracted structured data (on retry) for {source_doc_id}.")
                     return extracted_data
@@ -378,19 +371,19 @@ async def distill_conversation_to_sentence_llm(llm_client: Any, text_to_distill:
     )
     try:
         logger.debug(f"Requesting distillation from model {config.FAST_LLM_MODEL} for focused exchange.")
-        response = await create_chat_completion(
-            llm_client,
-            [
+        response = await llm_client.chat.completions.create(
+            model=config.FAST_LLM_MODEL,
+            messages=[
                 {"role": "system", "content": "You are an expert contextual knowledge distiller focusing on user-assistant turn pairs."},
                 {"role": "user", "content": prompt}
             ],
-            model=config.FAST_LLM_MODEL,
             max_tokens=2048,
             temperature=0.5,
+            stream=False,
             logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
         )
-        distilled = extract_text(response)
-        if distilled:
+        if response.choices and response.choices[0].message and response.choices[0].message.content:
+            distilled = response.choices[0].message.content.strip()
             logger.info(f"Distilled exchange to sentence(s): '{distilled[:100]}...'")
             return distilled
         logger.warning("LLM distillation (focused exchange) returned no content.")
@@ -432,19 +425,19 @@ async def synthesize_retrieved_contexts_llm(llm_client: Any, retrieved_contexts:
     )
     try:
         logger.debug(f"Requesting context synthesis from model {config.FAST_LLM_MODEL}.")
-        response = await create_chat_completion(
-            llm_client,
-            [
+        response = await llm_client.chat.completions.create(
+            model=config.LLM_MODEL,
+            messages=[
                 {"role": "system", "content": "You are an expert context synthesizer."},
                 {"role": "user", "content": prompt}
             ],
-            model=config.LLM_MODEL,
             max_tokens=3072,
             temperature=0.6,
+            stream=False,
             logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
         )
-        synthesized_context = extract_text(response)
-        if synthesized_context:
+        if response.choices and response.choices[0].message and response.choices[0].message.content:
+            synthesized_context = response.choices[0].message.content.strip()
             logger.info(f"Synthesized RAG context: '{synthesized_context[:150]}...'")
             return synthesized_context
         logger.warning("LLM context synthesis returned no content.")
@@ -479,20 +472,19 @@ async def merge_memory_snippet_with_summary_llm(
     )
 
     try:
-        response = await create_chat_completion(
-            llm_client,
-            [
+        response = await llm_client.chat.completions.create(
+            model=config.FAST_LLM_MODEL,
+            messages=[
                 {"role": "system", "content": "You are a memory consolidation assistant."},
                 {"role": "user", "content": user_text},
             ],
-            model=config.FAST_LLM_MODEL,
             max_tokens=2048,
             temperature=0.4,
+            stream=False,
             logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
         )
-        merged = extract_text(response)
-        if merged:
-            return merged
+        if response.choices and response.choices[0].message and response.choices[0].message.content:
+            return response.choices[0].message.content.strip()
         logger.warning("merge_memory_snippet_with_summary_llm: LLM returned no content.")
         return None
     except Exception as e:

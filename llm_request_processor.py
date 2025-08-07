@@ -15,7 +15,6 @@ import base64 # For ap_command
 import random # For ap_command
 import os # For ingest_command
 from logit_biases import LOGIT_BIAS_UNWANTED_TOKENS_STR
-from openai_api import create_chat_completion, extract_text
 
 # Need to import the inline Pydantic models from discord_commands if they are not moved to common_models
 # For now, assuming they will be moved or this processor will be adapted.
@@ -146,19 +145,19 @@ async def llm_request_processor_task(bot_state: BotState, llm_client: Any, bot_i
                                     f"Article Title: {article_title}\n"
                                     f"Article Content:\n{scraped_content[:config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT*2]}"
                                 )
-                                summary_response = await create_chat_completion(
-                                    llm_client,
-                                    [
+                                summary_response = await llm_client.chat.completions.create(
+                                    model=config.FAST_LLM_MODEL,
+                                    messages=[
                                         {"role": "system", "content": "You are an expert news summarizer."},
                                         {"role": "user", "content": summarization_prompt}
                                     ],
-                                    model=config.FAST_LLM_MODEL,
                                     max_tokens=250,
                                     temperature=0.3,
+                                    stream=False,
                                     logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
                                 )
-                                article_summary = extract_text(summary_response)
-                                if article_summary:
+                                if summary_response.choices and summary_response.choices[0].message and summary_response.choices[0].message.content:
+                                    article_summary = summary_response.choices[0].message.content.strip()
                                     article_summaries_for_briefing.append(f"Source: {article_title} ({article_url})\nSummary: {article_summary}\n\n")
                                     store_news_summary(topic=topic, url=article_url, summary_text=article_summary) # Assuming this is thread-safe or handled
                                 else:
