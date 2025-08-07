@@ -21,9 +21,14 @@ async def create_chat_completion(
     Args:
         llm_client: The OpenAI client instance.
         messages: List of message dicts following the Chat Completions format.
+            Messages with role ``developer`` are treated as hidden instructions.
+            In Chat Completions they are converted to ``system`` messages; in
+            Responses they remain ``developer`` messages.
         model: Model name to use.
-        max_tokens: Maximum tokens for the response.
-        temperature: Sampling temperature.
+        max_tokens: Maximum tokens for the response. For Chat Completions this
+            is sent as ``max_completion_tokens``; for Responses it becomes
+            ``max_output_tokens``.
+        temperature: Sampling temperature. Ignored when using Responses API.
         logit_bias: Optional logit bias dict (only supported in Chat Completions).
         stream: Whether to request a streaming response.
 
@@ -32,36 +37,44 @@ async def create_chat_completion(
     """
 
     if not config.USE_RESPONSES_API:
+        converted: List[Dict[str, Any]] = []
+        for msg in messages:
+            role = msg.get("role")
+            if role == "developer":
+                msg = dict(msg, role="system")
+            converted.append(msg)
+
         params: Dict[str, Any] = {
             "model": model,
-            "messages": list(messages),
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-            "logit_bias": logit_bias,
+            "messages": converted,
             "stream": stream,
         }
+        if temperature is not None:
+            params["temperature"] = temperature
+        if max_tokens is not None:
+            params["max_completion_tokens"] = max_tokens
+        if logit_bias:
+            params["logit_bias"] = logit_bias
         return await llm_client.chat.completions.create(**params)
 
     # Responses API path
-    instructions_parts: List[str] = []
     input_messages: List[Dict[str, Any]] = []
     for msg in messages:
-        if msg.get("role") == "system":
-            if content := msg.get("content"):
-                instructions_parts.append(str(content))
-        else:
-            input_messages.append(msg)
+        role = msg.get("role")
+        if role in {"system", "developer"}:
+            role = "developer"
+        clean_msg = {k: v for k, v in msg.items() if k != "name"}
+        clean_msg["role"] = role
+        input_messages.append(clean_msg)
 
-    instructions = "\n\n".join(instructions_parts) if instructions_parts else None
     params = {
         "model": model,
         "input": input_messages if input_messages else "",
-        "temperature": temperature,
-        "max_output_tokens": max_tokens,
         "stream": stream,
     }
-    if instructions:
-        params["instructions"] = instructions
+    if max_tokens is not None:
+        params["max_output_tokens"] = max_tokens
+    # Some Responses models do not support temperature; omit to avoid errors
 
     return await llm_client.responses.create(**params)
 
