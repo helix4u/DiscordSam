@@ -24,6 +24,7 @@ from utils import (
 from rag_chroma_manager import ingest_conversation_to_chromadb
 from audio_utils import send_tts_audio
 from logit_biases import LOGIT_BIAS_UNWANTED_TOKENS_STR
+from openai_api import create_chat_completion, extract_text
 
 
 logger = logging.getLogger(__name__)
@@ -171,17 +172,15 @@ async def get_simplified_llm_stream(
     final_stream_model = config.VISION_LLM_MODEL if is_vision_request else config.LLM_MODEL
     logger.info(f"Using model for final streaming response: {final_stream_model}")
     try:
-        api_messages = []
-        for msg_node in prompt_messages:
-            api_messages.append(msg_node.to_dict())
-
-        final_llm_stream = await llm_client.chat.completions.create(
+        api_messages = [msg_node.to_dict() for msg_node in prompt_messages]
+        final_llm_stream = await create_chat_completion(
+            llm_client,
+            api_messages,
             model=final_stream_model,
-            messages=api_messages,
             max_tokens=config.MAX_COMPLETION_TOKENS,
-            stream=True,
             temperature=0.7,
             logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
+            stream=True,
         )
         return final_llm_stream, prompt_messages
     except Exception as e:
@@ -316,8 +315,15 @@ async def _stream_llm_handler(
 
         async for chunk_data in stream:
             delta_content = ""
-            if chunk_data.choices and chunk_data.choices[0].delta:
-                delta_content = chunk_data.choices[0].delta.content or ""
+            if config.USE_RESPONSES_API:
+                event_type = getattr(chunk_data, "type", "")
+                if event_type == "response.output_text.delta":
+                    delta_content = getattr(chunk_data, "delta", "") or ""
+                else:
+                    continue
+            else:
+                if chunk_data.choices and chunk_data.choices[0].delta:
+                    delta_content = chunk_data.choices[0].delta.content or ""
 
             if delta_content:
                 full_response_content += delta_content
@@ -737,20 +743,21 @@ async def get_description_for_image(llm_client: Any, image_path: str) -> str:
         ]
 
         logger.debug(f"Sending image description request to model: {config.VISION_LLM_MODEL}")
-        response = await llm_client.chat.completions.create(
+        response = await create_chat_completion(
+            llm_client,
+            prompt_messages,
             model=config.VISION_LLM_MODEL,
-            messages=prompt_messages,
             max_tokens=(
                 config.MAX_COMPLETION_TOKENS_IMAGE_DESCRIPTION
                 if hasattr(config, "MAX_COMPLETION_TOKENS_IMAGE_DESCRIPTION")
                 else 300
-            ),  # Use a specific max_tokens for descriptions
-            temperature=0.3,  # Lower temperature for more factual descriptions
+            ),
+            temperature=0.3,
             logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
         )
 
-        if response.choices and response.choices[0].message and response.choices[0].message.content:
-            description = response.choices[0].message.content.strip()
+        description = extract_text(response)
+        if description:
             logger.info(f"Successfully generated description for image {image_path}: {description[:100]}...")
             return description
         else:
