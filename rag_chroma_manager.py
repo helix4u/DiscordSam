@@ -535,56 +535,74 @@ async def retrieve_and_prepare_rag_context(
             date_range[0].isoformat(),
             date_range[1].isoformat(),
         )
-        if not rss_summary_collection:
-            logger.warning("RAG: RSS summary collection not available, skipping date-range retrieval.")
-            return None, None
-        try:
-            start_dt, end_dt = date_range
-            start_iso, end_iso = start_dt.isoformat(), end_dt.isoformat()
-            retrieved_contexts_raw: List[Tuple[str, str]] = []
-            res = rss_summary_collection.get(include=["documents", "metadatas"])
-            docs_with_ts: List[Tuple[str, datetime]] = []
-            if res and res.get("documents") and res.get("metadatas"):
-                for doc_text, meta in zip(res["documents"], res["metadatas"]):
-                    if not isinstance(doc_text, str) or not isinstance(meta, dict):
-                        continue
-                    ts = meta.get("timestamp")
-                    if not isinstance(ts, str):
-                        continue
-                    try:
-                        ts_dt = datetime.fromisoformat(ts)
-                    except ValueError:
-                        continue
-                    if start_dt <= ts_dt <= end_dt:
-                        docs_with_ts.append((doc_text, ts_dt))
-            if docs_with_ts:
-                docs_with_ts.sort(key=lambda x: x[1], reverse=True)
-                max_docs = getattr(config, "RAG_MAX_DATE_RANGE_DOCS", 100)
-                if len(docs_with_ts) > max_docs:
-                    logger.debug(
-                        f"RAG: Limiting 'rss' date-range docs from {len(docs_with_ts)} to {max_docs}."
+        start_dt, end_dt = date_range
+        start_iso, end_iso = start_dt.isoformat(), end_dt.isoformat()
+        collections_to_search = [
+            ("rss", rss_summary_collection),
+            ("tweets", tweets_collection),
+            ("news", news_summary_collection),
+            ("timeline", timeline_summary_collection),
+            ("chat_history", chat_history_collection),
+            ("entity", entity_collection),
+            ("relation", relation_collection),
+            ("observation", observation_collection),
+        ]
+        retrieved_contexts_raw: List[Tuple[str, str]] = []
+        for name, coll in collections_to_search:
+            if not coll:
+                logger.debug(f"RAG: Collection '{name}' is not available for date-range search.")
+                continue
+            try:
+                res = coll.get(include=["documents", "metadatas"])
+                docs_with_ts: List[Tuple[str, datetime]] = []
+                if res and res.get("documents") and res.get("metadatas"):
+                    for doc_text, meta in zip(res["documents"], res["metadatas"]):
+                        if not isinstance(doc_text, str) or not isinstance(meta, dict):
+                            continue
+                        ts = meta.get("timestamp")
+                        if not isinstance(ts, str):
+                            continue
+                        try:
+                            ts_dt = datetime.fromisoformat(ts)
+                        except ValueError:
+                            continue
+                        if start_dt <= ts_dt <= end_dt:
+                            docs_with_ts.append((doc_text, ts_dt))
+                if docs_with_ts:
+                    docs_with_ts.sort(key=lambda x: x[1], reverse=True)
+                    max_docs = getattr(config, "RAG_MAX_DATE_RANGE_DOCS", 100)
+                    if len(docs_with_ts) > max_docs:
+                        logger.debug(
+                            f"RAG: Limiting '{name}' date-range docs from {len(docs_with_ts)} to {max_docs}."
+                        )
+                    limited_docs = docs_with_ts[:max_docs]
+                    for doc_text, _ in limited_docs:
+                        truncated_doc = doc_text
+                        if name == "chat_history":
+                            max_chars = getattr(config, "RAG_MAX_FULL_CONVO_CHARS", 20000)
+                            if len(doc_text) > max_chars:
+                                truncated_doc = doc_text[-max_chars:]
+                                logger.debug(
+                                    f"RAG: Truncated chat_history document from {len(doc_text)} to {max_chars} chars."
+                                )
+                        retrieved_contexts_raw.append((truncated_doc, name))
+                    logger.info(
+                        f"RAG: Retrieved {len(limited_docs)} '{name}' documents for date range {start_iso} to {end_iso}."
                     )
-                limited_docs = docs_with_ts[:max_docs]
-                for doc_text, _ in limited_docs:
-                    retrieved_contexts_raw.append((doc_text, "rss"))
-                logger.info(
-                    f"RAG: Retrieved {len(limited_docs)} 'rss' documents for date range {start_iso} to {end_iso}."
+            except Exception as e_date:
+                logger.error(
+                    f"RAG: Error retrieving date-filtered documents from '{name}': {e_date}",
+                    exc_info=True,
                 )
-            if not retrieved_contexts_raw:
-                logger.info(
-                    f"RAG: No RSS documents found for date range {start_iso} to {end_iso}."
-                )
-                return None, None
-            synthesized_context = await synthesize_retrieved_contexts_llm(
-                llm_client, retrieved_contexts_raw, query
-            )
-            return synthesized_context, retrieved_contexts_raw
-        except Exception as e_date:
-            logger.error(
-                f"RAG: Error retrieving date-filtered documents from 'rss': {e_date}",
-                exc_info=True,
+        if not retrieved_contexts_raw:
+            logger.info(
+                f"RAG: No documents found for date range {start_iso} to {end_iso} across any collection."
             )
             return None, None
+        synthesized_context = await synthesize_retrieved_contexts_llm(
+            llm_client, retrieved_contexts_raw, query
+        )
+        return synthesized_context, retrieved_contexts_raw
 
     if not distilled_chat_summary_collection or not chat_history_collection:
         logger.warning("ChromaDB collections not available, skipping RAG context retrieval.")
@@ -655,57 +673,6 @@ async def retrieve_and_prepare_rag_context(
             else:
                 logger.warning("RAG: chat_history_collection is None, cannot fetch full conversation documents.")
 
-        collections_with_date_docs: set[str] = set()
-        if date_range:
-            start_dt, end_dt = date_range
-            start_iso, end_iso = start_dt.isoformat(), end_dt.isoformat()
-            date_collections = [
-                ("rss", rss_summary_collection),
-                ("tweets", tweets_collection),
-                ("news", news_summary_collection),
-                ("timeline", timeline_summary_collection),
-            ]
-            for name, coll in date_collections:
-                if not coll:
-                    continue
-                try:
-                    # Chroma only supports numeric range filters. Timestamps are stored as ISO strings,
-                    # so retrieve all docs and filter client-side.
-                    res = coll.get(include=["documents", "metadatas"])
-                    docs_with_ts: List[Tuple[str, datetime]] = []
-                    if res and res.get("documents") and res.get("metadatas"):
-                        for doc_text, meta in zip(res["documents"], res["metadatas"]):
-                            if not isinstance(doc_text, str) or not isinstance(meta, dict):
-                                continue
-                            ts = meta.get("timestamp")
-                            if not isinstance(ts, str):
-                                continue
-                            try:
-                                ts_dt = datetime.fromisoformat(ts)
-                            except ValueError:
-                                continue
-                            if start_dt <= ts_dt <= end_dt:
-                                docs_with_ts.append((doc_text, ts_dt))
-                    if docs_with_ts:
-                        docs_with_ts.sort(key=lambda x: x[1], reverse=True)
-                        max_docs = getattr(config, "RAG_MAX_DATE_RANGE_DOCS", 100)
-                        if len(docs_with_ts) > max_docs:
-                            logger.debug(
-                                f"RAG: Limiting '{name}' date-range docs from {len(docs_with_ts)} to {max_docs}."
-                            )
-                        limited_docs = docs_with_ts[:max_docs]
-                        for doc_text, _ in limited_docs:
-                            retrieved_contexts_raw.append((doc_text, name))
-                        collections_with_date_docs.add(name)
-                        logger.info(
-                            f"RAG: Retrieved {len(limited_docs)} '{name}' documents for date range {start_iso} to {end_iso}."
-                        )
-                except Exception as e_date:
-                    logger.error(
-                        f"RAG: Error retrieving date-filtered documents from '{name}': {e_date}",
-                        exc_info=True,
-                    )
-
         n_results_collections = config.RAG_NUM_COLLECTION_DOCS_TO_FETCH
         additional_collections = [
             ("chat_history", chat_history_collection),
@@ -721,11 +688,6 @@ async def retrieve_and_prepare_rag_context(
         for name, collection_obj in additional_collections:
             if not collection_obj:
                 logger.debug(f"RAG: Collection '{name}' is not available, skipping.")
-                continue
-            if date_range and name in collections_with_date_docs:
-                logger.debug(
-                    f"RAG: Skipping unfiltered query for '{name}' due to date-specific retrieval."
-                )
                 continue
             try:
                 logger.debug(
