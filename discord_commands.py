@@ -38,7 +38,6 @@ from web_utils import (
     scrape_ground_news_topic,
     fetch_rss_entries
 )
-from openai_api import create_chat_completion, extract_text
 from logit_biases import LOGIT_BIAS_UNWANTED_TOKENS_STR
 from audio_utils import send_tts_audio
 from utils import (
@@ -221,18 +220,18 @@ async def process_rss_feed(
         )
 
         try:
-            response = await create_chat_completion(
-                llm_client_instance,
-                [
+            response = await llm_client_instance.chat.completions.create(
+                model=config.FAST_LLM_MODEL,
+                messages=[
                     {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
                     {"role": "user", "content": prompt}
                 ],
-                model=config.FAST_LLM_MODEL,
                 max_tokens=500,
                 temperature=0.5,
+                stream=False,
                 logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
             )
-            summary = extract_text(response)
+            summary = response.choices[0].message.content.strip() if response.choices else ""
             if summary and summary != "[LLM summarization failed]":
                 store_rss_summary(
                     feed_url=feed_url,
@@ -347,18 +346,18 @@ async def process_ground_news(
         )
 
         try:
-            response = await create_chat_completion(
-                llm_client_instance,
-                [
+            response = await llm_client_instance.chat.completions.create(
+                model=config.FAST_LLM_MODEL,
+                messages=[
                     {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
                     {"role": "user", "content": prompt}
                 ],
-                model=config.FAST_LLM_MODEL,
                 max_tokens=500,
                 temperature=0.5,
+                stream=False,
                 logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
             )
-            summary = extract_text(response)
+            summary = response.choices[0].message.content.strip() if response.choices else ""
             if summary and summary != "[LLM summarization failed]":
                 store_rss_summary(
                     feed_url="ground_news_my",
@@ -501,18 +500,18 @@ async def process_ground_news_topic(
         )
 
         try:
-            response = await create_chat_completion(
-                llm_client_instance,
-                [
+            response = await llm_client_instance.chat.completions.create(
+                model=config.FAST_LLM_MODEL,
+                messages=[
                     {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
                     {"role": "user", "content": prompt}
                 ],
-                model=config.FAST_LLM_MODEL,
                 max_tokens=500,
                 temperature=0.5,
+                stream=False,
                 logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
             )
-            summary = extract_text(response)
+            summary = response.choices[0].message.content.strip() if response.choices else ""
             if summary and summary != "[LLM summarization failed]":
                 store_rss_summary(
                     feed_url=f"ground_news_topic_{topic_slug}",
@@ -631,17 +630,15 @@ async def describe_image(image_url: str) -> Optional[str]:
             }
         ]
 
-        response = await create_chat_completion(
-            llm_client_instance,
-            prompt_messages,
+        response = await llm_client_instance.chat.completions.create(
             model=config.VISION_LLM_MODEL,
+            messages=prompt_messages,
             max_tokens=150,
             temperature=0.3,
             logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
         )
-        description = extract_text(response)
-        if description:
-            return description
+        if response.choices and response.choices[0].message and response.choices[0].message.content:
+            return response.choices[0].message.content.strip()
         return None
     except Exception as e:
         logger.error(f"Error describing image at {image_url}: {e}", exc_info=True)
@@ -1053,19 +1050,19 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 )
 
                 try:
-                    summary_response = await create_chat_completion(
-                        llm_client_instance,
-                        [
+                    summary_response = await llm_client_instance.chat.completions.create(
+                        model=config.FAST_LLM_MODEL,
+                        messages=[
                             {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
                             {"role": "user", "content": summarization_prompt}
                         ],
-                        model=config.FAST_LLM_MODEL,
                         max_tokens=250,
                         temperature=0.3,
+                        stream=False,
                         logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
                     )
-                    article_summary = extract_text(summary_response)
-                    if article_summary:
+                    if summary_response.choices and summary_response.choices[0].message and summary_response.choices[0].message.content:
+                        article_summary = summary_response.choices[0].message.content.strip()
                         logger.info(f"Summarized '{article_title}': {article_summary[:100]}...")
                         article_summaries_for_briefing.append(f"Source: {article_title} ({article_url})\nSummary: {article_summary}\n\n")
 
@@ -1408,19 +1405,19 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 )
 
                 try:
-                    summary_response_search = await create_chat_completion(
-                        llm_client_instance,
-                        [
+                    summary_response_search = await llm_client_instance.chat.completions.create(
+                        model=config.FAST_LLM_MODEL,
+                        messages=[
                             {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
                             {"role": "user", "content": summarization_prompt_search}
                         ],
-                        model=config.FAST_LLM_MODEL,
                         max_tokens=250,
                         temperature=0.3,
+                        stream=False,
                         logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
                     )
-                    page_summary = extract_text(summary_response_search)
-                    if page_summary:
+                    if summary_response_search.choices and summary_response_search.choices[0].message and summary_response_search.choices[0].message.content:
+                        page_summary = summary_response_search.choices[0].message.content.strip()
                         logger.info(f"Summarized '{page_title}' for search query '{query}': {page_summary[:100]}...")
                         page_summaries_for_final_synthesis.append(f"Source Page: {page_title} ({page_url})\nSummary of Page Content: {page_summary}\n\n")
                         # Optionally, store these summaries if a suitable storage mechanism exists (like news summaries)
@@ -1743,18 +1740,18 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                     )
 
                     try:
-                        response = await create_chat_completion(
-                            llm_client_instance,
-                            [
+                        response = await llm_client_instance.chat.completions.create(
+                            model=config.FAST_LLM_MODEL,
+                            messages=[
                                 {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
                                 {"role": "user", "content": prompt}
                             ],
-                            model=config.FAST_LLM_MODEL,
                             max_tokens=500,
                             temperature=0.5,
+                            stream=False,
                             logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
                         )
-                        summary = extract_text(response)
+                        summary = response.choices[0].message.content.strip() if response.choices else ""
                         if summary and summary != "[LLM summarization failed]":
                             store_rss_summary(
                                 feed_url=ent["feed_url"],
