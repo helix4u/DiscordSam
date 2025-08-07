@@ -28,7 +28,7 @@ from utils import (
     append_absolute_dates,
 )
 from web_utils import scrape_website, fetch_youtube_transcript
-from audio_utils import transcribe_audio_file, send_tts_audio, load_whisper_model
+from audio_utils import transcribe_audio_file, send_tts_audio
 from timeline_pruner import prune_and_summarize
 
 logger = logging.getLogger(__name__)
@@ -129,7 +129,6 @@ def setup_events_and_tasks(bot: commands.Bot, llm_client_in: Any, bot_state_in: 
         if not bot_instance or not bot_instance.user:
             logger.critical("Bot user not available on_ready. This is highly unusual.")
             return
-        load_whisper_model()
         logger.info(f'{bot_instance.user.name} (ID: {bot_instance.user.id}) has connected to Discord!')
         # ... (rest of on_ready remains the same)
         logger.info(f"discord.py version: {discord.__version__}")

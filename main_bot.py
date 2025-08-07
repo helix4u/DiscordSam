@@ -9,8 +9,8 @@ from config import config, require_bot_token  # ``require_bot_token`` enforces t
 from state import BotState # Assuming state.py is in the same directory
 
 # Import utility and manager modules
-from rag_chroma_manager import initialize_chromadb # For initializing ChromaDB
-# audio_utils contains load_whisper_model, which is called in on_ready event
+from rag_chroma_manager import initialize_chromadb  # For initializing ChromaDB
+# audio_utils handles Whisper model loading on demand when needed
 
 # Import setup functions for commands and events
 from discord_commands import setup_commands
