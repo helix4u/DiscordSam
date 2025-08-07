@@ -29,7 +29,7 @@ async def create_chat_completion(
             is sent as ``max_completion_tokens``; for Responses it becomes
             ``max_output_tokens``.
         temperature: Sampling temperature. Ignored when using Responses API.
-        logit_bias: Optional logit bias dict (only supported in Chat Completions).
+        logit_bias: Optional logit bias dict.
         stream: Whether to request a streaming response.
 
     Returns:
@@ -76,7 +76,11 @@ async def create_chat_completion(
         params["max_output_tokens"] = max_tokens
     # Some Responses models do not support temperature; omit to avoid errors
 
-    return await llm_client.responses.create(**params)
+    extra_body: Optional[Dict[str, Dict[str, int]]] = None
+    if logit_bias:
+        extra_body = {"logit_bias": logit_bias}
+
+    return await llm_client.responses.create(**params, extra_body=extra_body)
 
 
 def extract_text(response: Any) -> str:
