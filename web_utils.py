@@ -9,6 +9,7 @@ import random
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 import hashlib
+import html
 
 import aiohttp
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError # type: ignore
@@ -758,9 +759,11 @@ async def fetch_rss_entries(feed_url: str) -> List[Dict[str, Any]]:
                 and not link_url.startswith("https://www.cbsnews.com/news/")
             ):
                 continue
+            raw_title = it.findtext("title") or ""
+            title = html.unescape(raw_title).replace("\xa0", " ").strip()
 
             entries.append({
-                "title": it.findtext("title") or "",
+                "title": title,
                 "link": link_url,
                 "guid": it.findtext("guid") or link_url or "",
                 "pubDate": pub_date_str,
