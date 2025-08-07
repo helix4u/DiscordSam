@@ -228,7 +228,7 @@ async def process_rss_feed(
                     {"role": "user", "content": prompt}
                 ],
                 model=config.FAST_LLM_MODEL,
-                max_tokens=500,
+                max_tokens=1024,
                 temperature=0.5,
                 logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
             )
@@ -354,7 +354,7 @@ async def process_ground_news(
                     {"role": "user", "content": prompt}
                 ],
                 model=config.FAST_LLM_MODEL,
-                max_tokens=500,
+                max_tokens=1024,
                 temperature=0.5,
                 logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
             )
@@ -508,7 +508,7 @@ async def process_ground_news_topic(
                     {"role": "user", "content": prompt}
                 ],
                 model=config.FAST_LLM_MODEL,
-                max_tokens=500,
+                max_tokens=1024,
                 temperature=0.5,
                 logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
             )
@@ -635,7 +635,7 @@ async def describe_image(image_url: str) -> Optional[str]:
             llm_client_instance,
             prompt_messages,
             model=config.VISION_LLM_MODEL,
-            max_tokens=150,
+            max_tokens=1024,
             temperature=0.3,
             logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
         )
@@ -1060,7 +1060,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                             {"role": "user", "content": summarization_prompt}
                         ],
                         model=config.FAST_LLM_MODEL,
-                        max_tokens=250,
+                        max_tokens=1024,
                         temperature=0.3,
                         logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
                     )
@@ -1415,7 +1415,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                             {"role": "user", "content": summarization_prompt_search}
                         ],
                         model=config.FAST_LLM_MODEL,
-                        max_tokens=250,
+                        max_tokens=1024,
                         temperature=0.3,
                         logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
                     )
@@ -1750,7 +1750,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                                 {"role": "user", "content": prompt}
                             ],
                             model=config.FAST_LLM_MODEL,
-                            max_tokens=500,
+                            max_tokens=1024,
                             temperature=0.5,
                             logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
                         )
