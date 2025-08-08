@@ -294,7 +294,7 @@ async def _stream_llm_handler(
         for p_node in final_prompt_for_llm_call:
             if isinstance(p_node.content, list):
                 for content_item in p_node.content:
-                    if isinstance(content_item, dict) and content_item.get("type") == "input_image":
+                    if isinstance(content_item, dict) and content_item.get("type") == "image_url":
                         is_vision_request = True
                         break
             if is_vision_request:
@@ -766,9 +766,9 @@ async def get_description_for_image(llm_client: Any, image_path: str) -> str:
             {
                 "role": "user",
                 "content": [
-                    {"type": "input_text", "text": "Describe this screenshot of a webpage. Focus on the visible text, layout, and any interactive elements. What information is presented here? Provide a concise summary."},
+                    {"type": "text", "text": "Describe this screenshot of a webpage. Focus on the visible text, layout, and any interactive elements. What information is presented here? Provide a concise summary."},
                     {
-                        "type": "input_image",
+                        "type": "image_url",
                         "image_url": {"url": f"data:image/png;base64,{b64_image}"},
                     },
                 ],
