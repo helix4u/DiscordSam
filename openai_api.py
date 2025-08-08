@@ -69,29 +69,6 @@ async def create_chat_completion(
             role = "developer"
         clean_msg = {k: v for k, v in msg.items() if k != "name"}
         clean_msg["role"] = role
-
-        content = clean_msg.get("content")
-        if isinstance(content, str):
-            clean_msg["content"] = [
-                {
-                    "type": "output_text" if role == "assistant" else "input_text",
-                    "text": content,
-                }
-            ]
-        elif isinstance(content, list):
-            new_content: List[Dict[str, Any]] = []
-            for item in content:
-                new_item = dict(item)
-                item_type = new_item.get("type")
-                if item_type == "text":
-                    new_item["type"] = (
-                        "output_text" if role == "assistant" else "input_text"
-                    )
-                elif item_type == "image_url":
-                    new_item["type"] = "input_image"
-                new_content.append(new_item)
-            clean_msg["content"] = new_content
-
         input_messages.append(clean_msg)
 
     params = {
