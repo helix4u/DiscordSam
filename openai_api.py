@@ -71,10 +71,17 @@ async def create_chat_completion(
         clean_msg["role"] = role
         input_messages.append(clean_msg)
 
+    # Per user, streaming is disabled for the Responses API path because it
+    # may require verification. It remains available for the Completions API.
+    if stream:
+        logger.info(
+            "Streaming was requested, but it is disabled for the Responses API."
+        )
+
     params = {
         "model": model,
         "input": input_messages if input_messages else "",
-        "stream": stream,
+        "stream": False,
     }
     if max_tokens is not None:
         params["max_output_tokens"] = max_tokens
