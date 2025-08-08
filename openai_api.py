@@ -65,6 +65,24 @@ async def create_chat_completion(
             role = "developer"
         clean_msg = {k: v for k, v in msg.items() if k != "name"}
         clean_msg["role"] = role
+
+        content = clean_msg.get("content")
+        if isinstance(content, list):
+            # Convert legacy Chat Completions content types to Responses API types
+            for item in content:
+                if isinstance(item, dict):
+                    ctype = item.get("type")
+                    if ctype == "text":
+                        item["type"] = "input_text"
+                    elif ctype == "image_url":
+                        item["type"] = "input_image"
+                        image_url = item.get("image_url")
+                        if isinstance(image_url, dict):
+                            item["image_url"] = image_url.get("url")
+        elif isinstance(content, str):
+            # Allow simple string content by wrapping it in an ``input_text`` part
+            clean_msg["content"] = [{"type": "input_text", "text": content}]
+
         input_messages.append(clean_msg)
 
     params = {
