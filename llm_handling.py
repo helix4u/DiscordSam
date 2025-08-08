@@ -181,12 +181,12 @@ async def get_simplified_llm_stream(
             max_tokens=config.MAX_COMPLETION_TOKENS,
             temperature=0.7,
             logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
-            stream=config.LLM_STREAMING,
+            stream=config.LLM_STREAMING and not config.USE_RESPONSES_API,
         )
         return final_llm_stream, prompt_messages
     except BadRequestError as e:
         err_param = (getattr(e, "body", {}) or {}).get("error", {}).get("param")
-        if config.LLM_STREAMING and err_param == "stream":
+        if config.LLM_STREAMING and not config.USE_RESPONSES_API and err_param == "stream":
             logger.warning(
                 f"Streaming not supported for model {final_stream_model}; retrying without stream."
             )
@@ -329,7 +329,9 @@ async def _stream_llm_handler(
         last_edit_time = asyncio.get_event_loop().time()
         accumulated_delta_for_update = ""
 
-        if config.LLM_STREAMING and hasattr(stream, "__aiter__"):
+        if config.LLM_STREAMING and not config.USE_RESPONSES_API and hasattr(
+            stream, "__aiter__"
+        ):
             if current_initial_message:
                 initial_display_embed = discord.Embed(
                     title=title,
