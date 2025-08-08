@@ -625,8 +625,8 @@ async def describe_image(image_url: str) -> Optional[str]:
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": "Describe this image for a visually impaired user. Be concise and focus on the most important elements."},
-                    {"type": "image_url", "image_url": {"url": image_url_for_llm}}
+                    {"type": "input_text", "text": "Describe this image for a visually impaired user. Be concise and focus on the most important elements."},
+                    {"type": "input_image", "image_url": {"url": image_url_for_llm}}
                 ]
             }
         ]
@@ -2709,8 +2709,8 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             )
 
             user_content_for_ap_node = [
-                {"type": "text", "text": user_prompt if user_prompt else "Describe this image with the AP Photo celebrity twist."},
-                {"type": "image_url", "image_url": {"url": image_url_for_llm}}
+                {"type": "input_text", "text": user_prompt if user_prompt else "Describe this image with the AP Photo celebrity twist."},
+                {"type": "input_image", "image_url": {"url": image_url_for_llm}}
             ]
             user_msg_node = MsgNode("user", user_content_for_ap_node, name=str(interaction.user.id))
 
