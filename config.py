@@ -38,15 +38,6 @@ class Config:
             logger.warning("Invalid value for %s=%s; using %s", env_var, value, default)
             return default
 
-        def _get_choice(env_var: str, choices: set[str], default: str) -> str:
-            value = os.getenv(env_var, default)
-            if value not in choices:
-                logger.warning(
-                    "Invalid value for %s=%s; using %s", env_var, value, default
-                )
-                return default
-            return value
-
         def _parse_int_list(env_var: str) -> list[int]:
             parts = os.getenv(env_var, "").split(",")
             values: list[int] = []
@@ -71,21 +62,6 @@ class Config:
         self.LLM_SUPPORTS_JSON_MODE = _get_bool("LLM_SUPPORTS_JSON_MODE", False) # New Flag
         self.USE_RESPONSES_API = _get_bool("USE_RESPONSES_API", False)
         self.LLM_STREAMING = _get_bool("LLM_STREAMING", False)
-        self.RESPONSES_REASONING_EFFORT = _get_choice(
-            "RESPONSES_REASONING_EFFORT",
-            {"minimal", "low", "medium", "high"},
-            "medium",
-        )
-        self.RESPONSES_VERBOSITY = _get_choice(
-            "RESPONSES_VERBOSITY",
-            {"low", "medium", "high"},
-            "medium",
-        )
-        self.RESPONSES_SERVICE_TIER = _get_choice(
-            "RESPONSES_SERVICE_TIER",
-            {"auto", "default", "flex", "priority"},
-            "auto",
-        )
         self.SYSTEM_PROMPT_FILE = os.getenv("SYSTEM_PROMPT_FILE", "system_prompt.md")
 
         self.ALLOWED_CHANNEL_IDS = _parse_int_list("ALLOWED_CHANNEL_IDS")
