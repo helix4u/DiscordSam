@@ -312,8 +312,8 @@ async def llm_request_processor_task(bot_state: BotState, llm_client: Any, bot_i
                             image_url_for_llm = f"data:{ap_data.image_content_type};base64,{ap_data.image_b64}"
 
                             user_content_for_ap_node_list = [
-                                {"type": "text", "text": ap_data.user_prompt_text},
-                                {"type": "image_url", "image_url": {"url": image_url_for_llm}}
+                                {"type": "input_text", "text": ap_data.user_prompt_text},
+                                {"type": "input_image", "image_url": image_url_for_llm}
                             ]
                             user_msg_node_ap = MsgNode("user", user_content_for_ap_node_list, name=ap_data.base_user_id_for_node)
 
