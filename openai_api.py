@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Sequence
 
+import logging
+
 from config import config
+
+logger = logging.getLogger(__name__)
 
 
 async def create_chat_completion(
@@ -74,9 +78,27 @@ async def create_chat_completion(
     }
     if max_tokens is not None:
         params["max_output_tokens"] = max_tokens
+    if config.RESPONSES_REASONING_EFFORT:
+        params["reasoning"] = {"effort": config.RESPONSES_REASONING_EFFORT}
+    if config.RESPONSES_VERBOSITY:
+        params["verbosity"] = config.RESPONSES_VERBOSITY
+    if config.RESPONSES_SERVICE_TIER:
+        params["service_tier"] = config.RESPONSES_SERVICE_TIER
     # Some Responses models do not support temperature; omit to avoid errors
 
-    return await llm_client.responses.create(**params)
+    try:
+        return await llm_client.responses.create(**params)
+    except TypeError as exc:
+        msg = str(exc)
+        unsupported = []
+        for key in ("verbosity", "service_tier", "reasoning"):
+            if key in params and key in msg:
+                params.pop(key, None)
+                unsupported.append(key)
+        if unsupported:
+            logger.debug("Retrying without unsupported params: %s", ", ".join(unsupported))
+            return await llm_client.responses.create(**params)
+        raise
 
 
 def extract_text(response: Any) -> str:

@@ -38,6 +38,21 @@ class Config:
             logger.warning("Invalid value for %s=%s; using %s", env_var, value, default)
             return default
 
+        def _get_choice(
+            env_var: str, choices: set[str], default: str | None = None
+        ) -> str | None:
+            """Return a string choice from a set or a default if unset/invalid."""
+
+            value = os.getenv(env_var)
+            if value is None:
+                return default
+            if value not in choices:
+                logger.warning(
+                    "Invalid value for %s=%s; using %s", env_var, value, default
+                )
+                return default
+            return value
+
         def _parse_int_list(env_var: str) -> list[int]:
             parts = os.getenv(env_var, "").split(",")
             values: list[int] = []
