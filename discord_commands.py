@@ -635,7 +635,7 @@ async def describe_image(image_url: str) -> Optional[str]:
             llm_client_instance,
             prompt_messages,
             model=config.VISION_LLM_MODEL,
-            max_tokens=1024,
+            max_tokens=250,
             temperature=0.3,
             logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
         )
