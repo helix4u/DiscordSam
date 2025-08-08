@@ -197,6 +197,9 @@ Below is a comprehensive list of environment variables used by DiscordSam, along
 *   `LLM_SUPPORTS_JSON_MODE` (Default: `false`): Set to `true` if your LLM server and the selected model support JSON mode for structured output (e.g., for entity extraction).
 *   `USE_RESPONSES_API` (Default: `false`): When `true`, use OpenAI's Responses API instead of legacy Chat Completions. System prompts are passed via the `instructions` field and model names may require the orchestrator variant (e.g., `gpt-4o`).
 *   `LLM_STREAMING` (Default: `false`): Stream token-by-token responses when `true`. Some models require organization verification to enable streaming.
+*   `RESPONSES_REASONING_EFFORT` (Default: `medium`): Controls the reasoning effort for Responses models. Options are `minimal`, `low`, `medium`, or `high`.
+*   `RESPONSES_VERBOSITY` (Default: `medium`): Sets the verbosity of Responses output. Options are `low`, `medium`, or `high`.
+*   `RESPONSES_SERVICE_TIER` (Default: `auto`): Selects the service tier for Responses requests. Options are `auto`, `default`, `flex`, or `priority`.
 *   `MAX_MESSAGE_HISTORY` (Default: `10`): The maximum number of recent messages (user and assistant turns) to include in the short-term context sent to the LLM.
 *   `MAX_COMPLETION_TOKENS` (Default: `2048`): The maximum number of tokens the LLM is allowed to generate in a single response.
 

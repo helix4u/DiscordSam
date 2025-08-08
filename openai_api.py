@@ -74,6 +74,12 @@ async def create_chat_completion(
     }
     if max_tokens is not None:
         params["max_output_tokens"] = max_tokens
+    if config.RESPONSES_REASONING_EFFORT:
+        params["reasoning"] = {"effort": config.RESPONSES_REASONING_EFFORT}
+    if config.RESPONSES_VERBOSITY:
+        params["verbosity"] = config.RESPONSES_VERBOSITY
+    if config.RESPONSES_SERVICE_TIER:
+        params["service_tier"] = config.RESPONSES_SERVICE_TIER
     # Some Responses models do not support temperature; omit to avoid errors
 
     return await llm_client.responses.create(**params)
