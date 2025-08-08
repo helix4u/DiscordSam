@@ -76,9 +76,18 @@ class Config:
         self.LLM_API_KEY = os.getenv("LLM_API_KEY", "")
         self.LLM_SUPPORTS_JSON_MODE = _get_bool("LLM_SUPPORTS_JSON_MODE", False) # New Flag
         self.USE_RESPONSES_API = _get_bool("USE_RESPONSES_API", False)
-        # Stream token-by-token responses by default unless the Responses API is in use
-        self.LLM_STREAMING = _get_bool(
-            "LLM_STREAMING", not self.USE_RESPONSES_API
+        self.LLM_STREAMING = _get_bool("LLM_STREAMING", False)
+        self.RESPONSES_REASONING_EFFORT = _get_choice(
+            "RESPONSES_REASONING_EFFORT",
+            {"minimal", "low", "medium", "high"},
+        )
+        self.RESPONSES_VERBOSITY = _get_choice(
+            "RESPONSES_VERBOSITY",
+            {"low", "medium", "high"},
+        )
+        self.RESPONSES_SERVICE_TIER = _get_choice(
+            "RESPONSES_SERVICE_TIER",
+            {"auto", "default", "flex", "priority"},
         )
         self.SYSTEM_PROMPT_FILE = os.getenv("SYSTEM_PROMPT_FILE", "system_prompt.md")
 
