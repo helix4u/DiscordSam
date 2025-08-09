@@ -572,6 +572,10 @@ async def retrieve_and_prepare_rag_context(
                             continue
                         try:
                             ts_dt = datetime.fromisoformat(ts)
+                            # If the datetime is timezone-aware, convert it to a naive local datetime
+                            # to allow comparison with the naive start_dt and end_dt.
+                            if ts_dt.tzinfo is not None:
+                                ts_dt = ts_dt.astimezone().replace(tzinfo=None)
                         except ValueError:
                             continue
                         if start_dt <= ts_dt <= end_dt:
