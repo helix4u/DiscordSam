@@ -15,7 +15,6 @@ async def create_chat_completion(
     llm_client: Any,
     messages: Sequence[Dict[str, Any]],
     model: str,
-    use_responses_api: bool,
     max_tokens: Optional[int] = None,
     temperature: Optional[float] = None,
     logit_bias: Optional[Dict[str, int]] = None,
@@ -30,7 +29,6 @@ async def create_chat_completion(
             In Chat Completions they are converted to ``system`` messages; in
             Responses they remain ``developer`` messages.
         model: Model name to use.
-        use_responses_api: If True, use the Responses API format.
         max_tokens: Maximum tokens for the response. For Chat Completions this
             is sent as ``max_completion_tokens``; for Responses it becomes
             ``max_output_tokens``.
@@ -41,7 +39,8 @@ async def create_chat_completion(
     Returns:
         The raw response object returned by the underlying API.
     """
-    if not use_responses_api:
+
+    if not config.USE_RESPONSES_API:
         converted: List[Dict[str, Any]] = []
         for msg in messages:
             role = msg.get("role")
@@ -109,9 +108,9 @@ async def create_chat_completion(
         raise
 
 
-def extract_text(response: Any, use_responses_api: bool) -> str:
+def extract_text(response: Any) -> str:
     """Extract the assistant text from a response object."""
-    if not use_responses_api:
+    if not config.USE_RESPONSES_API:
         try:
             return (
                 response.choices[0].message.content.strip()
