@@ -228,12 +228,11 @@ async def process_rss_feed(
                     {"role": "user", "content": prompt}
                 ],
                 model=config.FAST_LLM_MODEL,
-                use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
                 max_tokens=1024,
                 temperature=0.5,
                 logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
             )
-            summary = extract_text(response, config.FAST_LLM_USE_RESPONSES_API)
+            summary = extract_text(response)
             if summary and summary != "[LLM summarization failed]":
                 store_rss_summary(
                     feed_url=feed_url,
@@ -355,12 +354,11 @@ async def process_ground_news(
                     {"role": "user", "content": prompt}
                 ],
                 model=config.FAST_LLM_MODEL,
-                use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
                 max_tokens=1024,
                 temperature=0.5,
                 logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
             )
-            summary = extract_text(response, config.FAST_LLM_USE_RESPONSES_API)
+            summary = extract_text(response)
             if summary and summary != "[LLM summarization failed]":
                 store_rss_summary(
                     feed_url="ground_news_my",
@@ -510,12 +508,11 @@ async def process_ground_news_topic(
                     {"role": "user", "content": prompt}
                 ],
                 model=config.FAST_LLM_MODEL,
-                use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
                 max_tokens=1024,
                 temperature=0.5,
                 logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
             )
-            summary = extract_text(response, config.FAST_LLM_USE_RESPONSES_API)
+            summary = extract_text(response)
             if summary and summary != "[LLM summarization failed]":
                 store_rss_summary(
                     feed_url=f"ground_news_topic_{topic_slug}",
@@ -638,12 +635,11 @@ async def describe_image(image_url: str) -> Optional[str]:
             llm_client_instance,
             prompt_messages,
             model=config.VISION_LLM_MODEL,
-            use_responses_api=config.LLM_USE_RESPONSES_API,
             max_tokens=250,
             temperature=0.3,
             logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
         )
-        description = extract_text(response, config.LLM_USE_RESPONSES_API)
+        description = extract_text(response)
         if description:
             return description
         return None
@@ -1064,12 +1060,11 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                             {"role": "user", "content": summarization_prompt}
                         ],
                         model=config.FAST_LLM_MODEL,
-                        use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
                         max_tokens=1024,
                         temperature=0.3,
                         logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
                     )
-                    article_summary = extract_text(summary_response, config.FAST_LLM_USE_RESPONSES_API)
+                    article_summary = extract_text(summary_response)
                     if article_summary:
                         logger.info(f"Summarized '{article_title}': {article_summary[:100]}...")
                         article_summaries_for_briefing.append(f"Source: {article_title} ({article_url})\nSummary: {article_summary}\n\n")
@@ -1420,12 +1415,11 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                             {"role": "user", "content": summarization_prompt_search}
                         ],
                         model=config.FAST_LLM_MODEL,
-                        use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
                         max_tokens=1024,
                         temperature=0.3,
                         logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
                     )
-                    page_summary = extract_text(summary_response_search, config.FAST_LLM_USE_RESPONSES_API)
+                    page_summary = extract_text(summary_response_search)
                     if page_summary:
                         logger.info(f"Summarized '{page_title}' for search query '{query}': {page_summary[:100]}...")
                         page_summaries_for_final_synthesis.append(f"Source Page: {page_title} ({page_url})\nSummary of Page Content: {page_summary}\n\n")
@@ -1756,12 +1750,11 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                                 {"role": "user", "content": prompt}
                             ],
                             model=config.FAST_LLM_MODEL,
-                            use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
                             max_tokens=1024,
                             temperature=0.5,
                             logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
                         )
-                        summary = extract_text(response, config.FAST_LLM_USE_RESPONSES_API)
+                        summary = extract_text(response)
                         if summary and summary != "[LLM summarization failed]":
                             store_rss_summary(
                                 feed_url=ent["feed_url"],
