@@ -766,25 +766,12 @@ def _format_msg_content_for_text(content: Any) -> str:
     if isinstance(content, str):
         return content
     elif isinstance(content, list):
-        text_parts = [
-            part["text"]
-            for part in content
-            if isinstance(part, dict)
-            and part.get("type") in {"text", "input_text"}
-            and "text" in part
-        ]
+        text_parts = [part["text"] for part in content if isinstance(part, dict) and part.get("type") == "text" and "text" in part]
         if text_parts:
             return " ".join(text_parts)
-        has_image = any(
-            isinstance(part, dict) and part.get("type") in {"image_url", "input_image"}
-            for part in content
-        )
+        has_image = any(isinstance(part, dict) and part.get("type") == "image_url" for part in content)
         if has_image:
-            return (
-                "[User sent an image with no accompanying text]"
-                if not text_parts
-                else "[User sent an image]"
-            )
+            return "[User sent an image with no accompanying text]" if not text_parts else "[User sent an image]"
     return "[Unsupported content format]"
 
 
