@@ -228,11 +228,12 @@ async def process_rss_feed(
                     {"role": "user", "content": prompt}
                 ],
                 model=config.FAST_LLM_MODEL,
+                use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
                 max_tokens=1024,
                 temperature=0.5,
                 logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
             )
-            summary = extract_text(response)
+            summary = extract_text(response, config.FAST_LLM_USE_RESPONSES_API)
             if summary and summary != "[LLM summarization failed]":
                 store_rss_summary(
                     feed_url=feed_url,
@@ -354,11 +355,12 @@ async def process_ground_news(
                     {"role": "user", "content": prompt}
                 ],
                 model=config.FAST_LLM_MODEL,
+                use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
                 max_tokens=1024,
                 temperature=0.5,
                 logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
             )
-            summary = extract_text(response)
+            summary = extract_text(response, config.FAST_LLM_USE_RESPONSES_API)
             if summary and summary != "[LLM summarization failed]":
                 store_rss_summary(
                     feed_url="ground_news_my",
@@ -508,11 +510,12 @@ async def process_ground_news_topic(
                     {"role": "user", "content": prompt}
                 ],
                 model=config.FAST_LLM_MODEL,
+                use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
                 max_tokens=1024,
                 temperature=0.5,
                 logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
             )
-            summary = extract_text(response)
+            summary = extract_text(response, config.FAST_LLM_USE_RESPONSES_API)
             if summary and summary != "[LLM summarization failed]":
                 store_rss_summary(
                     feed_url=f"ground_news_topic_{topic_slug}",
@@ -625,7 +628,7 @@ async def describe_image(image_url: str) -> Optional[str]:
             {
                 "role": "user",
                 "content": [
-                    {"type": "input_text", "text": "Describe this image for a visually impaired user. Be concise and focus on the most important elements."},
+                    {"type": "text", "text": "Describe this image for a visually impaired user. Be concise and focus on the most important elements."},
                     {"type": "input_image", "image_url": image_url_for_llm}
                 ]
             }
@@ -635,11 +638,12 @@ async def describe_image(image_url: str) -> Optional[str]:
             llm_client_instance,
             prompt_messages,
             model=config.VISION_LLM_MODEL,
+            use_responses_api=config.LLM_USE_RESPONSES_API,
             max_tokens=250,
             temperature=0.3,
             logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
         )
-        description = extract_text(response)
+        description = extract_text(response, config.LLM_USE_RESPONSES_API)
         if description:
             return description
         return None
@@ -1060,11 +1064,12 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                             {"role": "user", "content": summarization_prompt}
                         ],
                         model=config.FAST_LLM_MODEL,
+                        use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
                         max_tokens=1024,
                         temperature=0.3,
                         logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
                     )
-                    article_summary = extract_text(summary_response)
+                    article_summary = extract_text(summary_response, config.FAST_LLM_USE_RESPONSES_API)
                     if article_summary:
                         logger.info(f"Summarized '{article_title}': {article_summary[:100]}...")
                         article_summaries_for_briefing.append(f"Source: {article_title} ({article_url})\nSummary: {article_summary}\n\n")
@@ -1415,11 +1420,12 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                             {"role": "user", "content": summarization_prompt_search}
                         ],
                         model=config.FAST_LLM_MODEL,
+                        use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
                         max_tokens=1024,
                         temperature=0.3,
                         logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
                     )
-                    page_summary = extract_text(summary_response_search)
+                    page_summary = extract_text(summary_response_search, config.FAST_LLM_USE_RESPONSES_API)
                     if page_summary:
                         logger.info(f"Summarized '{page_title}' for search query '{query}': {page_summary[:100]}...")
                         page_summaries_for_final_synthesis.append(f"Source Page: {page_title} ({page_url})\nSummary of Page Content: {page_summary}\n\n")
@@ -1750,11 +1756,12 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                                 {"role": "user", "content": prompt}
                             ],
                             model=config.FAST_LLM_MODEL,
+                            use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
                             max_tokens=1024,
                             temperature=0.5,
                             logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
                         )
-                        summary = extract_text(response)
+                        summary = extract_text(response, config.FAST_LLM_USE_RESPONSES_API)
                         if summary and summary != "[LLM summarization failed]":
                             store_rss_summary(
                                 feed_url=ent["feed_url"],
@@ -2709,7 +2716,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             )
 
             user_content_for_ap_node = [
-                {"type": "input_text", "text": user_prompt if user_prompt else "Describe this image with the AP Photo celebrity twist."},
+                {"type": "text", "text": user_prompt if user_prompt else "Describe this image with the AP Photo celebrity twist."},
                 {"type": "input_image", "image_url": image_url_for_llm}
             ]
             user_msg_node = MsgNode("user", user_content_for_ap_node, name=str(interaction.user.id))

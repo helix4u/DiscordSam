@@ -164,26 +164,28 @@ async def get_simplified_llm_stream(
     llm_client: Any,
     prompt_messages: List[MsgNode],
     is_vision_request: bool
-) -> Tuple[Optional[Any], List[MsgNode]]:
+) -> Tuple[Optional[Any], List[MsgNode], bool]:
     if not prompt_messages:
         raise ValueError("Prompt messages cannot be empty for get_simplified_llm_stream.")
 
     logger.info(f"Requesting final response. Vision request: {is_vision_request}")
 
     final_stream_model = config.VISION_LLM_MODEL if is_vision_request else config.LLM_MODEL
-    logger.info(f"Using model for final response: {final_stream_model}")
+    use_responses_api = config.VISION_LLM_USE_RESPONSES_API if is_vision_request else config.LLM_USE_RESPONSES_API
+    logger.info(f"Using model for final response: {final_stream_model} (Responses API: {use_responses_api})")
     api_messages = [msg_node.to_dict() for msg_node in prompt_messages]
     try:
         final_llm_stream = await create_chat_completion(
             llm_client,
             api_messages,
             model=final_stream_model,
+            use_responses_api=use_responses_api,
             max_tokens=config.MAX_COMPLETION_TOKENS,
             temperature=0.7,
             logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
             stream=config.LLM_STREAMING,
         )
-        return final_llm_stream, prompt_messages
+        return final_llm_stream, prompt_messages, use_responses_api
     except BadRequestError as e:
         err_param = (getattr(e, "body", {}) or {}).get("error", {}).get("param")
         if config.LLM_STREAMING and err_param == "stream":
@@ -195,12 +197,13 @@ async def get_simplified_llm_stream(
                     llm_client,
                     api_messages,
                     model=final_stream_model,
+                    use_responses_api=use_responses_api,
                     max_tokens=config.MAX_COMPLETION_TOKENS,
                     temperature=0.7,
                     logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
                     stream=False,
                 )
-                return final_response, prompt_messages
+                return final_response, prompt_messages, use_responses_api
             except Exception as inner_e:
                 e = inner_e
         logger.error(
@@ -222,7 +225,7 @@ async def get_simplified_llm_stream(
             )
     except Exception as log_e:
         logger.error(f"Error during logging of problematic messages: {log_e}")
-    return None, prompt_messages
+    return None, prompt_messages, False
 
 async def _stream_llm_handler(
     interaction_or_message: Union[discord.Interaction, discord.Message],
@@ -301,7 +304,7 @@ async def _stream_llm_handler(
                 break
         logger.info(f"Determined is_vision_request for '{title}': {is_vision_request}")
 
-        stream, final_prompt_used_by_llm = await get_simplified_llm_stream(
+        stream, final_prompt_used_by_llm, use_responses_api = await get_simplified_llm_stream(
             llm_client, final_prompt_for_llm_call, is_vision_request
         )
         final_prompt_for_rag = final_prompt_used_by_llm
@@ -345,7 +348,7 @@ async def _stream_llm_handler(
 
             async for chunk_data in stream:
                 delta_content = ""
-                if config.USE_RESPONSES_API:
+                if use_responses_api:
                     event_type = getattr(chunk_data, "type", "")
                     if event_type == "response.output_text.delta":
                         delta_content = getattr(chunk_data, "delta", "") or ""
@@ -409,7 +412,7 @@ async def _stream_llm_handler(
                         sent_messages.append(await channel.send(embed=embed))
                 await asyncio.sleep(config.STREAM_EDIT_THROTTLE_SECONDS)
         else:
-            full_response_content = extract_text(stream)
+            full_response_content = extract_text(stream, use_responses_api)
 
 
         final_display_text = response_prefix + full_response_content
@@ -766,9 +769,9 @@ async def get_description_for_image(llm_client: Any, image_path: str) -> str:
             {
                 "role": "user",
                 "content": [
-                    {"type": "input_text", "text": "Describe this screenshot of a webpage. Focus on the visible text, layout, and any interactive elements. What information is presented here? Provide a concise summary."},
+                    {"type": "text", "text": "Describe this screenshot of a webpage. Focus on the visible text, layout, and any interactive elements. What information is presented here? Provide a concise summary."},
                     {
-                        "type": "input_image",
+                        "type": "image_url",
                         "image_url": f"data:image/png;base64,{b64_image}",
                     },
                 ],
@@ -776,10 +779,12 @@ async def get_description_for_image(llm_client: Any, image_path: str) -> str:
         ]
 
         logger.debug(f"Sending image description request to model: {config.VISION_LLM_MODEL}")
+        use_responses_api = config.VISION_LLM_USE_RESPONSES_API
         response = await create_chat_completion(
             llm_client,
             prompt_messages,
             model=config.VISION_LLM_MODEL,
+            use_responses_api=use_responses_api,
             max_tokens=(
                 config.MAX_COMPLETION_TOKENS_IMAGE_DESCRIPTION
                 if hasattr(config, "MAX_COMPLETION_TOKENS_IMAGE_DESCRIPTION")
