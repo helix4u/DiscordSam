@@ -43,10 +43,28 @@ async def create_chat_completion(
     if not config.USE_RESPONSES_API:
         converted: List[Dict[str, Any]] = []
         for msg in messages:
-            role = msg.get("role")
-            if role == "developer":
-                msg = dict(msg, role="system")
-            converted.append(msg)
+            role = "system" if msg.get("role") == "developer" else msg.get("role")
+            new_msg: Dict[str, Any] = {"role": role}
+            if "name" in msg:
+                new_msg["name"] = msg["name"]
+
+            content = msg.get("content")
+            if isinstance(content, list):
+                new_content: List[Dict[str, Any]] = []
+                for part in content:
+                    if not isinstance(part, dict):
+                        continue
+                    p_type = part.get("type")
+                    if p_type == "input_text":
+                        new_content.append({"type": "text", "text": part.get("text", "")})
+                    elif p_type == "input_image":
+                        new_content.append({"type": "image_url", "image_url": part.get("image_url")})
+                    else:
+                        new_content.append(part)
+                new_msg["content"] = new_content
+            else:
+                new_msg["content"] = content
+            converted.append(new_msg)
 
         params: Dict[str, Any] = {
             "model": model,
