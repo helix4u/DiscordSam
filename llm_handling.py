@@ -2,7 +2,7 @@ import asyncio
 import logging
 import base64
 import os
-from typing import List, Any, Optional, Union, Tuple, cast
+from typing import List, Any, Optional, Union, Tuple, cast, Dict
 import discord
 from openai import AsyncStream, OpenAIError, BadRequestError  # type: ignore
 from datetime import datetime
@@ -291,10 +291,12 @@ async def _stream_llm_handler(
 
         # Refined is_vision_request check
         is_vision_request = False
+        # Define possible image type keys based on API
+        image_type_keys = ["input_image", "image_url"]
         for p_node in final_prompt_for_llm_call:
             if isinstance(p_node.content, list):
                 for content_item in p_node.content:
-                    if isinstance(content_item, dict) and content_item.get("type") == "input_image":
+                    if isinstance(content_item, dict) and content_item.get("type") in image_type_keys:
                         is_vision_request = True
                         break
             if is_vision_request:
