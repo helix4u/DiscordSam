@@ -153,11 +153,12 @@ async def llm_request_processor_task(bot_state: BotState, llm_client: Any, bot_i
                                         {"role": "user", "content": summarization_prompt}
                                     ],
                                     model=config.FAST_LLM_MODEL,
+                                    use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
                                     max_tokens=250,
                                     temperature=0.3,
                                     logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
                                 )
-                                article_summary = extract_text(summary_response)
+                                article_summary = extract_text(summary_response, config.FAST_LLM_USE_RESPONSES_API)
                                 if article_summary:
                                     article_summaries_for_briefing.append(f"Source: {article_title} ({article_url})\nSummary: {article_summary}\n\n")
                                     store_news_summary(topic=topic, url=article_url, summary_text=article_summary) # Assuming this is thread-safe or handled
@@ -312,8 +313,8 @@ async def llm_request_processor_task(bot_state: BotState, llm_client: Any, bot_i
                             image_url_for_llm = f"data:{ap_data.image_content_type};base64,{ap_data.image_b64}"
 
                             user_content_for_ap_node_list = [
-                                {"type": "input_text", "text": ap_data.user_prompt_text},
-                                {"type": "input_image", "image_url": image_url_for_llm}
+                                {"type": "text", "text": ap_data.user_prompt_text},
+                                {"type": "image_url", "image_url": image_url_for_llm}
                             ]
                             user_msg_node_ap = MsgNode("user", user_content_for_ap_node_list, name=ap_data.base_user_id_for_node)
 
