@@ -212,6 +212,10 @@ def setup_events_and_tasks(bot: commands.Bot, llm_client_in: Any, bot_state_in: 
 
         logger.info(f"General LLM processing for message from {message.author.name} in {getattr(message.channel, 'name', f'Channel ID {channel_id}')}: '{message.content[:50]}...'")
 
+        # Determine the correct content part types based on the API in use
+        text_type = "input_text" if config.USE_RESPONSES_API else "text"
+        image_type = "input_image" if config.USE_RESPONSES_API else "image_url"
+
         current_message_content_parts: List[Dict[str, Any]] = []
         user_message_text_for_processing = message.content
         if f"<@{bot_instance.user.id}>" in user_message_text_for_processing:
@@ -250,7 +254,7 @@ def setup_events_and_tasks(bot: commands.Bot, llm_client_in: Any, bot_state_in: 
 
         current_message_content_parts.append(
             {
-                "type": "input_text",
+                "type": text_type,
                 "text": user_message_text_for_processing
                 if user_message_text_for_processing
                 else "",
@@ -268,34 +272,40 @@ def setup_events_and_tasks(bot: commands.Bot, llm_client_in: Any, bot_state_in: 
                         if len(img_bytes) > config.MAX_IMAGE_BYTES_FOR_PROMPT:
                             logger.warning(f"Image {attachment.filename} from {message.author.name} is too large ({len(img_bytes)} bytes). Skipping.")
                             for part in current_message_content_parts:
-                                if part["type"] == "input_text":
+                                if part["type"] == text_type:
                                     part["text"] += f" [Note: Attached image '{attachment.filename}' was too large to process.]"
                                     break
                             continue
 
                         b64_img = base64.b64encode(img_bytes).decode('utf-8')
-                        current_message_content_parts.append({"type": "input_image", "image_url": f"data:{attachment.content_type};base64,{b64_img}"})
+                        image_content_part: Dict[str, Any]
+                        if config.USE_RESPONSES_API:
+                            image_content_part = {"type": image_type, "image_url": f"data:{attachment.content_type};base64,{b64_img}"}
+                        else:
+                            # Completions API expects a nested dictionary for image_url
+                            image_content_part = {"type": image_type, "image_url": {"url": f"data:{attachment.content_type};base64,{b64_img}"}}
+                        current_message_content_parts.append(image_content_part)
                         image_added_to_prompt = True; images_processed_count +=1
                         logger.info(f"Added image '{attachment.filename}' to prompt for message from {message.author.name}.")
                     except Exception as e:
                         logger.error(f"Error processing image attachment '{attachment.filename}': {e}", exc_info=True)
 
-        text_part_exists_with_content = any(p["type"] == "input_text" and p.get("text","").strip() for p in current_message_content_parts)
+        text_part_exists_with_content = any(p["type"] == text_type and p.get("text","").strip() for p in current_message_content_parts)
         if image_added_to_prompt and not text_part_exists_with_content:
              # ... (image text part handling remains the same)
             text_part_updated = False
             for part in current_message_content_parts:
-                if part["type"] == "input_text":
+                if part["type"] == text_type:
                     part["text"] = "User sent image(s). Please describe or respond based on the image(s)."
                     text_part_updated = True
                     break
             if not text_part_updated:
-                 current_message_content_parts.insert(0, {"type": "input_text", "text": "User sent image(s). Please describe or respond based on the image(s)."})
+                 current_message_content_parts.insert(0, {"type": text_type, "text": "User sent image(s). Please describe or respond based on the image(s)."})
 
 
         current_text_for_url_detection = ""
         for part in current_message_content_parts:
-            if part["type"] == "input_text":
+            if part["type"] == text_type:
                 current_text_for_url_detection = part["text"];
                 break
 
@@ -400,13 +410,13 @@ def setup_events_and_tasks(bot: commands.Bot, llm_client_in: Any, bot_state_in: 
         # as we are using their descriptions instead.
         text_part_found_and_updated = False
         for part_idx, part_dict in enumerate(current_message_content_parts):
-            if part_dict["type"] == "input_text":
+            if part_dict["type"] == text_type:
                 current_message_content_parts[part_idx]["text"] = final_user_message_text_for_llm
                 text_part_found_and_updated = True
                 break
         if not text_part_found_and_updated: # Should ideally not happen if initialized correctly
             logger.error("Critical: Text part missing in current_message_content_parts before LLM call after URL processing.")
-            current_message_content_parts.insert(0, {"type": "input_text", "text": final_user_message_text_for_llm})
+            current_message_content_parts.insert(0, {"type": text_type, "text": final_user_message_text_for_llm})
 
         # The rest of the logic determining user_msg_node_content_final based on current_message_content_parts
         # will now correctly use the text that includes scraped content and image descriptions.
@@ -417,9 +427,9 @@ def setup_events_and_tasks(bot: commands.Bot, llm_client_in: Any, bot_state_in: 
         has_image_content = False
 
         for part in current_message_content_parts:
-            if part.get("type") == "input_text" and str(part.get("text","")).strip():
+            if part.get("type") == text_type and str(part.get("text","")).strip():
                 has_text_content = True
-            if part.get("type") == "input_image":
+            if part.get("type") == image_type:
                 has_image_content = True
 
         if has_text_content or has_image_content:
@@ -429,7 +439,7 @@ def setup_events_and_tasks(bot: commands.Bot, llm_client_in: Any, bot_state_in: 
             logger.info(f"Ignoring message from {message.author.name} as it resulted in no processable content after all stages."); return
 
         user_msg_node_content_final: Union[str, List[dict]]
-        if len(current_message_content_parts) == 1 and current_message_content_parts[0]["type"] == "input_text" and not has_image_content:
+        if len(current_message_content_parts) == 1 and current_message_content_parts[0]["type"] == text_type and not has_image_content:
             user_msg_node_content_final = current_message_content_parts[0]["text"]
         else:
             user_msg_node_content_final = current_message_content_parts
