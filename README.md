@@ -291,7 +291,7 @@ Below is a comprehensive list of environment variables used by DiscordSam, along
 4.  **Install Playwright browsers:**
     Playwright requires browser binaries for web scraping.
     ```bash
-    playwright install
+    npx playwright install
     ```
 
 ---
@@ -585,4 +585,5 @@ Found a bug? Have a feature request? Want to contribute?
 *   If you'd like to contribute code, please **fork the repository** and submit a **pull request** with your changes. Ensure your code follows existing style conventions and consider adding tests for new features.
 
 We welcome contributions to improve and expand DiscordSam!
+
 
