@@ -760,22 +760,40 @@ async def get_description_for_image(llm_client: Any, image_path: str) -> str:
             logger.error("VISION_LLM_MODEL is not configured. Cannot describe image.")
             return "[Error: Vision model not configured for image description.]"
 
-        prompt_messages = [
-            {
-                "role": "system",
-                "content": "You are a helpful assistant that describes images for visually impaired users."
-            },
-            {
-                "role": "user",
-                "content": [
-                    {"type": "input_text", "text": "Describe this screenshot of a webpage. Focus on the visible text, layout, and any interactive elements. What information is presented here? Provide a concise summary."},
-                    {
-                        "type": "input_image",
-                        "image_url": f"data:image/png;base64,{b64_image}",
-                    },
-                ],
-            }
-        ]
+        if config.USE_RESPONSES_API:
+            prompt_messages = [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant that describes images for visually impaired users."
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": "Describe this screenshot of a webpage. Focus on the visible text, layout, and any interactive elements. What information is presented here? Provide a concise summary."},
+                        {
+                            "type": "input_image",
+                            "image_url": f"data:image/png;base64,{b64_image}",
+                        },
+                    ],
+                }
+            ]
+        else:
+            prompt_messages = [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant that describes images for visually impaired users."
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Describe this screenshot of a webpage. Focus on the visible text, layout, and any interactive elements. What information is presented here? Provide a concise summary."},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/png;base64,{b64_image}"}
+                        },
+                    ],
+                }
+            ]
 
         logger.debug(f"Sending image description request to model: {config.VISION_LLM_MODEL}")
         response = await create_chat_completion(
