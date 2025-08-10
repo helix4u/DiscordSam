@@ -671,19 +671,39 @@ async def fetch_youtube_transcript(url: str) -> Optional[str]:
         video_id = video_id_match.group(1)
         logger.info(f"Fetching YouTube transcript for video ID: {video_id} (from URL: {url})")
 
+        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+        transcript_obj: Optional[Any] = None
+
         try:
-            # FIX: Use get_transcript to avoid the AttributeError with list_transcripts.
-            # This simplifies the logic and removes the language fallback for now.
-            transcript_data = YouTubeTranscriptApi.get_transcript(video_id, languages=['en', 'en-US', 'en-GB'])
-            full_text = " ".join([entry['text'] for entry in transcript_data])
+            transcript_obj = transcript_list.find_manually_created_transcript(['en', 'en-US', 'en-GB'])
+        except NoTranscriptFound:
+            try:
+                transcript_obj = transcript_list.find_generated_transcript(['en', 'en-US', 'en-GB'])
+            except NoTranscriptFound:
+                available_langs = [t.language for t in transcript_list._transcripts.values()]
+                if available_langs:
+                    logger.warning(f"No English transcript for {video_id}. Available: {available_langs}. Trying first available: {available_langs[0]}.")
+                    try:
+                        transcript_obj = transcript_list.find_generated_transcript([available_langs[0]])
+                    except NoTranscriptFound:
+                         logger.warning(f"Could not fetch even the first available language transcript for {video_id}.")
+                else:
+                    logger.warning(f"No English or any other language transcripts found for {video_id}.")
+
+        if transcript_obj:
+            fetched_data = transcript_obj.fetch()
+            # The object returned by fetch() is a FetchedTranscript, which is iterable
+            # and yields FetchedTranscriptSnippet objects.
+            # Each snippet object has a .text attribute.
+            full_text = " ".join([entry.text for entry in fetched_data])
 
             if len(full_text) > config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT:
                 logger.info(f"YouTube transcript for {url} (ID: {video_id}) truncated from {len(full_text)} to {config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT} chars.")
                 full_text = full_text[:config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT] + "..."
 
-            return full_text
-        except NoTranscriptFound:
-            logger.warning(f"No English transcript could be found for YouTube video {url} (ID: {video_id}).")
+            return f"(Language: {transcript_obj.language}) {full_text}" if transcript_obj.language != 'en' and not transcript_obj.language.startswith('en-') else full_text
+        else:
+            logger.warning(f"No transcript could be fetched for YouTube video: {url} (ID: {video_id})")
             return None
 
     except xml.etree.ElementTree.ParseError as e_xml:
