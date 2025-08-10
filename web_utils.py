@@ -671,7 +671,8 @@ async def fetch_youtube_transcript(url: str) -> Optional[str]:
         video_id = video_id_match.group(1)
         logger.info(f"Fetching YouTube transcript for video ID: {video_id} (from URL: {url})")
 
-        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+        api = YouTubeTranscriptApi()
+        transcript_list = api.list(video_id)
         transcript_obj: Optional[Any] = None
 
         try:
