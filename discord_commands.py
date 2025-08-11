@@ -231,8 +231,11 @@ async def process_rss_feed(
                 max_tokens=1024,
                 temperature=0.5,
                 logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
+                use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
             )
-            summary = extract_text(response)
+            summary = extract_text(
+                response, config.FAST_LLM_USE_RESPONSES_API
+            )
             if summary and summary != "[LLM summarization failed]":
                 store_rss_summary(
                     feed_url=feed_url,
@@ -357,8 +360,11 @@ async def process_ground_news(
                 max_tokens=1024,
                 temperature=0.5,
                 logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
+                use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
             )
-            summary = extract_text(response)
+            summary = extract_text(
+                response, config.FAST_LLM_USE_RESPONSES_API
+            )
             if summary and summary != "[LLM summarization failed]":
                 store_rss_summary(
                     feed_url="ground_news_my",
@@ -511,8 +517,11 @@ async def process_ground_news_topic(
                 max_tokens=1024,
                 temperature=0.5,
                 logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
+                use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
             )
-            summary = extract_text(response)
+            summary = extract_text(
+                response, config.FAST_LLM_USE_RESPONSES_API
+            )
             if summary and summary != "[LLM summarization failed]":
                 store_rss_summary(
                     feed_url=f"ground_news_topic_{topic_slug}",
@@ -617,37 +626,25 @@ async def describe_image(image_url: str) -> Optional[str]:
         base64_image = base64.b64encode(image_bytes).decode('utf-8')
         image_url_for_llm = f"data:image/jpeg;base64,{base64_image}"
 
-        if config.USE_RESPONSES_API:
-            prompt_messages = [
-                {
-                    "role": "system",
-                    "content": "You are a helpful assistant that describes images for visually impaired users."
-                },
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "input_text", "text": "Describe this image for a visually impaired user. Be concise and focus on the most important elements."},
-                        {"type": "input_image", "image_url": image_url_for_llm}
-                    ]
-                }
-            ]
-        else:
-            prompt_messages = [
-                {
-                    "role": "system",
-                    "content": "You are a helpful assistant that describes images for visually impaired users."
-                },
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": "Describe this image for a visually impaired user. Be concise and focus on the most important elements."},
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": image_url_for_llm}
-                        }
-                    ]
-                }
-            ]
+        prompt_messages = [
+            {
+                "role": "system",
+                "content": "You are a helpful assistant that describes images for visually impaired users.",
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Describe this image for a visually impaired user. Be concise and focus on the most important elements.",
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": image_url_for_llm},
+                    },
+                ],
+            },
+        ]
 
         response = await create_chat_completion(
             llm_client_instance,
@@ -656,8 +653,11 @@ async def describe_image(image_url: str) -> Optional[str]:
             max_tokens=250,
             temperature=0.3,
             logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
+            use_responses_api=config.VISION_LLM_USE_RESPONSES_API,
         )
-        description = extract_text(response)
+        description = extract_text(
+            response, config.VISION_LLM_USE_RESPONSES_API
+        )
         if description:
             return description
         return None
@@ -1081,8 +1081,11 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                         max_tokens=1024,
                         temperature=0.3,
                         logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
+                        use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
                     )
-                    article_summary = extract_text(summary_response)
+                    article_summary = extract_text(
+                        summary_response, config.FAST_LLM_USE_RESPONSES_API
+                    )
                     if article_summary:
                         logger.info(f"Summarized '{article_title}': {article_summary[:100]}...")
                         article_summaries_for_briefing.append(f"Source: {article_title} ({article_url})\nSummary: {article_summary}\n\n")
@@ -1436,8 +1439,11 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                         max_tokens=1024,
                         temperature=0.3,
                         logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
+                        use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
                     )
-                    page_summary = extract_text(summary_response_search)
+                    page_summary = extract_text(
+                        summary_response_search, config.FAST_LLM_USE_RESPONSES_API
+                    )
                     if page_summary:
                         logger.info(f"Summarized '{page_title}' for search query '{query}': {page_summary[:100]}...")
                         page_summaries_for_final_synthesis.append(f"Source Page: {page_title} ({page_url})\nSummary of Page Content: {page_summary}\n\n")
@@ -1771,8 +1777,11 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                             max_tokens=1024,
                             temperature=0.5,
                             logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
+                            use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
                         )
-                        summary = extract_text(response)
+                        summary = extract_text(
+                            response, config.FAST_LLM_USE_RESPONSES_API
+                        )
                         if summary and summary != "[LLM summarization failed]":
                             store_rss_summary(
                                 feed_url=ent["feed_url"],
@@ -2726,19 +2735,16 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 f"If the user provided an additional prompt, try to incorporate its theme or request into your {chosen_celebrity}-centric description: '{user_prompt if user_prompt else 'No additional user prompt.'}'"
             )
 
-            if config.USE_RESPONSES_API:
-                user_content_for_ap_node = [
-                    {"type": "input_text", "text": user_prompt if user_prompt else "Describe this image with the AP Photo celebrity twist."},
-                    {"type": "input_image", "image_url": image_url_for_llm}
-                ]
-            else:
-                user_content_for_ap_node = [
-                    {"type": "text", "text": user_prompt if user_prompt else "Describe this image with the AP Photo celebrity twist."},
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": image_url_for_llm}
-                    }
-                ]
+            user_content_for_ap_node = [
+                {
+                    "type": "text",
+                    "text": user_prompt if user_prompt else "Describe this image with the AP Photo celebrity twist.",
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {"url": image_url_for_llm},
+                },
+            ]
             user_msg_node = MsgNode("user", user_content_for_ap_node, name=str(interaction.user.id))
 
             rag_query_for_ap = user_prompt if user_prompt else f"AP photo style description featuring {chosen_celebrity} for an image."

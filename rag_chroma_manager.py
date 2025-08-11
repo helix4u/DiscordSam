@@ -279,10 +279,13 @@ Do not include any explanations or conversational text outside the JSON object.
             max_tokens=8192,
             temperature=0.2,
             logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
+            use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
             **response_format_arg,
         )
 
-        raw_content = extract_text(response)
+        raw_content = extract_text(
+            response, config.FAST_LLM_USE_RESPONSES_API
+        )
         if raw_content:
 
             if raw_content.startswith("```json"):
@@ -326,8 +329,11 @@ Do not include any explanations or conversational text outside the JSON object.
                     max_tokens=8192,
                     temperature=0.2,
                     logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
+                    use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
                 )
-                raw_content = extract_text(response)
+                raw_content = extract_text(
+                    response, config.FAST_LLM_USE_RESPONSES_API
+                )
                 if raw_content:
                     if raw_content.startswith("```json"):
                         raw_content = raw_content[7:]
@@ -388,8 +394,11 @@ async def distill_conversation_to_sentence_llm(llm_client: Any, text_to_distill:
             max_tokens=2048,
             temperature=0.5,
             logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
+            use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
         )
-        distilled = extract_text(response)
+        distilled = extract_text(
+            response, config.FAST_LLM_USE_RESPONSES_API
+        )
         if distilled:
             logger.info(f"Distilled exchange to sentence(s): '{distilled[:100]}...'")
             return distilled
@@ -442,8 +451,11 @@ async def synthesize_retrieved_contexts_llm(llm_client: Any, retrieved_contexts:
             max_tokens=3072,
             temperature=0.6,
             logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
+            use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
         )
-        synthesized_context = extract_text(response)
+        synthesized_context = extract_text(
+            response, config.FAST_LLM_USE_RESPONSES_API
+        )
         if synthesized_context:
             logger.info(f"Synthesized RAG context: '{synthesized_context[:150]}...'")
             return synthesized_context
@@ -489,8 +501,11 @@ async def merge_memory_snippet_with_summary_llm(
             max_tokens=2048,
             temperature=0.4,
             logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
+            use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
         )
-        merged = extract_text(response)
+        merged = extract_text(
+            response, config.FAST_LLM_USE_RESPONSES_API
+        )
         if merged:
             return merged
         logger.warning("merge_memory_snippet_with_summary_llm: LLM returned no content.")
