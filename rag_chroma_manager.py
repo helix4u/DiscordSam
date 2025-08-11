@@ -499,7 +499,7 @@ async def merge_memory_snippet_with_summary_llm(
                 {"role": "user", "content": user_text},
             ],
             model=config.FAST_LLM_MODEL,
-            max_tokens=16384,
+            max_tokens=3072,
             temperature=0.4,
             logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
             use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
