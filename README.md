@@ -196,10 +196,8 @@ Below is a comprehensive list of environment variables used by DiscordSam, along
 *   `VISION_LLM_MODEL` (Default: `llava`): The model used for tasks involving image understanding (e.g., the `/ap` command or describing screenshots).
 *   `LLM_SUPPORTS_JSON_MODE` (Default: `false`): Set to `true` if your LLM server and the selected model support JSON mode for structured output (e.g., for entity extraction).
 *   `IS_GOOGLE_MODEL` (Default: `false`): Set to `true` if you are using a Google Gemini model via an OpenAI-compatible endpoint. This disables unsupported features like `logit_bias` to prevent errors.
-*   `LLM_IS_RESPONSES` (Default: `false`): Set to `true` if your main `LLM` uses the 'responses' API instead of the 'completions' API.
-*   `VISION_LLM_IS_RESPONSES` (Default: `false`): Set to `true` if your `VISION_LLM_MODEL` uses the 'responses' API.
-*   `FAST_LLM_IS_RESPONSES` (Default: `false`): Set to `true` if your `FAST_LLM_MODEL` uses the 'responses' API.
-*   `LLM_STREAMING` (Default: `true`): Stream token-by-token responses when `true`. This is generally recommended.
+*   `USE_RESPONSES_API` (Default: `false`): When `true`, use OpenAI's Responses API instead of legacy Chat Completions. System prompts are passed via the `instructions` field and model names may require the orchestrator variant (e.g., `gpt-4o`).
+*   `LLM_STREAMING` (Default: `false`): Stream token-by-token responses when `true`. Some models require organization verification to enable streaming.
 *   `RESPONSES_REASONING_EFFORT` (Optional): Controls the reasoning effort for Responses models. Options are `minimal`, `low`, `medium`, or `high`.
 *   `RESPONSES_VERBOSITY` (Optional): Sets the verbosity of Responses output. Options are `low`, `medium`, or `high`.
 *   `RESPONSES_SERVICE_TIER` (Optional): Selects the service tier for Responses requests. Options are `auto`, `default`, `flex`, or `priority`.
