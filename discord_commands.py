@@ -617,37 +617,23 @@ async def describe_image(image_url: str) -> Optional[str]:
         base64_image = base64.b64encode(image_bytes).decode('utf-8')
         image_url_for_llm = f"data:image/jpeg;base64,{base64_image}"
 
-        if config.USE_RESPONSES_API:
-            prompt_messages = [
-                {
-                    "role": "system",
-                    "content": "You are a helpful assistant that describes images for visually impaired users."
-                },
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "input_text", "text": "Describe this image for a visually impaired user. Be concise and focus on the most important elements."},
-                        {"type": "input_image", "image_url": image_url_for_llm}
-                    ]
-                }
-            ]
-        else:
-            prompt_messages = [
-                {
-                    "role": "system",
-                    "content": "You are a helpful assistant that describes images for visually impaired users."
-                },
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": "Describe this image for a visually impaired user. Be concise and focus on the most important elements."},
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": image_url_for_llm}
-                        }
-                    ]
-                }
-            ]
+        # Standardize on 'completions' format. Transformation is handled by create_chat_completion.
+        prompt_messages = [
+            {
+                "role": "system",
+                "content": "You are a helpful assistant that describes images for visually impaired users."
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Describe this image for a visually impaired user. Be concise and focus on the most important elements."},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": image_url_for_llm}
+                    }
+                ]
+            }
+        ]
 
         response = await create_chat_completion(
             llm_client_instance,
@@ -2726,19 +2712,14 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 f"If the user provided an additional prompt, try to incorporate its theme or request into your {chosen_celebrity}-centric description: '{user_prompt if user_prompt else 'No additional user prompt.'}'"
             )
 
-            if config.USE_RESPONSES_API:
-                user_content_for_ap_node = [
-                    {"type": "input_text", "text": user_prompt if user_prompt else "Describe this image with the AP Photo celebrity twist."},
-                    {"type": "input_image", "image_url": image_url_for_llm}
-                ]
-            else:
-                user_content_for_ap_node = [
-                    {"type": "text", "text": user_prompt if user_prompt else "Describe this image with the AP Photo celebrity twist."},
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": image_url_for_llm}
-                    }
-                ]
+            # Standardize on 'completions' format. Transformation is handled by create_chat_completion.
+            user_content_for_ap_node = [
+                {"type": "text", "text": user_prompt if user_prompt else "Describe this image with the AP Photo celebrity twist."},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": image_url_for_llm}
+                }
+            ]
             user_msg_node = MsgNode("user", user_content_for_ap_node, name=str(interaction.user.id))
 
             rag_query_for_ap = user_prompt if user_prompt else f"AP photo style description featuring {chosen_celebrity} for an image."
