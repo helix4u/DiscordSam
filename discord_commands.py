@@ -1783,7 +1783,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                             response, config.FAST_LLM_USE_RESPONSES_API
                         )
                         if summary and summary != "[LLM summarization failed]":
-                            store_rss_summary(
+                            await store_rss_summary(
                                 feed_url=ent["feed_url"],
                                 article_url=link,
                                 title=title,
