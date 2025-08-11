@@ -438,7 +438,7 @@ async def synthesize_retrieved_contexts_llm(llm_client: Any, retrieved_contexts:
                 {"role": "system", "content": "You are an expert context synthesizer."},
                 {"role": "user", "content": prompt}
             ],
-            model=config.LLM_MODEL,
+            model=config.FAST_LLM_MODEL,
             max_tokens=3072,
             temperature=0.6,
             logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
