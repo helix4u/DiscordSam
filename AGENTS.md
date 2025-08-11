@@ -57,6 +57,7 @@ Welcome, fellow AI! This document provides some general guidelines to help you e
 ## 5. Testing (Aspirational)
 
 *   While the project currently lacks a comprehensive test suite, contributions towards adding unit tests or integration tests would be highly valuable.
+*   **Environment Note:** The execution environment for agents may have disk space limitations. Running tests that require downloading large dependencies (e.g., PyTorch for model inference) may fail. Please be mindful of this when considering adding or running comprehensive tests.
 *   When making changes, manually test your features thoroughly. Consider edge cases and potential failure points. For example:
     *   What happens if an external API is down?
     *   How does the command handle invalid user input?

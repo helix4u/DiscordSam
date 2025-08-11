@@ -99,8 +99,8 @@ def append_absolute_dates(
 
 def clean_text_for_tts(text: str) -> str:
     if not text: return ""
-    # Remove Markdown-like characters
-    text = re.sub(r'[\*#_~\<\>\[\]\(\)]+', '', text)
+    # Remove Markdown-like characters, including full-width parentheses
+    text = re.sub(r'[\*#_~\<\>\[\]\(\)（）]+', '', text)
     # Remove URLs
     text = re.sub(r'http[s]?://\S+', '', text)
     # Remove <think> tags and their content
