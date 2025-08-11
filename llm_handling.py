@@ -24,7 +24,7 @@ from utils import (
 from rag_chroma_manager import ingest_conversation_to_chromadb
 from audio_utils import send_tts_audio
 from logit_biases import LOGIT_BIAS_UNWANTED_TOKENS_STR
-from openai_api import create_chat_completion, extract_text
+from openai_api import _is_responses_model, create_chat_completion, extract_text
 from openai import BadRequestError
 
 
@@ -163,8 +163,8 @@ async def _build_initial_prompt_messages(
 async def get_simplified_llm_stream(
     llm_client: Any,
     prompt_messages: List[MsgNode],
-    is_vision_request: bool
-) -> Tuple[Optional[Any], List[MsgNode]]:
+    is_vision_request: bool,
+) -> Tuple[Optional[Any], List[MsgNode], str]:
     if not prompt_messages:
         raise ValueError("Prompt messages cannot be empty for get_simplified_llm_stream.")
 
@@ -183,7 +183,7 @@ async def get_simplified_llm_stream(
             logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
             stream=config.LLM_STREAMING,
         )
-        return final_llm_stream, prompt_messages
+        return final_llm_stream, prompt_messages, final_stream_model
     except BadRequestError as e:
         err_body = getattr(e, "body", {}) or {}
         if isinstance(err_body, list) and err_body:
@@ -204,7 +204,7 @@ async def get_simplified_llm_stream(
                     logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
                     stream=False,
                 )
-                return final_response, prompt_messages
+                return final_response, prompt_messages, final_stream_model
             except Exception as inner_e:
                 e = inner_e
         logger.error(
@@ -226,7 +226,7 @@ async def get_simplified_llm_stream(
             )
     except Exception as log_e:
         logger.error(f"Error during logging of problematic messages: {log_e}")
-    return None, prompt_messages
+    return None, prompt_messages, final_stream_model
 
 async def _stream_llm_handler(
     interaction_or_message: Union[discord.Interaction, discord.Message],
@@ -307,7 +307,7 @@ async def _stream_llm_handler(
                 break
         logger.info(f"Determined is_vision_request for '{title}': {is_vision_request}")
 
-        stream, final_prompt_used_by_llm = await get_simplified_llm_stream(
+        stream, final_prompt_used_by_llm, final_stream_model = await get_simplified_llm_stream(
             llm_client, final_prompt_for_llm_call, is_vision_request
         )
         final_prompt_for_rag = final_prompt_used_by_llm
@@ -351,7 +351,7 @@ async def _stream_llm_handler(
 
             async for chunk_data in stream:
                 delta_content = ""
-                if config.USE_RESPONSES_API:
+                if _is_responses_model(final_stream_model):
                     event_type = getattr(chunk_data, "type", "")
                     if event_type == "response.output_text.delta":
                         delta_content = getattr(chunk_data, "delta", "") or ""
@@ -764,40 +764,24 @@ async def get_description_for_image(llm_client: Any, image_path: str) -> str:
             logger.error("VISION_LLM_MODEL is not configured. Cannot describe image.")
             return "[Error: Vision model not configured for image description.]"
 
-        if config.USE_RESPONSES_API:
-            prompt_messages = [
-                {
-                    "role": "system",
-                    "content": "You are a helpful assistant that describes images for visually impaired users."
-                },
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "input_text", "text": "Describe this screenshot of a webpage. Focus on the visible text, layout, and any interactive elements. What information is presented here? Provide a concise summary."},
-                        {
-                            "type": "input_image",
-                            "image_url": f"data:image/png;base64,{b64_image}",
-                        },
-                    ],
-                }
-            ]
-        else:
-            prompt_messages = [
-                {
-                    "role": "system",
-                    "content": "You are a helpful assistant that describes images for visually impaired users."
-                },
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": "Describe this screenshot of a webpage. Focus on the visible text, layout, and any interactive elements. What information is presented here? Provide a concise summary."},
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": f"data:image/png;base64,{b64_image}"}
-                        },
-                    ],
-                }
-            ]
+        # The message is now always created in 'completions' format and transformed
+        # by create_chat_completion if necessary.
+        prompt_messages = [
+            {
+                "role": "system",
+                "content": "You are a helpful assistant that describes images for visually impaired users."
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Describe this screenshot of a webpage. Focus on the visible text, layout, and any interactive elements. What information is presented here? Provide a concise summary."},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{b64_image}"}
+                    },
+                ],
+            }
+        ]
 
         logger.debug(f"Sending image description request to model: {config.VISION_LLM_MODEL}")
         response = await create_chat_completion(

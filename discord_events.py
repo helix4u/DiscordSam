@@ -212,9 +212,10 @@ def setup_events_and_tasks(bot: commands.Bot, llm_client_in: Any, bot_state_in: 
 
         logger.info(f"General LLM processing for message from {message.author.name} in {getattr(message.channel, 'name', f'Channel ID {channel_id}')}: '{message.content[:50]}...'")
 
-        # Determine the correct content part types based on the API in use
-        text_type = "input_text" if config.USE_RESPONSES_API else "text"
-        image_type = "input_image" if config.USE_RESPONSES_API else "image_url"
+        # Standardize on the 'completions' API format for initial message creation.
+        # It will be transformed later if the target model uses the 'responses' API.
+        text_type = "text"
+        image_type = "image_url"
 
         current_message_content_parts: List[Dict[str, Any]] = []
         user_message_text_for_processing = message.content
@@ -279,11 +280,9 @@ def setup_events_and_tasks(bot: commands.Bot, llm_client_in: Any, bot_state_in: 
 
                         b64_img = base64.b64encode(img_bytes).decode('utf-8')
                         image_content_part: Dict[str, Any]
-                        if config.USE_RESPONSES_API:
-                            image_content_part = {"type": image_type, "image_url": f"data:{attachment.content_type};base64,{b64_img}"}
-                        else:
-                            # Completions API expects a nested dictionary for image_url
-                            image_content_part = {"type": image_type, "image_url": {"url": f"data:{attachment.content_type};base64,{b64_img}"}}
+                        # Always use the 'completions' API format here.
+                        # It will be transformed later if needed.
+                        image_content_part = {"type": image_type, "image_url": {"url": f"data:{attachment.content_type};base64,{b64_img}"}}
                         current_message_content_parts.append(image_content_part)
                         image_added_to_prompt = True; images_processed_count +=1
                         logger.info(f"Added image '{attachment.filename}' to prompt for message from {message.author.name}.")
