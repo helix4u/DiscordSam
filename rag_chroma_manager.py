@@ -1,4 +1,5 @@
 import logging
+import asyncio
 from uuid import uuid4
 from datetime import datetime, timedelta
 from typing import List, Optional, Any, Dict, Union, Tuple
@@ -477,7 +478,7 @@ async def merge_memory_snippet_with_summary_llm(
     prompt = (
         "You maintain long-term memories for an AI assistant. "
         "Rewrite the existing memory with any new insights from the conversation summary. "
-        "Return 3-8 concise sentences that preserve important older details and incorporate the new information." 
+        "Return 3-8 concise sentences that preserve important older details and incorporate the new information."
     )
 
     timestamp_match = re.search(r"Conversation recorded at:\s*(.+)", old_memory)
@@ -536,7 +537,9 @@ async def update_retrieved_memories(
             "type": "merged_memory_update",
         }
         try:
-            distilled_chat_summary_collection.add(documents=[merged], metadatas=[metadata], ids=[doc_id])
+            await asyncio.to_thread(
+                distilled_chat_summary_collection.add, documents=[merged], metadatas=[metadata], ids=[doc_id]
+            )
             logger.info(f"Stored merged memory update {doc_id} from source {source_name}.")
         except Exception as e_add:
             logger.error(f"Failed to store merged memory update {doc_id}: {e_add}", exc_info=True)
@@ -576,7 +579,7 @@ async def retrieve_and_prepare_rag_context(
                 logger.debug(f"RAG: Collection '{name}' is not available for date-range search.")
                 continue
             try:
-                res = coll.get(include=["documents", "metadatas"])
+                res = await asyncio.to_thread(coll.get, include=["documents", "metadatas"])
                 docs_with_ts: List[Tuple[str, datetime]] = []
                 if res and res.get("documents") and res.get("metadatas"):
                     for doc_text, meta in zip(res["documents"], res["metadatas"]):
@@ -641,7 +644,8 @@ async def retrieve_and_prepare_rag_context(
 
     try:
         logger.debug(f"RAG: Querying distilled_chat_summary_collection for query: '{query[:50]}...' (n_results={n_results_sentences})")
-        results = distilled_chat_summary_collection.query(
+        results = await asyncio.to_thread(
+            distilled_chat_summary_collection.query,
             query_texts=[query] if isinstance(query, str) else query,
             n_results=n_results_sentences,
             include=["metadatas", "documents"]
@@ -683,7 +687,9 @@ async def retrieve_and_prepare_rag_context(
             logger.debug(f"RAG: Fetching full conversation documents for IDs: {unique_full_convo_ids_to_fetch}")
             if chat_history_collection:
                 try:
-                    full_convo_docs_result = chat_history_collection.get(ids=unique_full_convo_ids_to_fetch, include=["documents"])
+                    full_convo_docs_result = await asyncio.to_thread(
+                        chat_history_collection.get, ids=unique_full_convo_ids_to_fetch, include=["documents"]
+                    )
                     if full_convo_docs_result and full_convo_docs_result.get('documents'):
                         valid_docs = [doc for doc in full_convo_docs_result['documents'] if isinstance(doc, str)]
                         max_chars = getattr(config, 'RAG_MAX_FULL_CONVO_CHARS', 20000)
@@ -725,7 +731,8 @@ async def retrieve_and_prepare_rag_context(
                 # Ensure query_texts is a list of strings
                 query_texts_list = [query] if isinstance(query, str) else query
 
-                res = collection_obj.query(
+                res = await asyncio.to_thread(
+                    collection_obj.query,
                     query_texts=query_texts_list,
                     n_results=n_results_collections,
                     include=["documents"]
@@ -856,7 +863,8 @@ async def ingest_conversation_to_chromadb(
     }
 
     try:
-        chat_history_collection.add(
+        await asyncio.to_thread(
+            chat_history_collection.add,
             documents=[original_full_text_for_storage],
             metadatas=[full_convo_metadata],
             ids=[full_convo_doc_id]
@@ -889,7 +897,9 @@ async def ingest_conversation_to_chromadb(
                 entity_metadatas.append(meta)
             if entity_ids:
                 try:
-                    entity_collection.add(documents=entity_docs, metadatas=entity_metadatas, ids=entity_ids)
+                    await asyncio.to_thread(
+                        entity_collection.add, documents=entity_docs, metadatas=entity_metadatas, ids=entity_ids
+                    )
                     logger.info(f"Ingested {len(entity_ids)} entities for conversation {full_convo_doc_id}.")
                 except Exception as e_add_ent:
                     logger.error(f"Failed to add entities for {full_convo_doc_id} to ChromaDB: {e_add_ent}", exc_info=True)
@@ -918,7 +928,9 @@ async def ingest_conversation_to_chromadb(
                 rel_metadatas.append(meta)
             if rel_ids:
                 try:
-                    relation_collection.add(documents=rel_docs, metadatas=rel_metadatas, ids=rel_ids)
+                    await asyncio.to_thread(
+                        relation_collection.add, documents=rel_docs, metadatas=rel_metadatas, ids=rel_ids
+                    )
                     logger.info(f"Ingested {len(rel_ids)} relations for conversation {full_convo_doc_id}.")
                 except Exception as e_add_rel:
                     logger.error(f"Failed to add relations for {full_convo_doc_id} to ChromaDB: {e_add_rel}", exc_info=True)
@@ -944,7 +956,9 @@ async def ingest_conversation_to_chromadb(
                 obs_metadatas.append(meta)
             if obs_ids:
                 try:
-                    observation_collection.add(documents=obs_docs, metadatas=obs_metadatas, ids=obs_ids)
+                    await asyncio.to_thread(
+                        observation_collection.add, documents=obs_docs, metadatas=obs_metadatas, ids=obs_ids
+                    )
                     logger.info(f"Ingested {len(obs_ids)} observations for conversation {full_convo_doc_id}.")
                 except Exception as e_add_obs:
                     logger.error(f"Failed to add observations for {full_convo_doc_id} to ChromaDB: {e_add_obs}", exc_info=True)
@@ -1005,7 +1019,8 @@ async def ingest_conversation_to_chromadb(
 
     if distilled_chat_summary_collection:  # This check is good
         try:
-            distilled_chat_summary_collection.add(
+            await asyncio.to_thread(
+                distilled_chat_summary_collection.add,
                 documents=[snippet_text],
                 metadatas=[distilled_metadata],
                 ids=[distilled_doc_id]
@@ -1162,7 +1177,8 @@ async def store_chatgpt_conversations_in_chromadb(llm_client: Any, conversations
         }
         try:
             if chat_history_collection:
-                chat_history_collection.add(
+                await asyncio.to_thread(
+                    chat_history_collection.add,
                     documents=[full_exported_text_to_store],
                     metadatas=[full_convo_metadata_import],
                     ids=[full_convo_doc_id_import]
@@ -1197,7 +1213,8 @@ async def store_chatgpt_conversations_in_chromadb(llm_client: Any, conversations
                 "original_text_preview": text_for_distillation_import[:200]
             }
             if distilled_chat_summary_collection:
-                distilled_chat_summary_collection.add(
+                await asyncio.to_thread(
+                    distilled_chat_summary_collection.add,
                     documents=[snippet_text_import],
                     metadatas=[distilled_metadata_import],
                     ids=[distilled_doc_id_import]
@@ -1222,7 +1239,7 @@ async def store_chatgpt_conversations_in_chromadb(llm_client: Any, conversations
     return added_count
 
 
-def store_news_summary(topic: str, url: str, summary_text: str, timestamp: Optional[datetime] = None) -> bool:
+async def store_news_summary(topic: str, url: str, summary_text: str, timestamp: Optional[datetime] = None) -> bool:
     if not chroma_client or not news_summary_collection: # Ensure news_summary_collection is checked
         logger.warning("ChromaDB news summary collection not available, skipping storage.")
         return False
@@ -1236,7 +1253,8 @@ def store_news_summary(topic: str, url: str, summary_text: str, timestamp: Optio
     }
 
     try:
-        news_summary_collection.add(
+        await asyncio.to_thread(
+            news_summary_collection.add,
             documents=[summary_text],
             metadatas=[metadata],
             ids=[doc_id],
@@ -1249,7 +1267,7 @@ def store_news_summary(topic: str, url: str, summary_text: str, timestamp: Optio
         logger.error(f"Failed to store news summary for {url}: {e}", exc_info=True)
         return False
 
-def store_rss_summary(feed_url: str, article_url: str, title: str, summary_text: str, timestamp: Optional[datetime] = None) -> bool:
+async def store_rss_summary(feed_url: str, article_url: str, title: str, summary_text: str, timestamp: Optional[datetime] = None) -> bool:
     if not chroma_client or not rss_summary_collection:
         logger.warning("ChromaDB RSS summary collection not available, skipping storage.")
         return False
@@ -1272,7 +1290,8 @@ def store_rss_summary(feed_url: str, article_url: str, title: str, summary_text:
     }
 
     try:
-        rss_summary_collection.add(
+        await asyncio.to_thread(
+            rss_summary_collection.add,
             documents=[summary_text],
             metadatas=[metadata],
             ids=[doc_id],
@@ -1285,7 +1304,7 @@ def store_rss_summary(feed_url: str, article_url: str, title: str, summary_text:
         logger.error(f"Failed to store RSS summary for article {article_url} from feed {feed_url}: {e}", exc_info=True)
         return False
 
-def remove_full_conversation_references(pruned_doc_ids: List[str], batch_size: int = 100):
+async def remove_full_conversation_references(pruned_doc_ids: List[str], batch_size: int = 100):
     """
     Finds distilled summaries linked to pruned full conversations and removes the linking metadata.
     """
@@ -1299,12 +1318,13 @@ def remove_full_conversation_references(pruned_doc_ids: List[str], batch_size: i
 
     logger.info(f"Starting reference cleanup for {len(pruned_doc_ids)} pruned documents.")
 
-    total = distilled_chat_summary_collection.count()
+    total = await asyncio.to_thread(distilled_chat_summary_collection.count)
     updated_count = 0
 
     for offset in range(0, total, batch_size):
         try:
-            res = distilled_chat_summary_collection.get(
+            res = await asyncio.to_thread(
+                distilled_chat_summary_collection.get,
                 limit=batch_size,
                 offset=offset,
                 include=["metadatas"],
@@ -1328,7 +1348,8 @@ def remove_full_conversation_references(pruned_doc_ids: List[str], batch_size: i
                     metadatas_to_update.append(new_meta)
 
             if ids_to_update:
-                distilled_chat_summary_collection.update(
+                await asyncio.to_thread(
+                    distilled_chat_summary_collection.update,
                     ids=ids_to_update,
                     metadatas=metadatas_to_update,
                 )

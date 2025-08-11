@@ -237,7 +237,7 @@ async def process_rss_feed(
                 response, config.FAST_LLM_USE_RESPONSES_API
             )
             if summary and summary != "[LLM summarization failed]":
-                store_rss_summary(
+                await store_rss_summary(
                     feed_url=feed_url,
                     article_url=link,
                     title=title,
@@ -366,7 +366,7 @@ async def process_ground_news(
                 response, config.FAST_LLM_USE_RESPONSES_API
             )
             if summary and summary != "[LLM summarization failed]":
-                store_rss_summary(
+                await store_rss_summary(
                     feed_url="ground_news_my",
                     article_url=art.url,
                     title=art.title,
@@ -523,7 +523,7 @@ async def process_ground_news_topic(
                 response, config.FAST_LLM_USE_RESPONSES_API
             )
             if summary and summary != "[LLM summarization failed]":
-                store_rss_summary(
+                await store_rss_summary(
                     feed_url=f"ground_news_topic_{topic_slug}",
                     article_url=art.url,
                     title=art.title,
@@ -1090,7 +1090,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                         logger.info(f"Summarized '{article_title}': {article_summary[:100]}...")
                         article_summaries_for_briefing.append(f"Source: {article_title} ({article_url})\nSummary: {article_summary}\n\n")
 
-                        store_news_summary(topic=topic, url=article_url, summary_text=article_summary)
+                        await store_news_summary(topic=topic, url=article_url, summary_text=article_summary)
                     else:
                         logger.warning(f"LLM summarization returned no content for '{article_title}'.")
                         article_summaries_for_briefing.append(f"Source: {article_title} ({article_url})\nSummary: [AI summarization failed or returned no content]\n\n")
