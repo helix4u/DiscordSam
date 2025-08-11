@@ -153,12 +153,11 @@ async def llm_request_processor_task(bot_state: BotState, llm_client: Any, bot_i
                                         {"role": "user", "content": summarization_prompt}
                                     ],
                                     model=config.FAST_LLM_MODEL,
-                                    use_responses_api=config.FASTLLM_USE_RESPONSES_API,
                                     max_tokens=250,
                                     temperature=0.3,
                                     logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
                                 )
-                                article_summary = extract_text(summary_response, use_responses_api=config.FASTLLM_USE_RESPONSES_API)
+                                article_summary = extract_text(summary_response)
                                 if article_summary:
                                     article_summaries_for_briefing.append(f"Source: {article_title} ({article_url})\nSummary: {article_summary}\n\n")
                                     store_news_summary(topic=topic, url=article_url, summary_text=article_summary) # Assuming this is thread-safe or handled
