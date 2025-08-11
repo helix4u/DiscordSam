@@ -56,8 +56,12 @@ def load_whisper_model() -> Optional[Any]:
     with WHISPER_LOCK:
         if WHISPER_MODEL is None:
             try:
-                logger.info("Loading Whisper model...")
-                WHISPER_MODEL = whisper.load_model("large-v3-turbo")
+                device = config.WHISPER_DEVICE
+                if device:
+                    logger.info(f"Loading Whisper model onto specified device: {device}...")
+                else:
+                    logger.info("Loading Whisper model with auto-device-detection...")
+                WHISPER_MODEL = whisper.load_model("large-v3-turbo", device=device)
                 logger.info("Whisper model loaded successfully.")
             except Exception as e:
                 logger.critical(f"Failed to load Whisper model: {e}", exc_info=True)

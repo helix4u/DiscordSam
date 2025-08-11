@@ -207,6 +207,10 @@ Below is a comprehensive list of environment variables used by DiscordSam, along
 *   `MAX_MESSAGE_HISTORY` (Default: `10`): The maximum number of recent messages (user and assistant turns) to include in the short-term context sent to the LLM.
 *   `MAX_COMPLETION_TOKENS` (Default: `2048`): The maximum number of tokens the LLM is allowed to generate in a single response.
 
+**Whisper (Audio Transcription) Settings:**
+
+*   `WHISPER_DEVICE` (Optional): Specify the device for Whisper to run on. Common values are `cuda` for NVIDIA GPUs or `cpu`. If not set, Whisper will attempt to auto-detect the best available device. This is useful for forcing GPU usage if auto-detection fails.
+
 **Text-to-Speech (TTS) Settings:**
 
 *   `TTS_ENABLED_DEFAULT` (Default: `true`): Whether TTS is enabled by default for bot responses.
@@ -569,7 +573,7 @@ Several helper scripts are provided for upkeep and optional functionality:
 
 DiscordSam is a project with significant potential for growth. Here are some ideas for future enhancements:
 
-*   **Enhanced RAG Strategies:** More sophisticated summarization, knowledge graph integration, hybrid search, advanced query understanding for RAG.
+*   **Enhanced RAG Strategies:** More-sophisticated summarization, knowledge graph integration, hybrid search, advanced query understanding for RAG.
 *   **Expanded LLM/Multimodal Support:** Support for more LLM backends, true multimodal inputs/outputs beyond simple image description, advanced agentic capabilities (e.g., function calling, planning).
 *   **Slash Command Enhancements:** New creative tools, personalization features (user-specific settings), integration with more external services (e.g., calendar, project management).
 *   **Improved Error Handling & Resilience:** More granular error reporting to users, graceful degradation of services when components are unavailable.
@@ -589,5 +593,3 @@ Found a bug? Have a feature request? Want to contribute?
 *   If you'd like to contribute code, please **fork the repository** and submit a **pull request** with your changes. Ensure your code follows existing style conventions and consider adding tests for new features.
 
 We welcome contributions to improve and expand DiscordSam!
-
-
