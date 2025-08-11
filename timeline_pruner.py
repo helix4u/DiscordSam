@@ -16,17 +16,21 @@ PRUNE_DAYS = getattr(config, "TIMELINE_PRUNE_DAYS", 30)
 
 def _fetch_old_documents(prune_days: int) -> List[Dict[str, Any]]:
     """
-    Fetches documents older than a specified number of days from the chat history
-    collection in a memory-efficient way.
+    Fetches all documents from the chat history collection and filters them by age in memory.
+    This is a temporary workaround because ChromaDB's metadata filtering with ISO date strings is unreliable.
     """
     if not rcm.chat_history_collection:
         logger.warning("Chat history collection unavailable for fetching old documents.")
         return []
 
     cutoff_date = datetime.now() - timedelta(days=prune_days)
+    # ChromaDB stores timestamps as ISO-8601 strings. Use an ISO string for the
+    # comparison so we don't have to migrate existing data.
     cutoff_iso = cutoff_date.isoformat()
 
-    logger.info("Starting fetch for documents older than %s.", cutoff_iso)
+    logger.info(
+        "Fetching documents with timestamps older than %s.", cutoff_iso
+    )
 
     try:
         total = rcm.chat_history_collection.count()
@@ -34,89 +38,59 @@ def _fetch_old_documents(prune_days: int) -> List[Dict[str, Any]]:
             logger.info("No documents found in the chat history collection.")
             return []
 
-        logger.debug(f"Chat history collection has {total} documents. Beginning metadata scan.")
+        logger.debug(f"Chat history collection has {total} documents. Beginning batch fetch.")
 
-        limit = 500  # Can use a larger limit for metadata-only fetches
-        old_doc_ids = []
-
+        limit = 100
+        ids: List[str] = []
+        docs: List[str] = []
+        metas: List[Dict[str, Any]] = []
         for offset in range(0, total, limit):
-            logger.debug(f"Scanning metadata batch: offset={offset}, limit={limit}")
             batch = rcm.chat_history_collection.get(
                 limit=limit,
                 offset=offset,
-                include=["metadatas"],  # Fetch only metadata
+                include=["documents", "metadatas"],
             )
+            ids.extend(batch.get("ids", []))
+            docs.extend(batch.get("documents", []))
+            metas.extend(batch.get("metadatas", []))
 
-            batch_ids = batch.get("ids", [])
-            metadatas = batch.get("metadatas", [])
-
-            if not batch_ids:
-                logger.debug(f"No documents returned in metadata batch with offset {offset}.")
-                continue
-
-            for i, meta in enumerate(metadatas):
-                if not meta:
-                    continue
-
-                ts_val = meta.get("timestamp") or meta.get("create_time")
-                ts = None
-                try:
-                    if isinstance(ts_val, (int, float)):
-                        ts = datetime.fromtimestamp(ts_val)
-                    elif isinstance(ts_val, str):
-                        ts = datetime.fromisoformat(ts_val.replace("Z", "+00:00"))
-                except (ValueError, TypeError):
-                    # Silently ignore parse failures for this initial check
-                    pass
-
-                if ts and ts <= cutoff_date:
-                    old_doc_ids.append(batch_ids[i])
-
-        if not old_doc_ids:
-            logger.info("No documents found meeting the prune criteria after metadata scan.")
+        if not ids:
+            logger.info("No documents found in the chat history collection after batching.")
             return []
 
-        logger.info(f"Found {len(old_doc_ids)} documents to prune. Fetching their full content.")
+        logger.info(f"Fetched {len(ids)} total documents across all batches. Filtering in memory...")
 
-        # Now fetch the full content for only the old documents
-        # We may need to batch this as well if old_doc_ids is very large
-        old_docs_final = []
-        get_limit = 100 # A smaller limit for fetching full documents
-        for i in range(0, len(old_doc_ids), get_limit):
-            ids_batch = old_doc_ids[i:i + get_limit]
-            logger.debug(f"Fetching content for batch of {len(ids_batch)} old documents.")
-            results = rcm.chat_history_collection.get(
-                ids=ids_batch,
-                include=["documents", "metadatas"]
-            )
+        old_docs: List[Dict[str, Any]] = []
+        for i, doc_id in enumerate(ids):
+            meta = metas[i] if i < len(metas) else {}
+            doc_content = docs[i] if i < len(docs) else ""
 
-            # Reconstruct the document object in the desired format
-            doc_ids_res = results.get('ids', [])
-            docs_res = results.get('documents', [])
-            metas_res = results.get('metadatas', [])
+            # Some imports store timestamps under 'create_time'. Check both
+            ts_val = meta.get("timestamp") or meta.get("create_time")
 
-            for j, doc_id in enumerate(doc_ids_res):
-                meta = metas_res[j] if j < len(metas_res) else {}
-                doc_content = docs_res[j] if j < len(docs_res) else ""
-                ts_val = meta.get("timestamp") or meta.get("create_time")
+            try:
+                if isinstance(ts_val, (int, float)):
+                    ts = datetime.fromtimestamp(ts_val)
+                elif isinstance(ts_val, str):
+                    # Handle common ISO formats. If parsing fails, fall back to None.
+                    ts = datetime.fromisoformat(ts_val.replace("Z", "+00:00"))
+                else:
+                    ts = None
+            except (ValueError, TypeError) as e:
+                logger.warning(
+                    "Could not convert timestamp '%s' for document ID %s. Error: %s. Skipping.",
+                    ts_val,
+                    doc_id,
+                    e,
+                )
                 ts = None
-                try:
-                    if isinstance(ts_val, (int, float)):
-                        ts = datetime.fromtimestamp(ts_val)
-                    elif isinstance(ts_val, str):
-                        ts = datetime.fromisoformat(ts_val.replace("Z", "+00:00"))
-                except (ValueError, TypeError) as e:
-                    logger.warning(
-                        "Could not convert timestamp '%s' for document ID %s during final fetch. Error: %s. Skipping.",
-                        ts_val, doc_id, e
-                    )
-                    continue
 
-                if ts: # Should always be true since we pre-filtered, but good practice
-                    old_docs_final.append({"id": doc_id, "document": doc_content, "metadata": meta, "timestamp": ts})
+            # We filtered in Python, but double-check just in case:
+            if ts and ts <= cutoff_date:
+                old_docs.append({"id": doc_id, "document": doc_content, "metadata": meta, "timestamp": ts})
 
-        logger.info(f"Successfully fetched {len(old_docs_final)} documents for pruning.")
-        return old_docs_final
+        logger.info(f"Found {len(old_docs)} documents meeting the prune criteria after in-memory filtering.")
+        return old_docs
 
     except Exception as e:
         logger.error(f"An error occurred fetching or filtering documents from ChromaDB: {e}", exc_info=True)
@@ -207,7 +181,7 @@ def print_collection_metrics() -> None:
         ("Relation", rcm.relation_collection),
         ("Observation", rcm.observation_collection),
     ]
-
+    
     logger.info("--- ChromaDB Collection Metrics ---")
 
     for name, coll_instance in collections_to_check:  # Renamed 'coll' to 'coll_instance'
