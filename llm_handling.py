@@ -185,7 +185,11 @@ async def get_simplified_llm_stream(
         )
         return final_llm_stream, prompt_messages
     except BadRequestError as e:
-        err_param = (getattr(e, "body", {}) or {}).get("error", {}).get("param")
+        err_body = getattr(e, "body", {}) or {}
+        if isinstance(err_body, list) and err_body:
+            err_body = err_body[0]
+
+        err_param = (err_body.get("error", {}) or {}).get("param")
         if config.LLM_STREAMING and err_param == "stream":
             logger.warning(
                 f"Streaming not supported for model {final_stream_model}; retrying without stream."

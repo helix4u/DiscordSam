@@ -57,7 +57,7 @@ async def create_chat_completion(
             params["temperature"] = temperature
         if max_tokens is not None:
             params["max_completion_tokens"] = max_tokens
-        if logit_bias:
+        if logit_bias and not config.IS_GOOGLE_MODEL:
             params["logit_bias"] = logit_bias
         return await llm_client.chat.completions.create(**params)
 
