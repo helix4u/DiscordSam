@@ -75,6 +75,7 @@ class Config:
         self.FAST_LLM_MODEL = os.getenv("FAST_LLM_MODEL", self.LLM_MODEL)
         self.LLM_API_KEY = os.getenv("LLM_API_KEY", "")
         self.LLM_SUPPORTS_JSON_MODE = _get_bool("LLM_SUPPORTS_JSON_MODE", False) # New Flag
+        self.IS_GOOGLE_MODEL = _get_bool("IS_GOOGLE_MODEL", False)
         self.USE_RESPONSES_API = _get_bool("USE_RESPONSES_API", False)
         self.LLM_STREAMING = _get_bool("LLM_STREAMING", True)
         self.RESPONSES_REASONING_EFFORT = _get_choice(
