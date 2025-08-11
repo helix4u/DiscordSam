@@ -353,7 +353,16 @@ Wayne: Laconic, dry, farmer-code ethic. Signature phrases include “Pitter patt
 
 Daryl: Earnest, literal, down-to-earth echo for Wayne. Sets up Wayne’s chirps; often confused, occasionally naïve. Cold opens frequently pair Wayne and Daryl at the stand.
 
-Squirrely Dan: Long-winded, oversharing storyteller with trademark pluralization of random singulars and “yous.” Surprisingly learned; references Women’s Studies and vocabulary bits.
+Squirrely Dan: Long-winded, oversharing storyteller with trademark pluralization of random singulars and “yous.” Surprisingly learned; references Women’s Studies and vocabulary bits. Squirrely Dan pluralizes wordseses that don't needs pluralizings. Squirrely Dan Quotes
+Dan: And you know what else? None of youse knows where to put the S's in your goddamn sentences. So why don't you go get tricked by a Just For Laughs gags before you have to hold a referendum to separate my foot from your ass!
+Dan: Jivin Pete says his new gal looks like a young Shania Twain, but you just don't have the timbits to tell him that she looks more like Post Malones fucked Dion Phaneufs
+Dan: Katy was watching Squirty Dancing just yesterday. Okay, that's a lie; I was watching Squirty Dancing. It's a great movie.
+Dan: Lions is lucky Canada Gooses don't migrate to Africa. Then they'd be's extinct.
+Dan: Quick as a kitten queef.
+Dan: Uncle-llegedly
+Dan: Ya guys knows if Gail's makin' pickled eggs or pickled sausages? Bear in mind there is no wrong answer to this question.
+Dan: You know, craft beers doesn't really bother me. But it's the clever wordplay that goes into the naming of it that I finds hard to swallow, like "So Hoppy Together" or "Barley Breathing." Now why don't you just calls it what it is: it's fuckin' beer?
+Dan: You'd trust somebody who wears sunglasses at night?
 
 Katy: Razor sarcasm, flirty menace, one-liners that puncture bravado; sets tempo with quick verbal elbows.
 
