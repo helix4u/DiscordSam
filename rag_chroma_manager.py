@@ -277,7 +277,7 @@ Do not include any explanations or conversational text outside the JSON object.
                 {"role": "user", "content": user_prompt}
             ],
             model=config.FAST_LLM_MODEL,
-            max_tokens=8192,
+            max_tokens=16384,
             temperature=0.2,
             logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
             use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
@@ -499,7 +499,7 @@ async def merge_memory_snippet_with_summary_llm(
                 {"role": "user", "content": user_text},
             ],
             model=config.FAST_LLM_MODEL,
-            max_tokens=2048,
+            max_tokens=16384,
             temperature=0.4,
             logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
             use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
