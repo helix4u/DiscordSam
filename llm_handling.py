@@ -163,14 +163,17 @@ async def _build_initial_prompt_messages(
 async def get_simplified_llm_stream(
     llm_client: Any,
     prompt_messages: List[MsgNode],
-    is_vision_request: bool
+    is_vision_request: bool,
+    use_responses_api: bool,
 ) -> Tuple[Optional[Any], List[MsgNode]]:
     if not prompt_messages:
         raise ValueError("Prompt messages cannot be empty for get_simplified_llm_stream.")
 
     logger.info(f"Requesting final response. Vision request: {is_vision_request}")
 
-    final_stream_model = config.VISION_LLM_MODEL if is_vision_request else config.LLM_MODEL
+    final_stream_model = (
+        config.VISION_LLM_MODEL if is_vision_request else config.LLM_MODEL
+    )
     logger.info(f"Using model for final response: {final_stream_model}")
     api_messages = [msg_node.to_dict() for msg_node in prompt_messages]
     try:
@@ -182,6 +185,7 @@ async def get_simplified_llm_stream(
             temperature=0.7,
             logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
             stream=config.LLM_STREAMING,
+            use_responses_api=use_responses_api,
         )
         return final_llm_stream, prompt_messages
     except BadRequestError as e:
@@ -203,6 +207,7 @@ async def get_simplified_llm_stream(
                     temperature=0.7,
                     logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
                     stream=False,
+                    use_responses_api=use_responses_api,
                 )
                 return final_response, prompt_messages
             except Exception as inner_e:
@@ -307,8 +312,16 @@ async def _stream_llm_handler(
                 break
         logger.info(f"Determined is_vision_request for '{title}': {is_vision_request}")
 
+        use_responses_api = (
+            config.VISION_LLM_USE_RESPONSES_API
+            if is_vision_request
+            else config.LLM_USE_RESPONSES_API
+        )
         stream, final_prompt_used_by_llm = await get_simplified_llm_stream(
-            llm_client, final_prompt_for_llm_call, is_vision_request
+            llm_client,
+            final_prompt_for_llm_call,
+            is_vision_request,
+            use_responses_api,
         )
         final_prompt_for_rag = final_prompt_used_by_llm
 
@@ -351,7 +364,7 @@ async def _stream_llm_handler(
 
             async for chunk_data in stream:
                 delta_content = ""
-                if config.USE_RESPONSES_API:
+                if use_responses_api:
                     event_type = getattr(chunk_data, "type", "")
                     if event_type == "response.output_text.delta":
                         delta_content = getattr(chunk_data, "delta", "") or ""
@@ -415,7 +428,9 @@ async def _stream_llm_handler(
                         sent_messages.append(await channel.send(embed=embed))
                 await asyncio.sleep(config.STREAM_EDIT_THROTTLE_SECONDS)
         else:
-            full_response_content = extract_text(stream)
+            full_response_content = extract_text(
+                stream, use_responses_api
+            )
 
 
         final_display_text = response_prefix + full_response_content
@@ -742,64 +757,42 @@ async def stream_llm_response_to_message(
         )
 
 
+
 async def get_description_for_image(llm_client: Any, image_path: str) -> str:
-    """
-    Generates a textual description for a given image using a vision-capable LLM.
-    """
+    """Generate a textual description for ``image_path`` using the vision model."""
     logger.info(f"Attempting to generate description for image: {image_path}")
     try:
         if not os.path.exists(image_path):
-            logger.error(f"Image file not found: {image_path}")
+            logger.error("Image file not found: %s", image_path)
             return "[Error: Image file not found for description.]"
-
         with open(image_path, "rb") as image_file:
             image_bytes = image_file.read()
-
-        b64_image = base64.b64encode(image_bytes).decode('utf-8')
-
-        # Ensure VISION_LLM_MODEL is appropriate for non-streaming, single image description
-        # It might be the same as config.VISION_LLM_MODEL or a specific one if needed.
-        # For now, we assume config.VISION_LLM_MODEL can handle this.
+        b64_image = base64.b64encode(image_bytes).decode("utf-8")
         if not config.VISION_LLM_MODEL:
             logger.error("VISION_LLM_MODEL is not configured. Cannot describe image.")
             return "[Error: Vision model not configured for image description.]"
-
-        if config.USE_RESPONSES_API:
-            prompt_messages = [
-                {
-                    "role": "system",
-                    "content": "You are a helpful assistant that describes images for visually impaired users."
-                },
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "input_text", "text": "Describe this screenshot of a webpage. Focus on the visible text, layout, and any interactive elements. What information is presented here? Provide a concise summary."},
-                        {
-                            "type": "input_image",
-                            "image_url": f"data:image/png;base64,{b64_image}",
-                        },
-                    ],
-                }
-            ]
-        else:
-            prompt_messages = [
-                {
-                    "role": "system",
-                    "content": "You are a helpful assistant that describes images for visually impaired users."
-                },
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": "Describe this screenshot of a webpage. Focus on the visible text, layout, and any interactive elements. What information is presented here? Provide a concise summary."},
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": f"data:image/png;base64,{b64_image}"}
-                        },
-                    ],
-                }
-            ]
-
-        logger.debug(f"Sending image description request to model: {config.VISION_LLM_MODEL}")
+        prompt_messages = [
+            {
+                "role": "system",
+                "content": "You are a helpful assistant that describes images for visually impaired users.",
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Describe this screenshot of a webpage. Focus on the visible text, layout, and any interactive elements. What information is presented here? Provide a concise summary.",
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{b64_image}"},
+                    },
+                ],
+            },
+        ]
+        logger.debug(
+            f"Sending image description request to model: {config.VISION_LLM_MODEL}"
+        )
         response = await create_chat_completion(
             llm_client,
             prompt_messages,
@@ -811,22 +804,36 @@ async def get_description_for_image(llm_client: Any, image_path: str) -> str:
             ),
             temperature=0.3,
             logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
+            use_responses_api=config.VISION_LLM_USE_RESPONSES_API,
         )
-
-        description = extract_text(response)
+        description = extract_text(
+            response, config.VISION_LLM_USE_RESPONSES_API
+        )
         if description:
-            logger.info(f"Successfully generated description for image {image_path}: {description[:100]}...")
+            logger.info(
+                f"Successfully generated description for image {image_path}: {description[:100]}..."
+            )
             return description
-        else:
-            logger.warning(f"LLM did not return content for image description: {image_path}")
-            return "[Error: LLM did not return description for image.]"
-
+        logger.warning(
+            f"LLM did not return content for image description: {image_path}"
+        )
+        return "[Error: LLM did not return description for image.]"
     except OpenAIError as e:
-        logger.error(f"OpenAI API error while generating description for {image_path}: {e}", exc_info=True)
+        logger.error(
+            f"OpenAI API error while generating description for {image_path}: {e}",
+            exc_info=True,
+        )
         return f"[Error: OpenAI API issue during image description - {type(e).__name__}.]"
     except FileNotFoundError:
-        logger.error(f"Image file not found (should have been caught earlier but as a safeguard): {image_path}")
+        logger.error(
+            "Image file not found (should have been caught earlier but as a safeguard): %s",
+            image_path,
+        )
         return "[Error: Image file not found for description (safeguard).]"
     except Exception as e:
-        logger.error(f"Unexpected error generating description for image {image_path}: {e}", exc_info=True)
+        logger.error(
+            f"Unexpected error generating description for image {image_path}: {e}",
+            exc_info=True,
+        )
         return f"[Error: Unexpected issue during image description - {type(e).__name__}.]"
+
