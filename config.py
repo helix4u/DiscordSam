@@ -119,6 +119,8 @@ class Config:
         # Use 8MB as the default so TTS audio gets split automatically if needed.
         self.TTS_MAX_AUDIO_BYTES = _get_int("TTS_MAX_AUDIO_BYTES", 8 * 1024 * 1024)
         self.TTS_SPEED = _get_float("TTS_SPEED", 1.3)
+        self.TTS_REQUEST_TIMEOUT_SECONDS = _get_int("TTS_REQUEST_TIMEOUT_SECONDS", 180)
+        self.TTS_CHARACTER_LIMIT = _get_int("TTS_CHARACTER_LIMIT", 2500)
 
         self.SEARX_URL = os.getenv("SEARX_URL", "http://192.168.1.3:9092/search")
         # Changed default for SEARX_PREFERENCES to an empty string.
