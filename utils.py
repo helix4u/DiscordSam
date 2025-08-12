@@ -98,14 +98,26 @@ def append_absolute_dates(
     return text
 
 def clean_text_for_tts(text: str) -> str:
-    if not text: return ""
-    # Remove Markdown-like characters, including full-width parentheses
-    text = re.sub(r'[\*#_~\<\>\[\]\(\)（）]+', '', text)
-    # Remove URLs
-    text = re.sub(r'http[s]?://\S+', '', text)
-    # Remove <think> tags and their content
-    text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL | re.IGNORECASE)
-    return text.strip()
+    if not text:
+        return ""
+    # 1. Remove URLs and <think> tags first, as they can contain complex characters.
+    text = re.sub(r"http[s]?://\S+", "", text)
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
+
+    # 2. Define a whitelist of characters to keep.
+    # This includes letters (unicode), numbers, basic punctuation, and whitespace.
+    # This is safer than a blacklist for preventing unknown "special characters".
+    # \w includes unicode letters, numbers, and underscore.
+    # We add common punctuation and the hyphen.
+    allowed_chars = re.compile(r"[^\w\s.,!?'\"-]")
+
+    # 3. Remove all characters that are not in the whitelist.
+    text = allowed_chars.sub("", text)
+
+    # 4. Clean up excessive whitespace that might result from the substitution.
+    text = re.sub(r"\s+", " ", text).strip()
+
+    return text
 
 def parse_time_string_to_delta(time_str: str) -> Tuple[Optional[timedelta], Optional[str]]:
     patterns = {
