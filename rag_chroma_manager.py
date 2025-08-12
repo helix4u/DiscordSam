@@ -579,29 +579,9 @@ async def retrieve_and_prepare_rag_context(
                 logger.debug(f"RAG: Collection '{name}' is not available for date-range search.")
                 continue
             try:
-                # More efficient ChromaDB query with a 'where' filter for date range
-                where_filter = {
-                    "$and": [
-                        {"timestamp": {"$gte": start_iso}},
-                        {"timestamp": {"$lte": end_iso}},
-                    ]
-                }
-
-                # Determine max docs to fetch per collection type
-                max_docs_rss = getattr(config, "RAG_MAX_DATE_RANGE_DOCS", 100)
-                max_docs_other = getattr(config, "RAG_NUM_COLLECTION_DOCS_TO_FETCH", 3)
-                max_docs = max_docs_rss if name == "rss" else max_docs_other
-
-                res = await asyncio.to_thread(
-                    coll.get,
-                    where=where_filter,
-                    limit=max_docs, # Limit the results directly in the query
-                    include=["documents", "metadatas"]
-                )
-
-                if res and res.get("documents"):
-                    docs_with_ts = []
-                    # We still need to sort by timestamp since 'get' doesn't guarantee order
+                res = await asyncio.to_thread(coll.get, include=["documents", "metadatas"])
+                docs_with_ts: List[Tuple[str, datetime]] = []
+                if res and res.get("documents") and res.get("metadatas"):
                     for doc_text, meta in zip(res["documents"], res["metadatas"]):
                         if not isinstance(doc_text, str) or not isinstance(meta, dict):
                             continue
@@ -610,17 +590,25 @@ async def retrieve_and_prepare_rag_context(
                             continue
                         try:
                             ts_dt = datetime.fromisoformat(ts)
+                            # If the datetime is timezone-aware, convert it to a naive local datetime
+                            # to allow comparison with the naive start_dt and end_dt.
                             if ts_dt.tzinfo is not None:
                                 ts_dt = ts_dt.astimezone().replace(tzinfo=None)
-                            docs_with_ts.append((doc_text, ts_dt))
                         except ValueError:
                             continue
-
-                    # Sort the retrieved documents by timestamp descending
+                        if start_dt <= ts_dt <= end_dt:
+                            docs_with_ts.append((doc_text, ts_dt))
+                if docs_with_ts:
                     docs_with_ts.sort(key=lambda x: x[1], reverse=True)
-
-                    # The limit was already applied in the query, so no need to slice again
-                    for doc_text, _ in docs_with_ts:
+                    max_docs_rss = getattr(config, "RAG_MAX_DATE_RANGE_DOCS", 100)
+                    max_docs_other = getattr(config, "RAG_NUM_COLLECTION_DOCS_TO_FETCH", 3)
+                    max_docs = max_docs_rss if name == "rss" else max_docs_other
+                    if len(docs_with_ts) > max_docs:
+                        logger.debug(
+                            f"RAG: Limiting '{name}' date-range docs from {len(docs_with_ts)} to {max_docs}."
+                        )
+                    limited_docs = docs_with_ts[:max_docs]
+                    for doc_text, _ in limited_docs:
                         truncated_doc = doc_text
                         if name == "chat_history":
                             max_chars = getattr(config, "RAG_MAX_FULL_CONVO_CHARS", 20000)
@@ -630,9 +618,8 @@ async def retrieve_and_prepare_rag_context(
                                     f"RAG: Truncated chat_history document from {len(doc_text)} to {max_chars} chars."
                                 )
                         retrieved_contexts_raw.append((truncated_doc, name))
-
                     logger.info(
-                        f"RAG: Retrieved {len(docs_with_ts)} '{name}' documents for date range {start_iso} to {end_iso} using a where filter."
+                        f"RAG: Retrieved {len(limited_docs)} '{name}' documents for date range {start_iso} to {end_iso}."
                     )
             except Exception as e_date:
                 logger.error(
