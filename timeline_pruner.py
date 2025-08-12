@@ -38,45 +38,58 @@ def _fetch_old_documents(prune_days: int) -> List[Dict[str, Any]]:
             logger.info("No documents found in the chat history collection.")
             return []
 
-        logger.debug(f"Chat history collection has {total} documents. Beginning batch processing.")
+        logger.debug(f"Chat history collection has {total} documents. Beginning batch fetch.")
 
-        old_docs: List[Dict[str, Any]] = []
         limit = 100
-
+        ids: List[str] = []
+        docs: List[str] = []
+        metas: List[Dict[str, Any]] = []
         for offset in range(0, total, limit):
             batch = rcm.chat_history_collection.get(
                 limit=limit,
                 offset=offset,
                 include=["documents", "metadatas"],
             )
+            ids.extend(batch.get("ids", []))
+            docs.extend(batch.get("documents", []))
+            metas.extend(batch.get("metadatas", []))
 
-            batch_ids = batch.get("ids", [])
-            batch_docs = batch.get("documents", [])
-            batch_metas = batch.get("metadatas", [])
+        if not ids:
+            logger.info("No documents found in the chat history collection after batching.")
+            return []
 
-            for i, doc_id in enumerate(batch_ids):
-                meta = batch_metas[i] if i < len(batch_metas) else {}
-                doc_content = batch_docs[i] if i < len(batch_docs) else ""
-                ts_val = meta.get("timestamp") or meta.get("create_time")
+        logger.info(f"Fetched {len(ids)} total documents across all batches. Filtering in memory...")
 
-                try:
-                    if isinstance(ts_val, (int, float)):
-                        ts = datetime.fromtimestamp(ts_val)
-                    elif isinstance(ts_val, str):
-                        ts = datetime.fromisoformat(ts_val.replace("Z", "+00:00"))
-                    else:
-                        ts = None
-                except (ValueError, TypeError) as e:
-                    logger.warning(
-                        "Could not convert timestamp '%s' for document ID %s. Error: %s. Skipping.",
-                        ts_val, doc_id, e
-                    )
+        old_docs: List[Dict[str, Any]] = []
+        for i, doc_id in enumerate(ids):
+            meta = metas[i] if i < len(metas) else {}
+            doc_content = docs[i] if i < len(docs) else ""
+
+            # Some imports store timestamps under 'create_time'. Check both
+            ts_val = meta.get("timestamp") or meta.get("create_time")
+
+            try:
+                if isinstance(ts_val, (int, float)):
+                    ts = datetime.fromtimestamp(ts_val)
+                elif isinstance(ts_val, str):
+                    # Handle common ISO formats. If parsing fails, fall back to None.
+                    ts = datetime.fromisoformat(ts_val.replace("Z", "+00:00"))
+                else:
                     ts = None
+            except (ValueError, TypeError) as e:
+                logger.warning(
+                    "Could not convert timestamp '%s' for document ID %s. Error: %s. Skipping.",
+                    ts_val,
+                    doc_id,
+                    e,
+                )
+                ts = None
 
-                if ts and ts <= cutoff_date:
-                    old_docs.append({"id": doc_id, "document": doc_content, "metadata": meta, "timestamp": ts})
+            # We filtered in Python, but double-check just in case:
+            if ts and ts <= cutoff_date:
+                old_docs.append({"id": doc_id, "document": doc_content, "metadata": meta, "timestamp": ts})
 
-        logger.info(f"Found {len(old_docs)} documents meeting the prune criteria after processing all batches.")
+        logger.info(f"Found {len(old_docs)} documents meeting the prune criteria after in-memory filtering.")
         return old_docs
 
     except Exception as e:
@@ -168,7 +181,7 @@ def print_collection_metrics() -> None:
         ("Relation", rcm.relation_collection),
         ("Observation", rcm.observation_collection),
     ]
-
+    
     logger.info("--- ChromaDB Collection Metrics ---")
 
     for name, coll_instance in collections_to_check:  # Renamed 'coll' to 'coll_instance'

@@ -578,47 +578,35 @@ async def retrieve_and_prepare_rag_context(
             if not coll:
                 logger.debug(f"RAG: Collection '{name}' is not available for date-range search.")
                 continue
-
             try:
-                # Memory-efficient batch processing for date-range queries
-                total = await asyncio.to_thread(coll.count)
+                res = await asyncio.to_thread(coll.get, include=["documents", "metadatas"])
                 docs_with_ts: List[Tuple[str, datetime]] = []
-                limit = 200 # Process in batches to keep memory usage low
-
-                for offset in range(0, total, limit):
-                    batch = await asyncio.to_thread(
-                        coll.get,
-                        limit=limit,
-                        offset=offset,
-                        include=["documents", "metadatas"]
-                    )
-
-                    if not batch or not batch.get("documents") or not batch.get("metadatas"):
-                        continue
-
-                    for doc_text, meta in zip(batch["documents"], batch["metadatas"]):
+                if res and res.get("documents") and res.get("metadatas"):
+                    for doc_text, meta in zip(res["documents"], res["metadatas"]):
                         if not isinstance(doc_text, str) or not isinstance(meta, dict):
                             continue
-                        ts_str = meta.get("timestamp")
-                        if not isinstance(ts_str, str):
+                        ts = meta.get("timestamp")
+                        if not isinstance(ts, str):
                             continue
-
                         try:
-                            ts_dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                            ts_dt = datetime.fromisoformat(ts)
+                            # If the datetime is timezone-aware, convert it to a naive local datetime
+                            # to allow comparison with the naive start_dt and end_dt.
                             if ts_dt.tzinfo is not None:
                                 ts_dt = ts_dt.astimezone().replace(tzinfo=None)
                         except ValueError:
                             continue
-
                         if start_dt <= ts_dt <= end_dt:
                             docs_with_ts.append((doc_text, ts_dt))
-
                 if docs_with_ts:
                     docs_with_ts.sort(key=lambda x: x[1], reverse=True)
                     max_docs_rss = getattr(config, "RAG_MAX_DATE_RANGE_DOCS", 100)
                     max_docs_other = getattr(config, "RAG_NUM_COLLECTION_DOCS_TO_FETCH", 3)
                     max_docs = max_docs_rss if name == "rss" else max_docs_other
-
+                    if len(docs_with_ts) > max_docs:
+                        logger.debug(
+                            f"RAG: Limiting '{name}' date-range docs from {len(docs_with_ts)} to {max_docs}."
+                        )
                     limited_docs = docs_with_ts[:max_docs]
                     for doc_text, _ in limited_docs:
                         truncated_doc = doc_text
@@ -626,6 +614,9 @@ async def retrieve_and_prepare_rag_context(
                             max_chars = getattr(config, "RAG_MAX_FULL_CONVO_CHARS", 20000)
                             if len(doc_text) > max_chars:
                                 truncated_doc = doc_text[-max_chars:]
+                                logger.debug(
+                                    f"RAG: Truncated chat_history document from {len(doc_text)} to {max_chars} chars."
+                                )
                         retrieved_contexts_raw.append((truncated_doc, name))
                     logger.info(
                         f"RAG: Retrieved {len(limited_docs)} '{name}' documents for date range {start_iso} to {end_iso}."
@@ -635,7 +626,6 @@ async def retrieve_and_prepare_rag_context(
                     f"RAG: Error retrieving date-filtered documents from '{name}': {e_date}",
                     exc_info=True,
                 )
-
         if not retrieved_contexts_raw:
             logger.info(
                 f"RAG: No documents found for date range {start_iso} to {end_iso} across any collection."
