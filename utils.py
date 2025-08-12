@@ -33,60 +33,6 @@ def chunk_text(text: str, max_length: int = config.EMBED_MAX_LENGTH) -> List[str
     if current_chunk: chunks.append(current_chunk)
     return chunks if chunks else [""]
 
-def chunk_text_for_tts(text: str, max_length: int) -> List[str]:
-    """Chunks text into smaller pieces suitable for TTS, respecting sentence boundaries."""
-    if not text:
-        return []
-
-    # Split the text into sentences. This is a simple split and might not be perfect for all languages.
-    # A positive lookbehind (?<=...) is used to keep the delimiters (.!?) in the sentences.
-    sentences = re.split(r'(?<=[.!?])\s+', text)
-
-    chunks = []
-    current_chunk = ""
-
-    for sentence in sentences:
-        # If a single sentence is longer than max_length, it needs to be split forcefully.
-        if len(sentence) > max_length:
-            # If there's a current chunk, add it to the list before processing the long sentence.
-            if current_chunk:
-                chunks.append(current_chunk)
-                current_chunk = ""
-
-            # Force-split the long sentence
-            # We will split by words to avoid cutting in the middle of a word.
-            words = sentence.split(' ')
-            temp_chunk = ""
-            for word in words:
-                if len(temp_chunk) + len(word) + 1 > max_length:
-                    chunks.append(temp_chunk)
-                    temp_chunk = word
-                else:
-                    if temp_chunk:
-                        temp_chunk += " " + word
-                    else:
-                        temp_chunk = word
-            if temp_chunk:
-                chunks.append(temp_chunk)
-            continue
-
-        # If adding the new sentence exceeds max_length, finalize the current chunk.
-        if len(current_chunk) + len(sentence) + 1 > max_length:
-            if current_chunk:
-                chunks.append(current_chunk)
-            current_chunk = sentence
-        else:
-            if current_chunk:
-                current_chunk += " " + sentence
-            else:
-                current_chunk = sentence
-
-    # Add the last remaining chunk
-    if current_chunk:
-        chunks.append(current_chunk)
-
-    return chunks
-
 def detect_urls(message_text: str) -> List[str]:
     if not message_text: return []
     # Basic URL detection, can be improved for more complex cases
@@ -152,22 +98,13 @@ def append_absolute_dates(
     return text
 
 def clean_text_for_tts(text: str) -> str:
-    if not text:
-        return ""
-
-    # Remove <think> tags and their content first
-    text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL | re.IGNORECASE)
+    if not text: return ""
+    # Remove Markdown-like characters, including full-width parentheses
+    text = re.sub(r'[\*#_~\<\>\[\]\(\)（）]+', '', text)
     # Remove URLs
     text = re.sub(r'http[s]?://\S+', '', text)
-
-    # Whitelist of allowed characters: letters, numbers, basic punctuation, and space.
-    # This also removes markdown, parentheses, brackets, etc.
-    # Added ’ (smart quote) to the list of allowed characters.
-    text = re.sub(r"[^a-zA-Z0-9\s.,!?:'-’]+", '', text)
-
-    # Collapse multiple whitespace characters into a single space
-    text = re.sub(r'\s+', ' ', text)
-
+    # Remove <think> tags and their content
+    text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL | re.IGNORECASE)
     return text.strip()
 
 def parse_time_string_to_delta(time_str: str) -> Tuple[Optional[timedelta], Optional[str]]:
