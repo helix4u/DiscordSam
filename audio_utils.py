@@ -14,7 +14,7 @@ import whisper
 import gc
 
 from config import config
-from utils import clean_text_for_tts
+from utils import clean_text_for_tts, chunk_text
 
 logger = logging.getLogger(__name__)
 
@@ -96,11 +96,11 @@ async def tts_request(text: str, speed: Optional[float] = None) -> Optional[byte
         return None
 
 async def _send_audio_segment(
-    destination: Union[discord.abc.Messageable, discord.Interaction, discord.Message], 
-    segment_text: str, 
-    filename_suffix: str, 
+    destination: Union[discord.abc.Messageable, discord.Interaction, discord.Message],
+    segment_text: str,
+    filename_suffix: str,
     is_thought: bool = False,
-    base_filename: str = "response"
+    base_filename: str = "response",
 ):
     if not segment_text:
         return
@@ -110,51 +110,81 @@ async def _send_audio_segment(
         logger.info(f"Skipping TTS for empty or fully cleaned '{filename_suffix}' segment.")
         return
 
-    tts_audio_data = await tts_request(cleaned_segment)
-    
     actual_destination_channel: Optional[discord.abc.Messageable] = None
     if isinstance(destination, discord.Interaction):
         if isinstance(destination.channel, discord.abc.Messageable):
             actual_destination_channel = destination.channel
         else:
-            logger.warning(f"TTS: Interaction channel for {destination.id} is not Messageable.")
+            logger.warning(
+                f"TTS: Interaction channel for {destination.id} is not Messageable."
+            )
             return
     elif isinstance(destination, discord.Message):
-        actual_destination_channel = destination.channel 
-    elif isinstance(destination, discord.abc.Messageable): 
+        actual_destination_channel = destination.channel
+    elif isinstance(destination, discord.abc.Messageable):
         actual_destination_channel = destination
-    
+
     if not actual_destination_channel:
-        logger.warning(f"TTS destination channel could not be resolved for type {type(destination)}")
+        logger.warning(
+            f"TTS destination channel could not be resolved for type {type(destination)}"
+        )
         return
 
-    if tts_audio_data:
+    text_chunks = chunk_text(cleaned_segment, config.TTS_TEXT_CHUNK_SIZE)
+    for chunk_idx, chunk in enumerate(text_chunks, start=1):
+        tts_audio_data = await tts_request(chunk)
+        if not tts_audio_data:
+            logger.warning(
+                f"TTS request failed for '{filename_suffix}' chunk {chunk_idx}, no audio data received."
+            )
+            continue
+
         try:
             audio = AudioSegment.from_file(io.BytesIO(tts_audio_data), format="mp3")
             output_buffer = io.BytesIO()
             audio.export(output_buffer, format="mp3", bitrate="128k")
             fixed_audio_data = output_buffer.getvalue()
 
-            if len(fixed_audio_data) <= config.TTS_MAX_AUDIO_BYTES:
-                file = discord.File(io.BytesIO(fixed_audio_data), filename=f"{base_filename}_{filename_suffix}.mp3")
-                content_message = None
-                if is_thought:
-                    content_message = "**Sam's thoughts (TTS):**"
-                elif filename_suffix in ["main_response", "full"]:
-                    content_message = "**Sam's response (TTS):**"
+            chunk_suffix = (
+                f"{filename_suffix}_chunk{chunk_idx}"
+                if len(text_chunks) > 1
+                else filename_suffix
+            )
 
-                await actual_destination_channel.send(content=content_message, file=file)
-                logger.info(f"Sent TTS audio: {base_filename}_{filename_suffix}.mp3 to Channel ID {actual_destination_channel.id}")
+            if len(fixed_audio_data) <= config.TTS_MAX_AUDIO_BYTES:
+                file = discord.File(
+                    io.BytesIO(fixed_audio_data),
+                    filename=f"{base_filename}_{chunk_suffix}.mp3",
+                )
+                content_message = None
+                if chunk_idx == 1:
+                    if is_thought:
+                        content_message = "**Sam's thoughts (TTS):**"
+                    elif filename_suffix in ["main_response", "full"]:
+                        content_message = "**Sam's response (TTS):**"
+
+                await actual_destination_channel.send(
+                    content=content_message, file=file
+                )
+                logger.info(
+                    "Sent TTS audio: %s_%s.mp3 to Channel ID %s",
+                    base_filename,
+                    chunk_suffix,
+                    actual_destination_channel.id,
+                )
+                await asyncio.sleep(0.5)
             else:
                 bytes_per_second = 16000  # 128 kbps
-                max_duration_ms = int((config.TTS_MAX_AUDIO_BYTES / bytes_per_second) * 1000)
+                max_duration_ms = int(
+                    (config.TTS_MAX_AUDIO_BYTES / bytes_per_second) * 1000
+                )
                 segments = [
                     audio[i : i + max_duration_ms]
                     for i in range(0, len(audio), max_duration_ms)
                 ]
                 logger.info(
                     "Audio segment '%s' exceeds size limit (%d > %d). Splitting into %d parts.",
-                    filename_suffix,
+                    chunk_suffix,
                     len(fixed_audio_data),
                     config.TTS_MAX_AUDIO_BYTES,
                     len(segments),
@@ -166,29 +196,32 @@ async def _send_audio_segment(
                     part_data = part_buffer.getvalue()
                     part_file = discord.File(
                         io.BytesIO(part_data),
-                        filename=f"{base_filename}_{filename_suffix}_part{idx}.mp3",
+                        filename=f"{base_filename}_{chunk_suffix}_part{idx}.mp3",
                     )
                     content_message = None
-                    if idx == 1:
+                    if chunk_idx == 1 and idx == 1:
                         if is_thought:
                             content_message = "**Sam's thoughts (TTS):**"
                         elif filename_suffix in ["main_response", "full"]:
                             content_message = "**Sam's response (TTS):**"
-                    await actual_destination_channel.send(content=content_message, file=part_file)
+                    await actual_destination_channel.send(
+                        content=content_message, file=part_file
+                    )
                     logger.info(
                         "Sent TTS audio part %d/%d: %s_%s_part%d.mp3 to Channel ID %s",
                         idx,
                         len(segments),
                         base_filename,
-                        filename_suffix,
+                        chunk_suffix,
                         idx,
                         actual_destination_channel.id,
                     )
                     await asyncio.sleep(0.5)
         except Exception as e:
-            logger.error(f"Error processing or sending TTS audio for '{filename_suffix}': {e}", exc_info=True)
-    else:
-        logger.warning(f"TTS request failed for '{filename_suffix}' segment, no audio data received.")
+            logger.error(
+                f"Error processing or sending TTS audio for '{filename_suffix}': {e}",
+                exc_info=True,
+            )
 
 async def send_tts_audio(
     destination: Union[discord.abc.Messageable, discord.Interaction, discord.Message],
