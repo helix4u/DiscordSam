@@ -98,13 +98,22 @@ def append_absolute_dates(
     return text
 
 def clean_text_for_tts(text: str) -> str:
-    if not text: return ""
-    # Remove Markdown-like characters, including full-width parentheses
-    text = re.sub(r'[\*#_~\<\>\[\]\(\)（）]+', '', text)
+    if not text:
+        return ""
+
+    # Remove <think> tags and their content first
+    text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL | re.IGNORECASE)
     # Remove URLs
     text = re.sub(r'http[s]?://\S+', '', text)
-    # Remove <think> tags and their content
-    text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL | re.IGNORECASE)
+
+    # Whitelist of allowed characters: letters, numbers, basic punctuation, and space.
+    # This also removes markdown, parentheses, brackets, etc.
+    # Added ’ (smart quote) to the list of allowed characters.
+    text = re.sub(r"[^a-zA-Z0-9\s.,!?:'-’]+", '', text)
+
+    # Collapse multiple whitespace characters into a single space
+    text = re.sub(r'\s+', ' ', text)
+
     return text.strip()
 
 def parse_time_string_to_delta(time_str: str) -> Tuple[Optional[timedelta], Optional[str]]:
