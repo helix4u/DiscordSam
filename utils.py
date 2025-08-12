@@ -104,17 +104,25 @@ def clean_text_for_tts(text: str) -> str:
     text = re.sub(r"http[s]?://\S+", "", text)
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
 
-    # 2. Define a whitelist of characters to keep.
+    # 2. Strip GPT reasoning preambles like "Reasoning...assistant" that some models prepend.
+    text = re.sub(
+        r"^\s*reasoning\s*.*?\bassistant\b",
+        "",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    ).lstrip()
+
+    # 3. Define a whitelist of characters to keep.
     # This includes letters (unicode), numbers, basic punctuation, and whitespace.
     # This is safer than a blacklist for preventing unknown "special characters".
     # \w includes unicode letters, numbers, and underscore.
     # We add common punctuation and the hyphen.
     allowed_chars = re.compile(r"[^\w\s.,!?'\"-]")
 
-    # 3. Remove all characters that are not in the whitelist.
+    # 4. Remove all characters that are not in the whitelist.
     text = allowed_chars.sub("", text)
 
-    # 4. Clean up excessive whitespace that might result from the substitution.
+    # 5. Clean up excessive whitespace that might result from the substitution.
     text = re.sub(r"\s+", " ", text).strip()
 
     return text
