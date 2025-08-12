@@ -119,7 +119,3 @@ playwright-report/
 # Other
 .DS_Store
 Thumbs.db
-
-# Agent-generated temporary files
-user_text.txt
-cleaned_text.txt
