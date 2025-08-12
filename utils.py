@@ -100,31 +100,22 @@ def append_absolute_dates(
 def clean_text_for_tts(text: str) -> str:
     if not text:
         return ""
-
-    # 1. Normalize special characters to their ASCII equivalents.
-    text = text.replace("’", "'")
-    text = text.replace("“", '"')
-    text = text.replace("”", '"')
-    text = text.replace("—", "--")
-    text = text.replace("‑", "-")
-
-    # 2. Remove URLs and <think> tags first, as they can contain complex characters.
+    # 1. Remove URLs and <think> tags first, as they can contain complex characters.
     text = re.sub(r"http[s]?://\S+", "", text)
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
 
-    # 3. Define a whitelist of characters to keep.
+    # 2. Define a whitelist of characters to keep.
     # This includes letters (unicode), numbers, basic punctuation, and whitespace.
     # This is safer than a blacklist for preventing unknown "special characters".
     # \w includes unicode letters, numbers, and underscore.
     # We add common punctuation and the hyphen.
     allowed_chars = re.compile(r"[^\w\s.,!?'\"-]")
 
-    # 4. Remove all characters that are not in the whitelist.
+    # 3. Remove all characters that are not in the whitelist.
     text = allowed_chars.sub("", text)
 
-    # 5. Clean up excessive whitespace, preserving line breaks.
-    lines = [re.sub(r'[ \t]+', ' ', line).strip() for line in text.splitlines()]
-    text = '\n'.join(lines)
+    # 4. Clean up excessive whitespace that might result from the substitution.
+    text = re.sub(r"\s+", " ", text).strip()
 
     return text
 
