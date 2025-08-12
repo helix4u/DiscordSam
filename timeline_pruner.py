@@ -16,80 +16,58 @@ PRUNE_DAYS = getattr(config, "TIMELINE_PRUNE_DAYS", 30)
 
 def _fetch_old_documents(prune_days: int) -> List[Dict[str, Any]]:
     """
-    Fetches all documents from the chat history collection and filters them by age in memory.
-    This is a temporary workaround because ChromaDB's metadata filtering with ISO date strings is unreliable.
+    Fetches documents from the chat history collection that are older than a specified number of days.
     """
     if not rcm.chat_history_collection:
         logger.warning("Chat history collection unavailable for fetching old documents.")
         return []
 
     cutoff_date = datetime.now() - timedelta(days=prune_days)
-    # ChromaDB stores timestamps as ISO-8601 strings. Use an ISO string for the
-    # comparison so we don't have to migrate existing data.
     cutoff_iso = cutoff_date.isoformat()
 
-    logger.info(
-        "Fetching documents with timestamps older than %s.", cutoff_iso
-    )
+    logger.info("Fetching documents with timestamps older than %s using a where filter.", cutoff_iso)
 
     try:
-        total = rcm.chat_history_collection.count()
-        if total == 0:
-            logger.info("No documents found in the chat history collection.")
+        # Define a where filter to fetch documents with a 'timestamp' older than the cutoff.
+        # This is more efficient than fetching all documents and filtering in memory.
+        # ISO 8601 strings can be compared lexicographically, so '$lte' works as intended.
+        where_filter = {"timestamp": {"$lte": cutoff_iso}}
+
+        results = rcm.chat_history_collection.get(
+            where=where_filter,
+            include=["documents", "metadatas"]
+        )
+
+        if not results or not results.get("ids"):
+            logger.info("No old documents found meeting the prune criteria.")
             return []
 
-        logger.debug(f"Chat history collection has {total} documents. Beginning batch fetch.")
-
-        limit = 100
-        ids: List[str] = []
-        docs: List[str] = []
-        metas: List[Dict[str, Any]] = []
-        for offset in range(0, total, limit):
-            batch = rcm.chat_history_collection.get(
-                limit=limit,
-                offset=offset,
-                include=["documents", "metadatas"],
-            )
-            ids.extend(batch.get("ids", []))
-            docs.extend(batch.get("documents", []))
-            metas.extend(batch.get("metadatas", []))
-
-        if not ids:
-            logger.info("No documents found in the chat history collection after batching.")
-            return []
-
-        logger.info(f"Fetched {len(ids)} total documents across all batches. Filtering in memory...")
+        logger.info(f"Found {len(results['ids'])} documents meeting the prune criteria.")
 
         old_docs: List[Dict[str, Any]] = []
-        for i, doc_id in enumerate(ids):
-            meta = metas[i] if i < len(metas) else {}
-            doc_content = docs[i] if i < len(docs) else ""
-
-            # Some imports store timestamps under 'create_time'. Check both
+        for i, doc_id in enumerate(results["ids"]):
+            meta = results["metadatas"][i] if i < len(results["metadatas"]) else {}
+            doc_content = results["documents"][i] if i < len(results["documents"]) else ""
             ts_val = meta.get("timestamp") or meta.get("create_time")
 
             try:
                 if isinstance(ts_val, (int, float)):
                     ts = datetime.fromtimestamp(ts_val)
                 elif isinstance(ts_val, str):
-                    # Handle common ISO formats. If parsing fails, fall back to None.
                     ts = datetime.fromisoformat(ts_val.replace("Z", "+00:00"))
                 else:
                     ts = None
-            except (ValueError, TypeError) as e:
-                logger.warning(
-                    "Could not convert timestamp '%s' for document ID %s. Error: %s. Skipping.",
-                    ts_val,
-                    doc_id,
-                    e,
-                )
-                ts = None
+            except (ValueError, TypeError):
+                ts = None # Let the outer logic handle missing/bad timestamps if necessary
 
-            # We filtered in Python, but double-check just in case:
+            # The where filter should have already done this, but we still need the datetime object
             if ts and ts <= cutoff_date:
-                old_docs.append({"id": doc_id, "document": doc_content, "metadata": meta, "timestamp": ts})
+                 old_docs.append({"id": doc_id, "document": doc_content, "metadata": meta, "timestamp": ts})
+            elif not ts:
+                 logger.warning(f"Document {doc_id} was retrieved but has a missing or invalid timestamp. Skipping.")
 
-        logger.info(f"Found {len(old_docs)} documents meeting the prune criteria after in-memory filtering.")
+
+        logger.info(f"Successfully processed {len(old_docs)} documents for pruning.")
         return old_docs
 
     except Exception as e:
@@ -155,10 +133,13 @@ def _get_collection_timestamps(collection) -> List[datetime]:
     limit = 100
     timestamps: List[datetime] = []
     for offset in range(0, total, limit):
+        # Only fetch metadatas to avoid loading large document contents into memory
         res = collection.get(limit=limit, offset=offset, include=["metadatas"])
         metas = res.get("metadatas", [])
         for meta in metas:
-            ts_val = (meta or {}).get("timestamp") or (meta or {}).get("create_time")
+            if not meta:  # Add a check for None metadata
+                continue
+            ts_val = meta.get("timestamp") or meta.get("create_time")
             ts = _parse_timestamp(ts_val)
             if ts:
                 timestamps.append(ts)
@@ -181,7 +162,7 @@ def print_collection_metrics() -> None:
         ("Relation", rcm.relation_collection),
         ("Observation", rcm.observation_collection),
     ]
-    
+
     logger.info("--- ChromaDB Collection Metrics ---")
 
     for name, coll_instance in collections_to_check:  # Renamed 'coll' to 'coll_instance'
