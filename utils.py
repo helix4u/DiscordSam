@@ -1,5 +1,6 @@
 import asyncio
 import re
+import unicodedata
 from datetime import datetime, timezone, timedelta
 from typing import Any, Coroutine, List, Optional, Tuple
 import logging
@@ -100,7 +101,15 @@ def append_absolute_dates(
 def clean_text_for_tts(text: str) -> str:
     if not text:
         return ""
-    # 1. Remove URLs and <think> tags first, as they can contain complex characters.
+
+    # 1. Normalize unicode characters to their closest ASCII equivalents.
+    # NFKC is aggressive and handles many "compatibility" characters like smart quotes.
+    text = unicodedata.normalize('NFKC', text)
+
+    # 2. Manually replace any remaining common special characters.
+    text = text.replace("—", "--")  # Em-dash
+
+    # 3. Remove URLs and <think> tags.
     text = re.sub(r"http[s]?://\S+", "", text)
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
 
