@@ -153,10 +153,15 @@ def extract_text(response: Any, use_responses_api: bool) -> str:
             return ""
 
     # Responses API
+    # The response can contain multiple output items, some of which might be
+    # metadata or failures (like 'Empty reasoning item'). We must only extract
+    # text from the item with the 'assistant' role.
     parts: List[str] = []
     for item in getattr(response, "output", []) or []:
-        for content in getattr(item, "content", []) or []:
-            text = getattr(content, "text", "")
-            if text:
-                parts.append(text)
+        if getattr(item, 'role', None) == 'assistant':
+            for content in getattr(item, "content", []) or []:
+                text = getattr(content, "text", "")
+                if text:
+                    parts.append(text)
+
     return "".join(parts).strip()
