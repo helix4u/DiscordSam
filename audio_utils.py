@@ -80,17 +80,16 @@ async def tts_request(text: str, speed: Optional[float] = None) -> Optional[byte
         "response_format": "mp3",
         "speed": speed,
     }
-    logger.info(f"Requesting TTS for {len(text)} characters.")
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.post(config.TTS_API_URL, json=payload, timeout=config.TTS_REQUEST_TIMEOUT_SECONDS) as resp:
+            async with session.post(config.TTS_API_URL, json=payload, timeout=90) as resp:
                 if resp.status == 200:
                     return await resp.read()
                 else:
                     logger.error(f"TTS request failed: status={resp.status}, response_text={await resp.text()}")
                     return None
     except asyncio.TimeoutError:
-        logger.error(f"TTS request timed out after {config.TTS_REQUEST_TIMEOUT_SECONDS} seconds for {len(text)} characters.")
+        logger.error("TTS request timed out.")
         return None
     except Exception as e:
         logger.error(f"TTS request error: {e}", exc_info=True)
