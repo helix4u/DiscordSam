@@ -372,7 +372,7 @@ async def distill_conversation_to_sentence_llm(llm_client: Any, text_to_distill:
         return None
 
     # Sanitize the input to prevent flagging by removing potentially sensitive terms.
-    sanitized_text = re.sub(r'system', ' ', text_to_distill, flags=re.IGNORECASE)
+    sanitized_text = re.sub(r'system|<think>', ' ', text_to_distill, flags=re.IGNORECASE)
 
     truncated_text = sanitized_text[:30000]
 
