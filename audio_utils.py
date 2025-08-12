@@ -14,7 +14,7 @@ import whisper
 import gc
 
 from config import config
-from utils import clean_text_for_tts
+from utils import clean_text_for_tts, chunk_text_for_tts
 
 logger = logging.getLogger(__name__)
 
@@ -96,9 +96,9 @@ async def tts_request(text: str, speed: Optional[float] = None) -> Optional[byte
         return None
 
 async def _send_audio_segment(
-    destination: Union[discord.abc.Messageable, discord.Interaction, discord.Message], 
-    segment_text: str, 
-    filename_suffix: str, 
+    destination: Union[discord.abc.Messageable, discord.Interaction, discord.Message],
+    segment_text: str,
+    filename_suffix: str,
     is_thought: bool = False,
     base_filename: str = "response"
 ):
@@ -110,8 +110,27 @@ async def _send_audio_segment(
         logger.info(f"Skipping TTS for empty or fully cleaned '{filename_suffix}' segment.")
         return
 
-    tts_audio_data = await tts_request(cleaned_segment)
-    
+    # TTS API has a character limit (e.g., 4096 for OpenAI). We chunk the text to stay within limits.
+    TTS_CHARACTER_LIMIT = 4000
+    text_chunks = chunk_text_for_tts(cleaned_segment, TTS_CHARACTER_LIMIT)
+
+    if not text_chunks:
+        logger.info(f"No text chunks to process for TTS in '{filename_suffix}' segment.")
+        return
+
+    combined_audio = AudioSegment.empty()
+    for i, chunk in enumerate(text_chunks):
+        logger.info(f"Requesting TTS for chunk {i+1}/{len(text_chunks)} of '{filename_suffix}' segment.")
+        tts_audio_data = await tts_request(chunk)
+        if tts_audio_data:
+            try:
+                chunk_audio = AudioSegment.from_file(io.BytesIO(tts_audio_data), format="mp3")
+                combined_audio += chunk_audio
+            except Exception as e:
+                logger.error(f"Failed to process audio for chunk {i+1} of '{filename_suffix}': {e}", exc_info=True)
+        else:
+            logger.warning(f"TTS request failed for chunk {i+1} of '{filename_suffix}', no audio data received.")
+
     actual_destination_channel: Optional[discord.abc.Messageable] = None
     if isinstance(destination, discord.Interaction):
         if isinstance(destination.channel, discord.abc.Messageable):
@@ -120,19 +139,18 @@ async def _send_audio_segment(
             logger.warning(f"TTS: Interaction channel for {destination.id} is not Messageable.")
             return
     elif isinstance(destination, discord.Message):
-        actual_destination_channel = destination.channel 
-    elif isinstance(destination, discord.abc.Messageable): 
+        actual_destination_channel = destination.channel
+    elif isinstance(destination, discord.abc.Messageable):
         actual_destination_channel = destination
-    
+
     if not actual_destination_channel:
         logger.warning(f"TTS destination channel could not be resolved for type {type(destination)}")
         return
 
-    if tts_audio_data:
+    if len(combined_audio) > 0:
         try:
-            audio = AudioSegment.from_file(io.BytesIO(tts_audio_data), format="mp3")
             output_buffer = io.BytesIO()
-            audio.export(output_buffer, format="mp3", bitrate="128k")
+            combined_audio.export(output_buffer, format="mp3", bitrate="128k")
             fixed_audio_data = output_buffer.getvalue()
 
             if len(fixed_audio_data) <= config.TTS_MAX_AUDIO_BYTES:
@@ -149,8 +167,8 @@ async def _send_audio_segment(
                 bytes_per_second = 16000  # 128 kbps
                 max_duration_ms = int((config.TTS_MAX_AUDIO_BYTES / bytes_per_second) * 1000)
                 segments = [
-                    audio[i : i + max_duration_ms]
-                    for i in range(0, len(audio), max_duration_ms)
+                    combined_audio[i : i + max_duration_ms]
+                    for i in range(0, len(combined_audio), max_duration_ms)
                 ]
                 logger.info(
                     "Audio segment '%s' exceeds size limit (%d > %d). Splitting into %d parts.",
@@ -188,7 +206,7 @@ async def _send_audio_segment(
         except Exception as e:
             logger.error(f"Error processing or sending TTS audio for '{filename_suffix}': {e}", exc_info=True)
     else:
-        logger.warning(f"TTS request failed for '{filename_suffix}' segment, no audio data received.")
+        logger.warning(f"TTS request failed for all chunks of '{filename_suffix}' segment, no audio data received.")
 
 async def send_tts_audio(
     destination: Union[discord.abc.Messageable, discord.Interaction, discord.Message],
@@ -244,7 +262,7 @@ def transcribe_audio_file(file_path: str) -> Optional[str]:
         transcribed_text = result.get("text") if isinstance(result, dict) else None
         if transcribed_text:
              logger.info(f"Transcription successful for {file_path}.")
-             return str(transcribed_text) 
+             return str(transcribed_text)
         else:
             logger.warning(f"Whisper transcription for {file_path} did not return 'text'. Result: {result}")
             return None
