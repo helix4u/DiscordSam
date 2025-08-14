@@ -36,8 +36,10 @@ from web_utils import (
     scrape_home_timeline,
     scrape_ground_news_my,
     scrape_ground_news_topic,
-    fetch_rss_entries
+    fetch_rss_entries,
+    _graceful_close_playwright,
 )
+from playwright.async_api import async_playwright  # type: ignore
 from openai_api import create_chat_completion, extract_text
 from logit_biases import LOGIT_BIAS_UNWANTED_TOKENS_STR
 from audio_utils import send_tts_audio
@@ -669,6 +671,8 @@ async def process_twitter_user(
     interaction: discord.Interaction,
     username: str,
     limit: int,
+    page: Optional[Any] = None,
+    context: Optional[Any] = None,
 ) -> bool:
     """Fetch, summarize and display recent tweets from a single user.
 
@@ -680,6 +684,10 @@ async def process_twitter_user(
         Twitter username to process.
     limit : int
         Maximum number of tweets to fetch.
+    page : Optional[Any]
+        Existing Playwright page to reuse. If provided, no new browser will be launched.
+    context : Optional[Any]
+        Browser context associated with ``page``.
 
     Returns
     -------
@@ -719,7 +727,11 @@ async def process_twitter_user(
         user_seen_tweet_ids = all_seen_tweet_ids_cache.get(clean_username, set())
 
         fetched_tweets_data = await scrape_latest_tweets(
-            clean_username, limit=limit, progress_callback=send_progress
+            clean_username,
+            limit=limit,
+            progress_callback=send_progress,
+            page=page,
+            context=context,
         )
 
         if not fetched_tweets_data:
@@ -2543,9 +2555,59 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
 
         try:
             any_new = False
-            for username in DEFAULT_TWITTER_USERS:
-                processed = await process_twitter_user(interaction, username, limit)
-                any_new = any_new or processed
+            user_data_dir = os.path.join(os.getcwd(), ".pw-profile")
+            profile_dir_usable = True
+            if not os.path.exists(user_data_dir):
+                try:
+                    os.makedirs(user_data_dir, exist_ok=True)
+                except OSError:
+                    profile_dir_usable = False
+                    logger.error(
+                        "Could not create .pw-profile. Using non-persistent context for tweet scraping."
+                    )
+
+            page: Optional[Any] = None
+            context: Optional[Any] = None
+            browser_instance: Optional[Any] = None
+            async with async_playwright() as p:
+                if profile_dir_usable:
+                    context = await p.chromium.launch_persistent_context(
+                        user_data_dir,
+                        headless=config.HEADLESS_PLAYWRIGHT,
+                        args=[
+                            "--disable-blink-features=AutomationControlled",
+                            "--no-sandbox",
+                            "--disable-dev-shm-usage",
+                        ],
+                        user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36",
+                        slow_mo=150,
+                    )
+                else:
+                    logger.warning("Using non-persistent context for tweet scraping.")
+                    browser_instance = await p.chromium.launch(
+                        headless=config.HEADLESS_PLAYWRIGHT,
+                        args=[
+                            "--disable-blink-features=AutomationControlled",
+                            "--no-sandbox",
+                            "--disable-dev-shm-usage",
+                        ],
+                        slow_mo=150,
+                    )
+                    context = await browser_instance.new_context(
+                        user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36",
+                    )
+                page = await context.new_page()
+
+                try:
+                    for username in DEFAULT_TWITTER_USERS:
+                        processed = await process_twitter_user(
+                            interaction, username, limit, page=page, context=context
+                        )
+                        any_new = any_new or processed
+                finally:
+                    await _graceful_close_playwright(
+                        page, context, browser_instance, profile_dir_usable
+                    )
 
             if not any_new:
                 await safe_followup_send(
