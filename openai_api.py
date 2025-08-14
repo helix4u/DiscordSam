@@ -93,20 +93,8 @@ async def create_chat_completion(
             params["max_completion_tokens"] = max_tokens
         if logit_bias and not config.IS_GOOGLE_MODEL:
             params["logit_bias"] = logit_bias
-        if config.CHAT_COMPLETIONS_SERVICE_TIER:
-            params["service_tier"] = config.CHAT_COMPLETIONS_SERVICE_TIER
         params.update(kwargs)
-
-        try:
-            return await llm_client.chat.completions.create(**params)
-        except RateLimitError as e:
-            if params.get("service_tier") == "flex":
-                logger.warning(
-                    "Flex tier request failed due to rate limit. Retrying with 'auto' tier."
-                )
-                params["service_tier"] = "auto"
-                return await llm_client.chat.completions.create(**params)
-            raise
+        return await llm_client.chat.completions.create(**params)
 
     input_messages: List[Dict[str, Any]] = []
     for msg in messages:
