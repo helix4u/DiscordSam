@@ -29,6 +29,7 @@ from rag_chroma_manager import (
 )
 import rag_chroma_manager as rcm
 import aiohttp
+from playwright.async_api import async_playwright
 from web_utils import (
     scrape_website,
     query_searx,
@@ -36,7 +37,8 @@ from web_utils import (
     scrape_home_timeline,
     scrape_ground_news_my,
     scrape_ground_news_topic,
-    fetch_rss_entries
+    fetch_rss_entries,
+    _graceful_close_playwright,
 )
 from openai_api import create_chat_completion, extract_text
 from logit_biases import LOGIT_BIAS_UNWANTED_TOKENS_STR
@@ -669,6 +671,7 @@ async def process_twitter_user(
     interaction: discord.Interaction,
     username: str,
     limit: int,
+    page: Optional[Any] = None,
 ) -> bool:
     """Fetch, summarize and display recent tweets from a single user.
 
@@ -680,6 +683,8 @@ async def process_twitter_user(
         Twitter username to process.
     limit : int
         Maximum number of tweets to fetch.
+    page : Optional[Any], optional
+        Existing Playwright page to reuse, by default ``None``.
 
     Returns
     -------
@@ -719,7 +724,10 @@ async def process_twitter_user(
         user_seen_tweet_ids = all_seen_tweet_ids_cache.get(clean_username, set())
 
         fetched_tweets_data = await scrape_latest_tweets(
-            clean_username, limit=limit, progress_callback=send_progress
+            clean_username,
+            limit=limit,
+            progress_callback=send_progress,
+            page=page,
         )
 
         if not fetched_tweets_data:
@@ -2542,47 +2550,105 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             await interaction.followup.send(content="Starting to scrape tweets from default accounts...")
 
         try:
-            any_new = False
-            for username in DEFAULT_TWITTER_USERS:
-                processed = await process_twitter_user(interaction, username, limit)
-                any_new = any_new or processed
+            user_data_dir = os.path.join(os.getcwd(), ".pw-profile")
+            profile_dir_usable = True
+            if not os.path.exists(user_data_dir):
+                try:
+                    os.makedirs(user_data_dir, exist_ok=True)
+                except OSError:
+                    profile_dir_usable = False
+                    logger.error(
+                        "Could not create .pw-profile. Using non-persistent context for tweet scraping."
+                    )
 
-            if not any_new:
-                await safe_followup_send(
-                    interaction,
-                    content="No new tweets found for any default account.",
-                    ephemeral=True,
-                )
+            browser_instance_st = None
+            async with async_playwright() as p:
+                if profile_dir_usable:
+                    context = await p.chromium.launch_persistent_context(
+                        user_data_dir,
+                        headless=config.HEADLESS_PLAYWRIGHT,
+                        args=[
+                            "--disable-blink-features=AutomationControlled",
+                            "--no-sandbox",
+                            "--disable-dev-shm-usage",
+                        ],
+                        user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36",
+                        slow_mo=150,
+                    )
+                else:
+                    logger.warning("Using non-persistent context for tweet scraping.")
+                    browser_instance_st = await p.chromium.launch(
+                        headless=config.HEADLESS_PLAYWRIGHT,
+                        args=[
+                            "--disable-blink-features=AutomationControlled",
+                            "--no-sandbox",
+                            "--disable-dev-shm-usage",
+                        ],
+                        slow_mo=150,
+                    )
+                    context = await browser_instance_st.new_context(
+                        user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36",
+                    )
 
-            user_msg = MsgNode("user", f"/alltweets (limit {limit})", name=str(interaction.user.id))
-            assistant_msg = MsgNode(
-                "assistant",
-                "Finished fetching tweets from default accounts.",
-                name=str(bot_instance.user.id),
-            )
-            await bot_state_instance.append_history(interaction.channel_id, user_msg, config.MAX_MESSAGE_HISTORY)
-            await bot_state_instance.append_history(interaction.channel_id, assistant_msg, config.MAX_MESSAGE_HISTORY)
-            progress_note = None
-            try:
-                progress_note = await interaction.followup.send(
-                    content="\U0001F501 Post-processing...", ephemeral=True
-                )
-            except discord.HTTPException:
-                progress_note = None
+                page = await context.new_page()
+                try:
+                    any_new = False
+                    for username in DEFAULT_TWITTER_USERS:
+                        processed = await process_twitter_user(
+                            interaction, username, limit, page
+                        )
+                        any_new = any_new or processed
 
-            start_post_processing_task(
-                ingest_conversation_to_chromadb(
-                    llm_client_instance,
-                    interaction.channel_id,
-                    interaction.user.id,
-                    [user_msg, assistant_msg],
-                    None,
-                ),
-                progress_message=progress_note,
-            )
+                    if not any_new:
+                        await safe_followup_send(
+                            interaction,
+                            content="No new tweets found for any default account.",
+                            ephemeral=True,
+                        )
+
+                    user_msg = MsgNode(
+                        "user", f"/alltweets (limit {limit})", name=str(interaction.user.id)
+                    )
+                    assistant_msg = MsgNode(
+                        "assistant",
+                        "Finished fetching tweets from default accounts.",
+                        name=str(bot_instance.user.id),
+                    )
+                    await bot_state_instance.append_history(
+                        interaction.channel_id, user_msg, config.MAX_MESSAGE_HISTORY
+                    )
+                    await bot_state_instance.append_history(
+                        interaction.channel_id,
+                        assistant_msg,
+                        config.MAX_MESSAGE_HISTORY,
+                    )
+                    progress_note = None
+                    try:
+                        progress_note = await interaction.followup.send(
+                            content="\U0001F501 Post-processing...", ephemeral=True
+                        )
+                    except discord.HTTPException:
+                        progress_note = None
+
+                    start_post_processing_task(
+                        ingest_conversation_to_chromadb(
+                            llm_client_instance,
+                            interaction.channel_id,
+                            interaction.user.id,
+                            [user_msg, assistant_msg],
+                            None,
+                        ),
+                        progress_message=progress_note,
+                    )
+                finally:
+                    await _graceful_close_playwright(
+                        page, context, browser_instance_st, profile_dir_usable
+                    )
         except Exception as e:
             logger.error(f"Error in alltweets_slash_command: {e}", exc_info=True)
-            await interaction.followup.send(content=f"Failed to process tweets. Error: {str(e)[:500]}")
+            await interaction.followup.send(
+                content=f"Failed to process tweets. Error: {str(e)[:500]}"
+            )
         finally:
             if acquired_lock:
                 scrape_lock.release()
