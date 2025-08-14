@@ -87,6 +87,9 @@ class Config:
             "VISION_LLM_USE_RESPONSES_API", self.USE_RESPONSES_API
         )
         self.LLM_STREAMING = _get_bool("LLM_STREAMING", True)
+        self.LLM_REQUEST_TIMEOUT_SECONDS = _get_float(
+            "LLM_REQUEST_TIMEOUT_SECONDS", 900.0
+        )
 
         # Whisper ASR model settings
         self.WHISPER_DEVICE = os.getenv("WHISPER_DEVICE") # e.g. "cuda", "cpu". None for auto-detect
