@@ -105,10 +105,6 @@ class Config:
             "RESPONSES_SERVICE_TIER",
             {"auto", "default", "flex", "priority"},
         )
-        self.CHAT_COMPLETIONS_SERVICE_TIER = _get_choice(
-            "CHAT_COMPLETIONS_SERVICE_TIER",
-            {"auto", "flex"},
-        )
         self.SYSTEM_PROMPT_FILE = os.getenv("SYSTEM_PROMPT_FILE", "system_prompt.md")
 
         self.ALLOWED_CHANNEL_IDS = _parse_int_list("ALLOWED_CHANNEL_IDS")
