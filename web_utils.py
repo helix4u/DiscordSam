@@ -349,189 +349,143 @@ async def scrape_website(
     finally:
         await _graceful_close_playwright(page, context_manager, browser_instance_sw, profile_dir_usable)
 
-async def _scrape_twitter_page(
-    page: Any,
-    username_queried: str,
-    limit: int,
-    progress_callback: Optional[Callable[[str], Awaitable[None]]],
-    tweets_collected: List[TweetData],
-    seen_tweet_ids: Set[str],
-) -> None:
-    """Helper to scrape tweets from an already-initialized Playwright page."""
-    url = f"https://x.com/{username_queried.lstrip('@')}/with_replies"
-    logger.info(f"Navigating to Twitter profile: {url}")
-    await page.goto(url, timeout=60000, wait_until="domcontentloaded")
-
-    try:
-        await page.wait_for_selector("article[data-testid='tweet']", timeout=30000)
-        logger.info("Initial tweet articles detected on page.")
-    except PlaywrightTimeoutError:
-        logger.warning(
-            f"Timed out waiting for initial tweet articles for @{username_queried}. Page might be empty or blocked."
-        )
-        return
-
-    max_scroll_attempts = limit + 15
-    for scroll_attempt in range(max_scroll_attempts):
-        if len(tweets_collected) >= limit:
-            break
-
-        try:
-            clicked_count = await page.evaluate(JS_EXPAND_SHOWMORE_TWITTER, 5)
-            if clicked_count > 0:
-                logger.info(f"Clicked {clicked_count} 'Show more' elements on Twitter page.")
-                await asyncio.sleep(random.uniform(0.5, 2.0))
-        except PlaywrightTimeoutError:
-            logger.warning(f"Timeout during JS 'Show More' execution for @{username_queried}.")
-        except Exception as e_sm:
-            logger.warning(f"JavaScript 'Show More' execution error: {e_sm}")
-
-        extracted_this_round: List[Dict[str, Any]] = []
-        newly_added_count = 0
-        try:
-            extracted_this_round = await page.evaluate(JS_EXTRACT_TWEETS_TWITTER)
-        except PlaywrightTimeoutError:
-            logger.warning(f"Timeout during JS tweet extraction for @{username_queried}.")
-        except Exception as e_js:
-            logger.error(f"JavaScript tweet extraction error: {e_js}")
-
-        for data in extracted_this_round:
-            uid_parts = [
-                str(data.get('id', '')),
-                str(data.get("username", "")),
-                str(data.get("content") or "")[:30],
-                str(data.get("timestamp", "")),
-            ]
-            uid = hashlib.md5("".join(filter(None, uid_parts)).encode('utf-8')).hexdigest()
-
-            if uid and uid not in seen_tweet_ids:
-                tweet = TweetData(
-                    id=data.get('id', ''),
-                    username=data.get('username', 'unknown_user'),
-                    content=data.get('content', ''),
-                    timestamp=data.get('timestamp', ''),
-                    tweet_url=data.get('tweet_url', ''),
-                    is_repost=data.get('is_repost', False),
-                    reposted_by=data.get('reposted_by'),
-                    image_urls=data.get('image_urls', []),
-                    alt_texts=data.get('alt_texts', []),
-                )
-                tweets_collected.append(tweet)
-                seen_tweet_ids.add(uid)
-                newly_added_count += 1
-                if progress_callback:
-                    try:
-                        await progress_callback(
-                            f"Scraped {len(tweets_collected)}/{limit} tweets for @{username_queried}..."
-                        )
-                    except Exception as e_cb:
-                        logger.warning(f"Progress callback error: {e_cb}")
-                if len(tweets_collected) >= limit:
-                    break
-
-        if newly_added_count == 0 and scroll_attempt > (limit // 2 + 7):
-            logger.info("No new unique tweets found in several scroll attempts. Stopping.")
-            if progress_callback:
-                await progress_callback(
-                    f"Stopping early: No new unique tweets found after {scroll_attempt + 1} scrolls. Collected {len(tweets_collected)}."
-                )
-            break
-
-        try:
-            await page.evaluate("window.scrollBy(0, window.innerHeight * 1);")
-            await asyncio.sleep(random.uniform(0.5, 2.0))
-        except PlaywrightTimeoutError:
-            logger.warning(
-                f"Timeout during page scroll for @{username_queried}. Assuming end of content or page issue."
-            )
-            break
-
-
-async def scrape_latest_tweets(
-    username_queried: str,
-    limit: int = 20,
-    progress_callback: Optional[Callable[[str], Awaitable[None]]] = None,
-    page: Optional[Any] = None,
-) -> List[TweetData]:
-    """Scrape latest tweets, optionally reusing an existing Playwright page."""
-    logger.info(
-        f"Scraping last {limit} tweets for @{username_queried} using Playwright."
-    )
+async def scrape_latest_tweets(username_queried: str, limit: int = 20, progress_callback: Optional[Callable[[str], Awaitable[None]]] = None) -> List[TweetData]:
+    logger.info(f"Scraping last {limit} tweets for @{username_queried} (profile page, with replies) using Playwright JS execution.")
     tweets_collected: List[TweetData] = []
     seen_tweet_ids: set[str] = set()
 
-    if page:
-        await _scrape_twitter_page(
-            page,
-            username_queried,
-            limit,
-            progress_callback,
-            tweets_collected,
-            seen_tweet_ids,
-        )
-    else:
-        user_data_dir = os.path.join(os.getcwd(), ".pw-profile")
-        profile_dir_usable = True
-        if not os.path.exists(user_data_dir):
-            try:
-                os.makedirs(user_data_dir, exist_ok=True)
-            except OSError:
-                profile_dir_usable = False
-                logger.error("Could not create .pw-profile. Using non-persistent context.")
-
-        context_manager: Optional[Any] = None
-        browser_instance_st: Optional[Any] = None
-        local_page: Optional[Any] = None
+    user_data_dir = os.path.join(os.getcwd(), ".pw-profile")
+    profile_dir_usable = True
+    if not os.path.exists(user_data_dir):
         try:
-            async with PLAYWRIGHT_SEM:
-                async with async_playwright() as p:
-                    if profile_dir_usable:
-                        context = await p.chromium.launch_persistent_context(
-                            user_data_dir,
-                            headless=config.HEADLESS_PLAYWRIGHT,
-                            args=["--disable-blink-features=AutomationControlled", "--no-sandbox", "--disable-dev-shm-usage"],
-                            user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36",
-                            slow_mo=150,
-                        )
-                    else:
-                        browser_instance_st = await p.chromium.launch(
-                            headless=config.HEADLESS_PLAYWRIGHT,
-                            args=["--disable-blink-features=AutomationControlled", "--no-sandbox", "--disable-dev-shm-usage"],
-                            slow_mo=150,
-                        )
-                        context = await browser_instance_st.new_context(
-                            user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36"
-                        )
-                    context_manager = context
-                    local_page = await context_manager.new_page()
-                    await _scrape_twitter_page(
-                        local_page,
-                        username_queried,
-                        limit,
-                        progress_callback,
-                        tweets_collected,
-                        seen_tweet_ids,
+            os.makedirs(user_data_dir, exist_ok=True)
+        except OSError:
+            profile_dir_usable = False
+            logger.error("Could not create .pw-profile. Using non-persistent context for tweet scraping.")
+
+    context_manager: Optional[Any] = None
+    browser_instance_st: Optional[Any] = None
+    page: Optional[Any] = None
+    try:
+        async with PLAYWRIGHT_SEM:
+            async with async_playwright() as p:
+                if profile_dir_usable:
+                    context = await p.chromium.launch_persistent_context(
+                        user_data_dir, headless=config.HEADLESS_PLAYWRIGHT,
+                        args=["--disable-blink-features=AutomationControlled", "--no-sandbox", "--disable-dev-shm-usage"],
+                        user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36",
+                        slow_mo=150
                     )
-        except PlaywrightTimeoutError as e:
-            logger.warning(
-                f"Playwright overall timeout for @{username_queried}: {e}"
-            )
-        except Exception as e:
-            logger.error(
-                f"Unexpected error scraping @{username_queried}: {e}", exc_info=True
-            )
-        finally:
-            await _graceful_close_playwright(
-                local_page,
-                context_manager,
-                browser_instance_st,
-                profile_dir_usable,
-            )
+                else:
+                    logger.warning("Using non-persistent context for tweet scraping.")
+                    browser_instance_st = await p.chromium.launch(
+                        headless=config.HEADLESS_PLAYWRIGHT,
+                        args=["--disable-blink-features=AutomationControlled", "--no-sandbox", "--disable-dev-shm-usage"],
+                        slow_mo=150
+                    )
+                    context = await browser_instance_st.new_context(
+                        user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36"
+                    )
+                context_manager = context
+                page = await context_manager.new_page()
+
+                url = f"https://x.com/{username_queried.lstrip('@')}/with_replies"
+                logger.info(f"Navigating to Twitter profile: {url}")
+                await page.goto(url, timeout=60000, wait_until="domcontentloaded")
+
+                try:
+                    await page.wait_for_selector("article[data-testid='tweet']", timeout=30000)
+                    logger.info("Initial tweet articles detected on page.")
+                except PlaywrightTimeoutError:
+                    logger.warning(f"Timed out waiting for initial tweet articles for @{username_queried}. Page might be empty or blocked."); return []
+
+                max_scroll_attempts = limit + 15
+                for scroll_attempt in range(max_scroll_attempts):
+                    if len(tweets_collected) >= limit: break
+
+                    try:
+                        clicked_count = await page.evaluate(JS_EXPAND_SHOWMORE_TWITTER, 5)
+                        if clicked_count > 0:
+                            logger.info(f"Clicked {clicked_count} 'Show more' elements on Twitter page.");
+                            await asyncio.sleep(random.uniform(0.5, 2.0))
+                    except PlaywrightTimeoutError: # More specific error for JS execution timeout
+                        logger.warning(f"Timeout during JS 'Show More' execution for @{username_queried}.")
+                    except Exception as e_sm:
+                        logger.warning(f"JavaScript 'Show More' execution error: {e_sm}")
+
+                    extracted_this_round: List[Dict[str, Any]] = []
+                    newly_added_count = 0
+                    try:
+                        extracted_this_round = await page.evaluate(JS_EXTRACT_TWEETS_TWITTER)
+                    except PlaywrightTimeoutError: # More specific error for JS execution timeout
+                        logger.warning(f"Timeout during JS tweet extraction for @{username_queried}.")
+                    except Exception as e_js:
+                        logger.error(f"JavaScript tweet extraction (JS_EXTRACT_TWEETS_TWITTER) error: {e_js}")
+
+                    for data in extracted_this_round:
+                        uid_parts = [
+                            str(data.get('id', '')),
+                            str(data.get("username","")),
+                            str(data.get("content") or "")[:30],
+                            str(data.get("timestamp",""))
+                        ]
+                        uid = hashlib.md5("".join(filter(None, uid_parts)).encode('utf-8')).hexdigest()
+
+
+                        if uid and uid not in seen_tweet_ids:
+                            tweet = TweetData(
+                                id=data.get('id', ''),
+                                username=data.get('username', 'unknown_user'),
+                                content=data.get('content', ''),
+                                timestamp=data.get('timestamp', ''),
+                                tweet_url=data.get('tweet_url', ''),
+                                is_repost=data.get('is_repost', False),
+                                reposted_by=data.get('reposted_by'),
+                                image_urls=data.get('image_urls', []),
+                                alt_texts=data.get('alt_texts', [])
+                            )
+                            tweets_collected.append(tweet)
+                            seen_tweet_ids.add(uid)
+                            newly_added_count +=1
+                            if progress_callback:
+                                try:
+                                    await progress_callback(f"Scraped {len(tweets_collected)}/{limit} tweets for @{username_queried}...")
+                                except Exception as e_cb:
+                                    logger.warning(f"Progress callback error: {e_cb}")
+                            if len(tweets_collected) >= limit: break
+
+                    if newly_added_count == 0 and scroll_attempt > (limit // 2 + 7): # Increased patience slightly
+                        logger.info("No new unique tweets found in several scroll attempts. Stopping.")
+                        if progress_callback:
+                            await progress_callback(f"Stopping early: No new unique tweets found after {scroll_attempt + 1} scrolls. Collected {len(tweets_collected)}.")
+                        break
+
+                    # Scroll down to load more tweets
+                    try:
+                        await page.evaluate("window.scrollBy(0, window.innerHeight * 1);")
+                        await asyncio.sleep(random.uniform(0.5, 2.0))
+                    except PlaywrightTimeoutError:
+                        logger.warning(f"Timeout during page scroll for @{username_queried}. Assuming end of content or page issue.")
+                        break # Stop scrolling if it times out
+
+    except PlaywrightTimeoutError as e:
+        logger.warning(f"Playwright overall timeout during tweet scraping for @{username_queried}: {e}")
+        if progress_callback:
+            await progress_callback(f"Tweet scraping for @{username_queried} timed out overall. Collected {len(tweets_collected)}.")
+    except Exception as e:
+        logger.error(f"Unexpected error during tweet scraping for @{username_queried}: {e}", exc_info=True)
+        if progress_callback:
+            await progress_callback(f"An unexpected error occurred while scraping tweets for @{username_queried}. Collected {len(tweets_collected)}.")
+    finally:
+        await _graceful_close_playwright(
+            page,
+            context_manager,
+            browser_instance_st,
+            profile_dir_usable,
+        )
 
     tweets_collected.sort(key=lambda x: x.timestamp, reverse=True)
-    logger.info(
-        f"Finished scraping. Collected {len(tweets_collected)} unique tweets for @{username_queried}."
-    )
+    logger.info(f"Finished scraping. Collected {len(tweets_collected)} unique tweets for @{username_queried}.")
     return tweets_collected[:limit]
 
 
