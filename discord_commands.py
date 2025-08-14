@@ -2160,7 +2160,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                     else:
                         await progress_message.edit(content=None, embed=embed)
                 else:
-                    await interaction.followup.send(embed=embed)
+                    await safe_followup_send(interaction, embed=embed)
 
             user_query_content_for_summary = (
                 f"Please analyze and summarize the main themes, topics discussed, and overall sentiment "
