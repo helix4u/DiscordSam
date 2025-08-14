@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Sequence
 
 import logging
+from openai import RateLimitError
 
 from config import config
 
@@ -92,8 +93,20 @@ async def create_chat_completion(
             params["max_completion_tokens"] = max_tokens
         if logit_bias and not config.IS_GOOGLE_MODEL:
             params["logit_bias"] = logit_bias
+        if config.CHAT_COMPLETIONS_SERVICE_TIER:
+            params["service_tier"] = config.CHAT_COMPLETIONS_SERVICE_TIER
         params.update(kwargs)
-        return await llm_client.chat.completions.create(**params)
+
+        try:
+            return await llm_client.chat.completions.create(**params)
+        except RateLimitError as e:
+            if params.get("service_tier") == "flex":
+                logger.warning(
+                    "Flex tier request failed due to rate limit. Retrying with 'auto' tier."
+                )
+                params["service_tier"] = "auto"
+                return await llm_client.chat.completions.create(**params)
+            raise
 
     input_messages: List[Dict[str, Any]] = []
     for msg in messages:
@@ -129,6 +142,14 @@ async def create_chat_completion(
 
     try:
         return await llm_client.responses.create(**params)
+    except RateLimitError as e:
+        if params.get("service_tier") == "flex":
+            logger.warning(
+                "Flex tier request failed due to rate limit. Retrying with 'auto' tier."
+            )
+            params["service_tier"] = "auto"
+            return await llm_client.responses.create(**params)
+        raise
     except TypeError as exc:
         msg = str(exc)
         unsupported = []
