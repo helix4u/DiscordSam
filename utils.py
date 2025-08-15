@@ -102,6 +102,13 @@ def clean_text_for_tts(text: str) -> str:
     if not text:
         return ""
 
+    # Explicitly replace directional quotes and backticks first for robustness.
+    text = text.replace('’', "'")  # Right single quote
+    text = text.replace('‘', "'")  # Left single quote
+    text = text.replace('“', '"')  # Left double quote
+    text = text.replace('”', '"')  # Right double quote
+    text = text.replace('`', "'")  # Backtick
+
     # 1. Normalize unicode characters to their closest ASCII equivalents.
     # NFKC is aggressive and handles many "compatibility" characters like smart quotes.
     text = unicodedata.normalize('NFKC', text)
