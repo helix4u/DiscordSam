@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Dict, List, Optional, Sequence
 
 import logging
+import httpx
 from openai import RateLimitError
 
 from config import config
@@ -94,7 +96,20 @@ async def create_chat_completion(
         if logit_bias and not config.IS_GOOGLE_MODEL:
             params["logit_bias"] = logit_bias
         params.update(kwargs)
-        return await llm_client.chat.completions.create(**params)
+
+        last_exception = None
+        for attempt in range(3):
+            try:
+                return await llm_client.chat.completions.create(**params)
+            except httpx.RemoteProtocolError as e:
+                last_exception = e
+                wait_time = 2 ** attempt
+                logger.warning(
+                    f"Attempt {attempt + 1}/3 failed with RemoteProtocolError. Retrying in {wait_time}s..."
+                )
+                await asyncio.sleep(wait_time)
+        if last_exception:
+            raise last_exception
 
     input_messages: List[Dict[str, Any]] = []
     for msg in messages:
