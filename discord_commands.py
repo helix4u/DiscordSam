@@ -1880,7 +1880,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             combined_total = "\n\n".join(batch_summaries)
         except Exception as e:
             logger.error(f"Error in allrss_slash_command: {e}", exc_info=True)
-            await interaction.followup.send(content=f"Failed to process RSS feeds. Error: {str(e)[:500]}")
+            await safe_followup_send(interaction, content=f"Failed to process RSS feeds. Error: {str(e)[:500]}")
         finally:
             if acquired_lock:
                 scrape_lock.release()
