@@ -27,7 +27,6 @@ distilled_chat_summary_collection: Optional[chromadb.Collection] = None
 news_summary_collection: Optional[chromadb.Collection] = None
 rss_summary_collection: Optional[chromadb.Collection] = None # New collection for RSS summaries
 timeline_summary_collection: Optional[chromadb.Collection] = None
-entity_collection: Optional[chromadb.Collection] = None
 relation_collection: Optional[chromadb.Collection] = None
 observation_collection: Optional[chromadb.Collection] = None
 tweets_collection: Optional[chromadb.Collection] = None # New collection for tweets
@@ -130,7 +129,7 @@ def _parse_relative_date_range(query: str) -> Optional[Tuple[datetime, datetime]
 
 def initialize_chromadb() -> bool:
     global chroma_client, chat_history_collection, distilled_chat_summary_collection, \
-           news_summary_collection, rss_summary_collection, timeline_summary_collection, entity_collection, \
+           news_summary_collection, rss_summary_collection, timeline_summary_collection, \
            relation_collection, observation_collection, tweets_collection # Added tweets_collection
 
     if chroma_client:
@@ -155,9 +154,6 @@ def initialize_chromadb() -> bool:
         logger.info(f"Getting or creating ChromaDB collection: {config.CHROMA_TIMELINE_SUMMARY_COLLECTION_NAME}")
         timeline_summary_collection = chroma_client.get_or_create_collection(name=config.CHROMA_TIMELINE_SUMMARY_COLLECTION_NAME)
 
-        logger.info(f"Getting or creating ChromaDB collection: {config.CHROMA_ENTITIES_COLLECTION_NAME}")
-        entity_collection = chroma_client.get_or_create_collection(name=config.CHROMA_ENTITIES_COLLECTION_NAME)
-
         logger.info(f"Getting or creating ChromaDB collection: {config.CHROMA_RELATIONS_COLLECTION_NAME}")
         relation_collection = chroma_client.get_or_create_collection(name=config.CHROMA_RELATIONS_COLLECTION_NAME)
 
@@ -174,7 +170,6 @@ def initialize_chromadb() -> bool:
             f"'{config.CHROMA_NEWS_SUMMARY_COLLECTION_NAME}', "
             f"'{config.CHROMA_RSS_SUMMARY_COLLECTION_NAME}', "
             f"'{config.CHROMA_TIMELINE_SUMMARY_COLLECTION_NAME}', "
-            f"'{config.CHROMA_ENTITIES_COLLECTION_NAME}', "
             f"'{config.CHROMA_RELATIONS_COLLECTION_NAME}', "
             f"'{config.CHROMA_OBSERVATIONS_COLLECTION_NAME}', "
             f"'{config.CHROMA_TWEETS_COLLECTION_NAME}'." # New
@@ -188,7 +183,6 @@ def initialize_chromadb() -> bool:
         news_summary_collection = None
         rss_summary_collection = None
         timeline_summary_collection = None
-        entity_collection = None
         relation_collection = None
         observation_collection = None
         tweets_collection = None # New
@@ -572,7 +566,6 @@ async def retrieve_and_prepare_rag_context(
             ("news", news_summary_collection),
             ("timeline", timeline_summary_collection),
             ("chat_history", chat_history_collection),
-            ("entity", entity_collection),
             ("relation", relation_collection),
             ("observation", observation_collection),
         ]
@@ -718,7 +711,6 @@ async def retrieve_and_prepare_rag_context(
             ("news", news_summary_collection),
             ("rss", rss_summary_collection),
             ("tweets", tweets_collection), # New
-            ("entity", entity_collection),
             ("relation", relation_collection),
             ("observation", observation_collection),
         ]
@@ -813,7 +805,7 @@ async def ingest_conversation_to_chromadb(
 ):
     # Check if essential collections are available
     if not all([chroma_client, chat_history_collection, distilled_chat_summary_collection,
-                entity_collection, relation_collection, observation_collection]):
+                relation_collection, observation_collection]):
         logger.warning("One or more ChromaDB collections are not available. Skipping full ingestion pipeline.")
         return
 
@@ -881,32 +873,6 @@ async def ingest_conversation_to_chromadb(
     extracted_data = await extract_structured_data_llm(llm_client, original_full_text_for_storage, full_convo_doc_id)
 
     if extracted_data:
-        # Store Entities
-        entities_to_add = extracted_data.get("entities", [])
-        if entities_to_add and entity_collection:
-            entity_docs, entity_metadatas, entity_ids = [], [], []
-            for ent in entities_to_add:
-                if not ent.get("name") or not ent.get("type"): # Basic validation
-                    logger.warning(f"Skipping entity with missing name or type: {ent}")
-                    continue
-                entity_ids.append(f"entity_{full_convo_doc_id}_{uuid4().hex}")
-                entity_docs.append(ent["name"]) # Document is the entity name
-                meta = {
-                    "source_doc_id": full_convo_doc_id,
-                    "entity_type": ent["type"],
-                    "timestamp": timestamp_now.isoformat(),
-                    "raw_details": json.dumps(ent) # Store all other details from LLM
-                }
-                entity_metadatas.append(meta)
-            if entity_ids:
-                try:
-                    await asyncio.to_thread(
-                        entity_collection.add, documents=entity_docs, metadatas=entity_metadatas, ids=entity_ids
-                    )
-                    logger.info(f"Ingested {len(entity_ids)} entities for conversation {full_convo_doc_id}.")
-                except Exception as e_add_ent:
-                    logger.error(f"Failed to add entities for {full_convo_doc_id} to ChromaDB: {e_add_ent}", exc_info=True)
-
         # Store Relations
         relations_to_add = extracted_data.get("relations", [])
         if relations_to_add and relation_collection:
@@ -1119,7 +1085,7 @@ def parse_chatgpt_export(json_file_path: str) -> List[Dict[str, Any]]:
 
 async def store_chatgpt_conversations_in_chromadb(llm_client: Any, conversations: List[Dict[str, Any]], source: str = "chatgpt_export") -> int:
     if not all([chroma_client, chat_history_collection, distilled_chat_summary_collection,
-                entity_collection, relation_collection, observation_collection]):
+                relation_collection, observation_collection]):
         logger.error("ChromaDB collections not available for ChatGPT import. Skipping.")
         return 0
 
