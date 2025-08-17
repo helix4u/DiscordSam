@@ -2,7 +2,7 @@ import asyncio
 import logging
 from datetime import datetime, timedelta
 from collections import defaultdict
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from openai import AsyncOpenAI
 
@@ -255,11 +255,15 @@ def print_collection_metrics() -> None:
 
 async def _summarize_and_prune_documents(
     docs: List[Dict[str, Any]], llm_client: AsyncOpenAI
-) -> int:
-    """Group documents into six-hour blocks, summarize, store, and prune them."""
+) -> Tuple[int, List[str]]:
+    """Group documents into six-hour blocks, summarize, store, and prune them.
+
+    Returns a tuple containing the number of documents pruned and a list of
+    summaries generated for each processed block.
+    """
     if not docs:
         logger.info("Pruner: No documents provided for summarization.")
-        return 0
+        return 0, []
 
     try:
         docs.sort(key=lambda x: x["timestamp"])
@@ -268,11 +272,12 @@ async def _summarize_and_prune_documents(
             f"Pruner: Could not sort documents due to missing or invalid timestamp data: {e}",
             exc_info=True,
         )
-        return 0
+        return 0, []
 
     current_block_items: List[Dict[str, Any]] = []
     current_block_start_time: Optional[datetime] = None
     total_pruned = 0
+    summaries: List[str] = []
 
     async def process_block(block: List[Dict[str, Any]]):
         nonlocal total_pruned
@@ -298,6 +303,7 @@ async def _summarize_and_prune_documents(
         )
 
         if summary:
+            summaries.append(summary)
             ids_to_prune = [item["id"] for item in block]
             _store_timeline_summary(
                 block_start_dt, block_end_dt, summary, ids_to_prune, block_key_for_id
@@ -348,7 +354,7 @@ async def _summarize_and_prune_documents(
         )
         await process_block(current_block_items)
 
-    return total_pruned
+    return total_pruned, summaries
 
 
 async def prune_and_summarize(prune_days: int = PRUNE_DAYS) -> int:
@@ -374,7 +380,7 @@ async def prune_and_summarize(prune_days: int = PRUNE_DAYS) -> int:
             logger.info("Pruner: No documents found eligible for pruning.")
             return 0
 
-        pruned_count = await _summarize_and_prune_documents(docs, llm_client)
+        pruned_count, _ = await _summarize_and_prune_documents(docs, llm_client)
         logger.info(f"Pruner: Completed pruning of {pruned_count} documents.")
         return pruned_count
 
@@ -388,16 +394,20 @@ async def prune_and_summarize(prune_days: int = PRUNE_DAYS) -> int:
         logger.info("Pruner: prune_and_summarize function finished.")
 
 
-async def prune_oldest_items(item_limit: int) -> int:
-    """Summarize and prune the oldest ``item_limit`` chat history documents."""
+async def prune_oldest_items(item_limit: int) -> Tuple[int, List[str]]:
+    """Summarize and prune the oldest ``item_limit`` chat history documents.
+
+    Returns a tuple of the number of documents pruned and the list of generated
+    summaries.
+    """
     if item_limit <= 0:
-        return 0
+        return 0, []
 
     if not rcm.chat_history_collection or not rcm.timeline_summary_collection:
         logger.error(
             "Pruner: One or more ChromaDB collections are not available. Aborting."
         )
-        return 0
+        return 0, []
 
     llm_client = AsyncOpenAI(
         base_url=config.LOCAL_SERVER_URL, api_key=config.LLM_API_KEY or "lm-studio"
@@ -406,17 +416,19 @@ async def prune_oldest_items(item_limit: int) -> int:
     docs = _fetch_all_documents()
     if not docs:
         logger.info("Pruner: No documents found in chat history.")
-        return 0
+        return 0, []
 
     limited_docs = docs[:item_limit]
     logger.info(
         f"Pruner: Processing {len(limited_docs)} oldest documents as requested."
     )
-    pruned_count = await _summarize_and_prune_documents(limited_docs, llm_client)
+    pruned_count, summaries = await _summarize_and_prune_documents(
+        limited_docs, llm_client
+    )
     logger.info(
         f"Pruner: Completed manual pruning of {pruned_count} documents out of requested {item_limit}."
     )
-    return pruned_count
+    return pruned_count, summaries
 
 
 def main():
