@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 chroma_client: Optional[chromadb.ClientAPI] = None
 chat_history_collection: Optional[chromadb.Collection] = None
 distilled_chat_summary_collection: Optional[chromadb.Collection] = None
-news_summary_collection: Optional[chromadb.Collection] = None
+# news_summary_collection: Optional[chromadb.Collection] = None
 rss_summary_collection: Optional[chromadb.Collection] = None # New collection for RSS summaries
 timeline_summary_collection: Optional[chromadb.Collection] = None
 relation_collection: Optional[chromadb.Collection] = None
@@ -145,8 +145,8 @@ def initialize_chromadb() -> bool:
         logger.info(f"Getting or creating ChromaDB collection: {config.CHROMA_DISTILLED_COLLECTION_NAME}")
         distilled_chat_summary_collection = chroma_client.get_or_create_collection(name=config.CHROMA_DISTILLED_COLLECTION_NAME)
 
-        logger.info(f"Getting or creating ChromaDB collection: {config.CHROMA_NEWS_SUMMARY_COLLECTION_NAME}")
-        news_summary_collection = chroma_client.get_or_create_collection(name=config.CHROMA_NEWS_SUMMARY_COLLECTION_NAME)
+        # logger.info(f"Getting or creating ChromaDB collection: {config.CHROMA_NEWS_SUMMARY_COLLECTION_NAME}")
+        # news_summary_collection = chroma_client.get_or_create_collection(name=config.CHROMA_NEWS_SUMMARY_COLLECTION_NAME)
 
         logger.info(f"Getting or creating ChromaDB collection: {config.CHROMA_RSS_SUMMARY_COLLECTION_NAME}") # New
         rss_summary_collection = chroma_client.get_or_create_collection(name=config.CHROMA_RSS_SUMMARY_COLLECTION_NAME) # New
@@ -167,7 +167,7 @@ def initialize_chromadb() -> bool:
             f"ChromaDB initialized successfully. Collections: "
             f"'{config.CHROMA_COLLECTION_NAME}', "
             f"'{config.CHROMA_DISTILLED_COLLECTION_NAME}', "
-            f"'{config.CHROMA_NEWS_SUMMARY_COLLECTION_NAME}', "
+            
             f"'{config.CHROMA_RSS_SUMMARY_COLLECTION_NAME}', "
             f"'{config.CHROMA_TIMELINE_SUMMARY_COLLECTION_NAME}', "
             f"'{config.CHROMA_RELATIONS_COLLECTION_NAME}', "
@@ -180,7 +180,7 @@ def initialize_chromadb() -> bool:
         chroma_client = None
         chat_history_collection = None
         distilled_chat_summary_collection = None
-        news_summary_collection = None
+        # news_summary_collection = None
         rss_summary_collection = None
         timeline_summary_collection = None
         relation_collection = None
@@ -563,7 +563,7 @@ async def retrieve_and_prepare_rag_context(
         collections_to_search = [
             ("rss", rss_summary_collection),
             ("tweets", tweets_collection),
-            ("news", news_summary_collection),
+            # ("news", news_summary_collection),
             ("timeline", timeline_summary_collection),
             ("chat_history", chat_history_collection),
             ("relation", relation_collection),
@@ -708,7 +708,7 @@ async def retrieve_and_prepare_rag_context(
         additional_collections = [
             ("chat_history", chat_history_collection),
             ("timeline", timeline_summary_collection),
-            ("news", news_summary_collection),
+            # ("news", news_summary_collection),
             ("rss", rss_summary_collection),
             ("tweets", tweets_collection), # New
             ("relation", relation_collection),
@@ -1208,33 +1208,33 @@ async def store_chatgpt_conversations_in_chromadb(llm_client: Any, conversations
     return added_count
 
 
-async def store_news_summary(topic: str, url: str, summary_text: str, timestamp: Optional[datetime] = None) -> bool:
-    if not chroma_client or not news_summary_collection: # Ensure news_summary_collection is checked
-        logger.warning("ChromaDB news summary collection not available, skipping storage.")
-        return False
-
-    timestamp = timestamp or datetime.now()
-    doc_id = f"news_{int(timestamp.timestamp())}_{random.randint(1000,9999)}"
-    metadata = {
-        "topic": topic,
-        "url": url,
-        "timestamp": timestamp.isoformat(),
-    }
-
-    try:
-        await asyncio.to_thread(
-            news_summary_collection.add,
-            documents=[summary_text],
-            metadatas=[metadata],
-            ids=[doc_id],
-        )
-        logger.info(
-            f"Stored news summary (ID: {doc_id}) for topic '{topic}' and url '{url}' in '{config.CHROMA_NEWS_SUMMARY_COLLECTION_NAME}'."
-        )
-        return True
-    except Exception as e:
-        logger.error(f"Failed to store news summary for {url}: {e}", exc_info=True)
-        return False
+# async def store_news_summary(topic: str, url: str, summary_text: str, timestamp: Optional[datetime] = None) -> bool:
+#     if not chroma_client or not news_summary_collection: # Ensure news_summary_collection is checked
+#         logger.warning("ChromaDB news summary collection not available, skipping storage.")
+#         return False
+# 
+#     timestamp = timestamp or datetime.now()
+#     doc_id = f"news_{int(timestamp.timestamp())}_{random.randint(1000,9999)}"
+#     metadata = {
+#         "topic": topic,
+#         "url": url,
+#         "timestamp": timestamp.isoformat(),
+#     }
+# 
+#     try:
+#         await asyncio.to_thread(
+#             news_summary_collection.add,
+#             documents=[summary_text],
+#             metadatas=[metadata],
+#             ids=[doc_id],
+#         )
+#         logger.info(
+#             f"Stored news summary (ID: {doc_id}) for topic '{topic}' and url '{url}' in '{config.CHROMA_NEWS_SUMMARY_COLLECTION_NAME}'."
+#         )
+#         return True
+#     except Exception as e:
+#         logger.error(f"Failed to store news summary for {url}: {e}", exc_info=True)
+#         return False
 
 async def store_rss_summary(feed_url: str, article_url: str, title: str, summary_text: str, timestamp: Optional[datetime] = None) -> bool:
     if not chroma_client or not rss_summary_collection:
@@ -1340,7 +1340,7 @@ def get_collection_counts() -> Dict[str, int]:
     collections = {
         "chat_history": chat_history_collection,
         "distilled_chat_summary": distilled_chat_summary_collection,
-        "news_summary": news_summary_collection,
+        # "news_summary": news_summary_collection,
         "rss_summary": rss_summary_collection,
         "timeline_summary": timeline_summary_collection,
         "relation": relation_collection,
