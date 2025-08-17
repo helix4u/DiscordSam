@@ -229,7 +229,7 @@ async def process_rss_feed(
                     {"role": "user", "content": prompt}
                 ],
                 model=config.FAST_LLM_MODEL,
-                max_tokens=1024,
+                max_tokens=2048,
                 temperature=0.5,
                 logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
                 use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
