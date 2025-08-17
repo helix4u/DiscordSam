@@ -23,7 +23,7 @@ from rag_chroma_manager import (
     retrieve_and_prepare_rag_context,
     parse_chatgpt_export,
     store_chatgpt_conversations_in_chromadb,
-    store_news_summary,
+    
     store_rss_summary,  # New import
     ingest_conversation_to_chromadb,
 )
@@ -1091,7 +1091,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                         logger.info(f"Summarized '{article_title}': {article_summary[:100]}...")
                         article_summaries_for_briefing.append(f"Source: {article_title} ({article_url})\nSummary: {article_summary}\n\n")
 
-                        await store_news_summary(topic=topic, url=article_url, summary_text=article_summary)
+                        # await store_news_summary(topic=topic, url=article_url, summary_text=article_summary)
                     else:
                         logger.warning(f"LLM summarization returned no content for '{article_title}'.")
                         article_summaries_for_briefing.append(f"Source: {article_title} ({article_url})\nSummary: [AI summarization failed or returned no content]\n\n")
