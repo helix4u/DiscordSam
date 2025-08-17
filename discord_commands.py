@@ -80,7 +80,7 @@ DEFAULT_RSS_FEEDS = [
     ("Huffpost US News", "https://chaski.huffpost.com/us/auto/vertical/us-news"),
     ("Express.co.uk - US", "https://www.express.co.uk/posts/rss/198/us"),
     ("Time", "https://time.com/feed/"),
-    ("Google News - Ground News", "https://news.google.com/rss/search?q=news+site:ground.news&hl=en-US&gl=US&ceid=US:en"),
+    ("PBS Headlines", "https://www.pbs.org/newshour/feeds/rss/headlines"),
     ("Mother Jones", "https://www.motherjones.com/feed/"),
     ("Quartz", "https://qz.com/rss"),
 ]
@@ -1754,7 +1754,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                                 response = await create_chat_completion(
                                     llm_client_instance,
                                     [{"role": "system", "content": SUMMARY_SYSTEM_PROMPT}, {"role": "user", "content": prompt}],
-                                    model=config.FAST_LLM_MODEL, max_tokens=1024, temperature=0.5,
+                                    model=config.FAST_LLM_MODEL, max_tokens=2048, temperature=1,
                                     logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR, use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
                                 )
                                 summary = extract_text(response, config.FAST_LLM_USE_RESPONSES_API)
