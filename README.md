@@ -518,7 +518,7 @@ DiscordSam offers a variety of slash commands for diverse functionalities. Here'
 *   **`/pruneitems <limit>`**
     *   **Purpose:** Summarizes and prunes the oldest `limit` chat history entries into the timeline summary collection.
     *   **Arguments:** `limit` (Required): Number of oldest entries to process.
-    *   **Output:** An ephemeral message indicating how many documents were pruned.
+    *   **Output:** An ephemeral message indicating how many documents were pruned and displaying the generated summary text.
 
 *   **`/dbcounts`**
     *   **Purpose:** Displays the number of documents stored in each ChromaDB collection.

@@ -2784,9 +2784,11 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
     ):
         await interaction.response.defer(thinking=True, ephemeral=True)
         try:
-            pruned = await prune_oldest_items(limit)
+            pruned, summaries = await prune_oldest_items(limit)
+            summary_text = "\n\n".join(summaries) if summaries else "No summary generated."
             await interaction.followup.send(
-                f"Pruned {pruned} documents from chat history.", ephemeral=True
+                f"Pruned {pruned} documents from chat history.\nSummary:\n{summary_text}",
+                ephemeral=True,
             )
         except Exception as e:
             logger.error(f"Error in pruneitems_slash_command: {e}", exc_info=True)
