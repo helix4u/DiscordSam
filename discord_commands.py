@@ -50,6 +50,7 @@ from utils import (
 )
 from rss_cache import load_seen_entries, save_seen_entries
 from twitter_cache import load_seen_tweet_ids, save_seen_tweet_ids # New import
+from timeline_pruner import prune_oldest_items
 from ground_news_cache import load_seen_links, save_seen_links
 
 logger = logging.getLogger(__name__)
@@ -2774,3 +2775,39 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                  await interaction.response.send_message(f"An unexpected error occurred: {str(error)[:500]}", ephemeral=True)
             else:
                  await interaction.followup.send(f"An unexpected error occurred: {str(error)[:500]}", ephemeral=True)
+
+    @bot_instance.tree.command(name="pruneitems", description="Summarize and prune the oldest N chat history entries.")
+    @app_commands.describe(limit="Number of oldest entries to summarize and prune")
+    async def pruneitems_slash_command(
+        interaction: discord.Interaction,
+        limit: app_commands.Range[int, 1, 1000],
+    ):
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        try:
+            pruned = await prune_oldest_items(limit)
+            await interaction.followup.send(
+                f"Pruned {pruned} documents from chat history.", ephemeral=True
+            )
+        except Exception as e:
+            logger.error(f"Error in pruneitems_slash_command: {e}", exc_info=True)
+            await interaction.followup.send(
+                f"Failed to prune items: {str(e)[:500]}", ephemeral=True
+            )
+
+    @bot_instance.tree.command(name="dbcounts", description="List the number of entries in each ChromaDB collection.")
+    async def dbcounts_slash_command(interaction: discord.Interaction):
+        await interaction.response.defer(thinking=True, ephemeral=True)
+        try:
+            counts = rcm.get_collection_counts()
+            if not counts:
+                await interaction.followup.send(
+                    "No collection data available.", ephemeral=True
+                )
+                return
+            lines = [f"{name}: {count}" for name, count in counts.items()]
+            await interaction.followup.send("\n".join(lines), ephemeral=True)
+        except Exception as e:
+            logger.error(f"Error in dbcounts_slash_command: {e}", exc_info=True)
+            await interaction.followup.send(
+                f"Failed to fetch counts: {str(e)[:500]}", ephemeral=True
+            )

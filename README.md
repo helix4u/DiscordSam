@@ -515,6 +515,16 @@ DiscordSam offers a variety of slash commands for diverse functionalities. Here'
         1.  Calls `BotState.clear_channel_history()` for the current channel ID.
     *   **Output:** An ephemeral message confirming that the short-term history for the channel has been cleared.
 
+*   **`/pruneitems <limit>`**
+    *   **Purpose:** Summarizes and prunes the oldest `limit` chat history entries into the timeline summary collection.
+    *   **Arguments:** `limit` (Required): Number of oldest entries to process.
+    *   **Output:** An ephemeral message indicating how many documents were pruned.
+
+*   **`/dbcounts`**
+    *   **Purpose:** Displays the number of documents stored in each ChromaDB collection.
+    *   **Arguments:** None.
+    *   **Output:** An ephemeral message listing each collection and its count.
+
 ---
 
 ## 9. Running the Bot

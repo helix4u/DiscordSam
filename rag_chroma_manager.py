@@ -1329,3 +1329,31 @@ async def remove_full_conversation_references(pruned_doc_ids: List[str], batch_s
             logger.error(f"An error occurred during reference cleanup in batch starting at offset {offset}: {e}", exc_info=True)
 
     logger.info(f"Completed reference cleanup. Updated {updated_count} distilled document(s).")
+
+
+def get_collection_counts() -> Dict[str, int]:
+    """Return the number of documents in each initialized ChromaDB collection."""
+    if not initialize_chromadb():
+        logger.error("ChromaDB initialization failed")
+        return {}
+
+    collections = {
+        "chat_history": chat_history_collection,
+        "distilled_chat_summary": distilled_chat_summary_collection,
+        "news_summary": news_summary_collection,
+        "rss_summary": rss_summary_collection,
+        "timeline_summary": timeline_summary_collection,
+        "relation": relation_collection,
+        "observation": observation_collection,
+        "tweets": tweets_collection,
+    }
+
+    # Include entity collection if defined
+    entity_coll = globals().get("entity_collection")
+    if entity_coll is not None:
+        collections["entity"] = entity_coll
+
+    counts: Dict[str, int] = {}
+    for name, coll in collections.items():
+        counts[name] = coll.count() if coll else 0
+    return counts
