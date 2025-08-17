@@ -2786,14 +2786,30 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
         try:
             pruned, summaries = await prune_oldest_items(limit)
             summary_text = "\n\n".join(summaries) if summaries else "No summary generated."
-            await interaction.followup.send(
-                f"Pruned {pruned} documents from chat history.\nSummary:\n{summary_text}",
-                ephemeral=True,
-            )
+
+            # Create and send the summary in embeds, chunking if necessary
+            title = f"Pruned {pruned} documents from chat history."
+            if len(summary_text) > 4000: # A bit of buffer for the description
+                chunks = chunk_text(summary_text, 4000)
+                for i, chunk in enumerate(chunks):
+                    embed = discord.Embed(
+                        title=title + (f" (Part {i+1})" if len(chunks) > 1 else ""),
+                        description=chunk,
+                        color=config.EMBED_COLOR["complete"]
+                    )
+                    await interaction.followup.send(embed=embed, ephemeral=True)
+            else:
+                embed = discord.Embed(
+                    title=title,
+                    description=summary_text,
+                    color=config.EMBED_COLOR["complete"]
+                )
+                await interaction.followup.send(embed=embed, ephemeral=True)
+
         except Exception as e:
             logger.error(f"Error in pruneitems_slash_command: {e}", exc_info=True)
             await interaction.followup.send(
-                f"Failed to prune items: {str(e)[:500]}", ephemeral=True
+                f"Failed to prune items: {str(e)[:1900]}", ephemeral=True
             )
 
     @bot_instance.tree.command(name="dbcounts", description="List the number of entries in each ChromaDB collection.")
