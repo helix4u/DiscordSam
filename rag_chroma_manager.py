@@ -272,7 +272,7 @@ Do not include any explanations or conversational text outside the JSON object.
             ],
             model=config.FAST_LLM_MODEL,
             max_tokens=16384,
-            temperature=0.2,
+            temperature=1,
             logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
             use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
             **response_format_arg,
@@ -322,7 +322,7 @@ Do not include any explanations or conversational text outside the JSON object.
                     ],
                     model=config.FAST_LLM_MODEL,
                     max_tokens=8192,
-                    temperature=0.2,
+                    temperature=1,
                     logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
                     use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
                 )
@@ -389,8 +389,8 @@ async def distill_conversation_to_sentence_llm(llm_client: Any, text_to_distill:
                 {"role": "user", "content": prompt}
             ],
             model=config.FAST_LLM_MODEL,
-            max_tokens=2048,
-            temperature=0.5,
+            max_tokens=3072,
+            temperature=1,
             logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
             use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
         )
@@ -433,7 +433,7 @@ async def synthesize_retrieved_contexts_llm(llm_client: Any, retrieved_contexts:
         "a generisized context that will assist Sam's other cognitive components in creating a better informed response for the user "
         "(unless doing timeline summaries, then ignore the above instruction and use the summary prompt). "
         "Be detailed and personal. Do not use <think> tags or metacognition for this.\n\n"
-        f"USER'S CURRENT QUERY:\n---\n{current_query}\n---\n\n"
+        f"{current_date_str}:USER'S CURRENT QUERY:\n---\n{current_query}\n---\n\n"
         f"RETRIEVED MEMORY FRAGMENTS:\n---\n{formatted_snippets}---\n\n"
         "SYNTHESIZED CONTEXT PARAGRAPH (3-8 sentences ideally. Do not use <think> tags or metacognition for this.):"
     )
@@ -447,7 +447,7 @@ async def synthesize_retrieved_contexts_llm(llm_client: Any, retrieved_contexts:
             ],
             model=config.FAST_LLM_MODEL,
             max_tokens=3072,
-            temperature=0.6,
+            temperature=1,
             logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
             use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
         )
@@ -497,7 +497,7 @@ async def merge_memory_snippet_with_summary_llm(
             ],
             model=config.FAST_LLM_MODEL,
             max_tokens=3072,
-            temperature=0.4,
+            temperature=1,
             logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
             use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
         )
