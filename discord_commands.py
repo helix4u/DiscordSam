@@ -229,8 +229,8 @@ async def process_rss_feed(
                     {"role": "user", "content": prompt}
                 ],
                 model=config.FAST_LLM_MODEL,
-                max_tokens=2048,
-                temperature=0.5,
+                max_tokens=3072,
+                temperature=1,
                 logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
                 use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
             )
@@ -358,8 +358,8 @@ async def process_ground_news(
                     {"role": "user", "content": prompt}
                 ],
                 model=config.FAST_LLM_MODEL,
-                max_tokens=2048,
-                temperature=0.5,
+                max_tokens=3072,
+                temperature=1,
                 logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
                 use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
             )
@@ -515,8 +515,8 @@ async def process_ground_news_topic(
                     {"role": "user", "content": prompt}
                 ],
                 model=config.FAST_LLM_MODEL,
-                max_tokens=1024,
-                temperature=0.5,
+                max_tokens=3072,
+                temperature=1,
                 logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
                 use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
             )
@@ -651,8 +651,8 @@ async def describe_image(image_url: str) -> Optional[str]:
             llm_client_instance,
             prompt_messages,
             model=config.VISION_LLM_MODEL,
-            max_tokens=250,
-            temperature=0.3,
+            max_tokens=3072,
+            temperature=1,
             logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
             use_responses_api=config.VISION_LLM_USE_RESPONSES_API,
         )
@@ -1079,8 +1079,8 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                             {"role": "user", "content": summarization_prompt}
                         ],
                         model=config.FAST_LLM_MODEL,
-                        max_tokens=1024,
-                        temperature=0.3,
+                        max_tokens=3072,
+                        temperature=1,
                         logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
                         use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
                     )
@@ -1437,8 +1437,8 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                             {"role": "user", "content": summarization_prompt_search}
                         ],
                         model=config.FAST_LLM_MODEL,
-                        max_tokens=1024,
-                        temperature=0.3,
+                        max_tokens=3072,
+                        temperature=1,
                         logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
                         use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
                     )
@@ -1754,7 +1754,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                                 response = await create_chat_completion(
                                     llm_client_instance,
                                     [{"role": "system", "content": SUMMARY_SYSTEM_PROMPT}, {"role": "user", "content": prompt}],
-                                    model=config.FAST_LLM_MODEL, max_tokens=2048, temperature=1,
+                                    model=config.FAST_LLM_MODEL, max_tokens=3072, temperature=1,
                                     logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR, use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
                                 )
                                 summary = extract_text(response, config.FAST_LLM_USE_RESPONSES_API)
