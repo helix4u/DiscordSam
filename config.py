@@ -167,7 +167,6 @@ class Config:
         self.CHROMA_OBSERVATIONS_COLLECTION_NAME = os.getenv("CHROMA_OBSERVATIONS_COLLECTION_NAME", "observations_collection")
         self.CHROMA_RSS_SUMMARY_COLLECTION_NAME = os.getenv("CHROMA_RSS_SUMMARY_COLLECTION_NAME", "rss_summaries") # New collection for RSS summaries
         self.CHROMA_TWEETS_COLLECTION_NAME = os.getenv("CHROMA_TWEETS_COLLECTION_NAME", "tweets_collection") # New collection for tweets
-        self.CHROMA_PODCAST_SUMMARY_COLLECTION_NAME = os.getenv("CHROMA_PODCAST_SUMMARY_COLLECTION_NAME", "podcast_summaries")
 
         self.USER_PROVIDED_CONTEXT = os.getenv("USER_PROVIDED_CONTEXT", "")
 
@@ -180,7 +179,6 @@ class Config:
         self.ENABLE_MEMORY_MERGE = _get_bool("ENABLE_MEMORY_MERGE", False)
 
         self.NEWS_MAX_LINKS_TO_PROCESS = _get_int("NEWS_MAX_LINKS_TO_PROCESS", 5)
-        self.PODCAST_MAX_EPISODES_TO_PROCESS = _get_int("PODCAST_MAX_EPISODES_TO_PROCESS", 3)
 
         self.TIMELINE_PRUNE_DAYS = _get_int("TIMELINE_PRUNE_DAYS", 30)
 
