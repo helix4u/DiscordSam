@@ -123,3 +123,4 @@ Thumbs.db
 # Agent-generated temporary files
 user_text.txt
 cleaned_text.txt
+chroma_data/

@@ -97,6 +97,86 @@ def _fetch_old_documents(prune_days: int) -> List[Dict[str, Any]]:
         return []
 
 
+def _fetch_oldest_documents_by_count(entry_limit: int) -> List[Dict[str, Any]]:
+    """
+    Fetches all documents from the chat history collection, sorts them by timestamp, and returns the oldest ones up to the entry_limit.
+    """
+    if not rcm.chat_history_collection:
+        logger.warning("Chat history collection unavailable for fetching old documents.")
+        return []
+
+    logger.info(
+        "Fetching all documents to determine the oldest %d entries.", entry_limit
+    )
+
+    try:
+        total = rcm.chat_history_collection.count()
+        if total == 0:
+            logger.info("No documents found in the chat history collection.")
+            return []
+
+        logger.debug(f"Chat history collection has {total} documents. Beginning batch fetch.")
+
+        limit = 100
+        ids: List[str] = []
+        docs: List[str] = []
+        metas: List[Dict[str, Any]] = []
+        for offset in range(0, total, limit):
+            batch = rcm.chat_history_collection.get(
+                limit=limit,
+                offset=offset,
+                include=["documents", "metadatas"],
+            )
+            ids.extend(batch.get("ids", []))
+            docs.extend(batch.get("documents", []))
+            metas.extend(batch.get("metadatas", []))
+
+        if not ids:
+            logger.info("No documents found in the chat history collection after batching.")
+            return []
+
+        logger.info(f"Fetched {len(ids)} total documents across all batches. Parsing timestamps...")
+
+        all_docs: List[Dict[str, Any]] = []
+        for i, doc_id in enumerate(ids):
+            meta = metas[i] if i < len(metas) else {}
+            doc_content = docs[i] if i < len(docs) else ""
+
+            ts_val = meta.get("timestamp") or meta.get("create_time")
+
+            try:
+                if isinstance(ts_val, (int, float)):
+                    ts = datetime.fromtimestamp(ts_val)
+                elif isinstance(ts_val, str):
+                    ts = datetime.fromisoformat(ts_val.replace("Z", "+00:00"))
+                else:
+                    ts = None
+            except (ValueError, TypeError) as e:
+                logger.warning(
+                    "Could not convert timestamp '%s' for document ID %s. Error: %s. Skipping.",
+                    ts_val,
+                    doc_id,
+                    e,
+                )
+                ts = None
+
+            if ts:
+                all_docs.append({"id": doc_id, "document": doc_content, "metadata": meta, "timestamp": ts})
+
+        logger.info(f"Found {len(all_docs)} documents with valid timestamps. Sorting...")
+
+        all_docs.sort(key=lambda x: x["timestamp"])
+
+        oldest_docs = all_docs[:entry_limit]
+
+        logger.info(f"Returning the {len(oldest_docs)} oldest documents for pruning.")
+        return oldest_docs
+
+    except Exception as e:
+        logger.error(f"An error occurred fetching or filtering documents from ChromaDB: {e}", exc_info=True)
+        return []
+
+
 # Removed _group_by_day as we are now grouping by 6-hour blocks directly in prune_and_summarize.
 
 def _store_timeline_summary(start: datetime, end: datetime, summary: str, source_ids: List[str], block_key: str):
@@ -165,28 +245,24 @@ def _get_collection_timestamps(collection) -> List[datetime]:
     return timestamps
 
 
-def print_collection_metrics() -> None:
+def get_collection_metrics_string() -> str:
     if not rcm.initialize_chromadb():
-        logger.error("ChromaDB initialization failed")
-        return
+        return "ChromaDB initialization failed"
 
-    # Ensure rcm (rag_chroma_manager) has its global variables populated if not already
-    # This is usually done by initialize_chromadb(), which is called at the start of print_collection_metrics
+    output_lines = ["--- ChromaDB Collection Metrics ---"]
+
     collections_to_check = [
         ("Chat History", rcm.chat_history_collection),
         ("Distilled Chat Summary", rcm.distilled_chat_summary_collection),
         ("News Summary", rcm.news_summary_collection),
         ("Timeline Summary", rcm.timeline_summary_collection),
-        ("Entity", rcm.entity_collection),
         ("Relation", rcm.relation_collection),
         ("Observation", rcm.observation_collection),
     ]
-    
-    logger.info("--- ChromaDB Collection Metrics ---")
 
-    for name, coll_instance in collections_to_check:  # Renamed 'coll' to 'coll_instance'
+    for name, coll_instance in collections_to_check:
         if not coll_instance:
-            logger.info(
+            output_lines.append(
                 f"Collection '{name}' (variable: rcm.{name.lower().replace(' ', '_')}_collection) unavailable or not initialized."
             )
             continue
@@ -201,17 +277,20 @@ def print_collection_metrics() -> None:
             for ts in timestamps:
                 grouped[ts.strftime("%Y-%m")] += 1
             group_str = ", ".join(f"{m}: {c}" for m, c in sorted(grouped.items()))
-            logger.info(
+            output_lines.append(
                 f"Collection '{name}' has {count} docs. Oldest: {earliest.date()}, latest: {latest.date()}"
             )
-            logger.info(f"    Counts by month: {group_str}")
+            output_lines.append(f"    Counts by month: {group_str}")
         else:
-            logger.info(f"Collection '{name}' has {count} docs (no timestamp metadata found)")
+            output_lines.append(f"Collection '{name}' has {count} docs (no timestamp metadata found)")
+
+    return "\n".join(output_lines)
 
 
 async def prune_and_summarize(prune_days: int = PRUNE_DAYS):
     logger.info("Pruner task invoked.")
     try:
+        rcm.initialize_chromadb()
         # The ChromaDB client is now expected to be initialized by main_bot.py.
         # We just check if the necessary collections are available.
         if not rcm.chat_history_collection or not rcm.timeline_summary_collection:
@@ -346,6 +425,138 @@ async def prune_and_summarize(prune_days: int = PRUNE_DAYS):
         logger.info("Pruner: prune_and_summarize function finished.")
 
 
+async def prune_and_summarize_by_count(entry_limit: int):
+    logger.info("Pruner by count task invoked.")
+    try:
+        rcm.initialize_chromadb()
+        if not rcm.chat_history_collection or not rcm.timeline_summary_collection:
+            logger.error("Pruner by count: One or more ChromaDB collections are not available. Aborting.")
+            return
+
+        logger.info(f"Starting timeline pruning for the oldest {entry_limit} documents.")
+        llm_client = AsyncOpenAI(base_url=config.LOCAL_SERVER_URL, api_key=config.LLM_API_KEY or "lm-studio")
+
+        try:
+            docs = _fetch_oldest_documents_by_count(entry_limit)
+            logger.info(f"Pruner by count: Fetched {len(docs)} documents from the database.")
+        except Exception as e:
+            logger.error(f"Pruner by count: An error occurred while fetching old documents: {e}", exc_info=True)
+            return
+
+        if not docs:
+            logger.info("Pruner by count: No documents found eligible for pruning.")
+            return
+
+        logger.info(f"Pruner by count: Found {len(docs)} documents to potentially prune and summarize.")
+
+        try:
+            docs.sort(key=lambda x: x["timestamp"])
+            logger.debug("Pruner by count: Documents sorted by timestamp.")
+        except (KeyError, TypeError) as e:
+            logger.error(f"Pruner by count: Could not sort documents due to missing or invalid timestamp data: {e}", exc_info=True)
+            return
+
+        current_block_items: List[Dict[str, Any]] = []
+        current_block_start_time: Optional[datetime] = None
+
+        for i, doc in enumerate(docs):
+            logger.debug(f"Pruner by count: Processing document {i+1}/{len(docs)} with ID {doc.get('id', 'N/A')}")
+            doc_ts = doc.get("timestamp")
+            if not isinstance(doc_ts, datetime):
+                logger.warning(f"Pruner by count: Skipping document with invalid or missing timestamp: ID {doc.get('id', 'N/A')}")
+                continue
+
+            if current_block_start_time is None:
+                current_block_start_time = doc_ts
+                current_block_items.append(doc)
+            else:
+                is_same_day = doc_ts.date() == current_block_start_time.date()
+                block_index_start = current_block_start_time.hour // 6
+                block_index_doc = doc_ts.hour // 6
+
+                if not is_same_day or block_index_doc != block_index_start:
+                    if current_block_items:
+                        logger.info(f"Pruner by count: Processing a block of {len(current_block_items)} documents.")
+                        try:
+                            block_start_dt = current_block_items[0]["timestamp"]
+                            block_end_dt = current_block_items[-1]["timestamp"]
+                            block_key_for_id = f"{block_start_dt.strftime('%Y%m%d%H%M%S')}_{block_end_dt.strftime('%Y%m%d%H%M%S')}"
+
+                            texts = [item["document"] for item in current_block_items]
+                            text_pairs = [(t, "timeline_block") for t in texts]
+                            query = (
+                                f"Summarize the included chat history that took place from "
+                                f"{block_start_dt.strftime('%Y-%m-%d %H:%M:%S')} to "
+                                f"{block_end_dt.strftime('%Y-%m-%d %H:%M:%S')} "
+                                f"as a keyword dense narrative focusing on content, date, novel learnings, etc. "
+                                f"Do not state anything about or reference the word snippet, conversation, retrieved, etc. "
+                                f"This is for a RAG db. Keep it clean, but keep all pertinant detail."
+                            )
+                            summary = await rcm.synthesize_retrieved_contexts_llm(
+                                llm_client, text_pairs, query
+                            )
+
+                            if summary:
+                                ids_to_prune = [item["id"] for item in current_block_items]
+                                _store_timeline_summary(block_start_dt, block_end_dt, summary, ids_to_prune, block_key_for_id)
+
+                                if rcm.chat_history_collection:
+                                    rcm.chat_history_collection.delete(ids=ids_to_prune)
+                                    logger.info(f"Pruner by count: Pruned {len(ids_to_prune)} documents for block {block_start_dt.strftime('%Y-%m-%d %H:%M')} - {block_end_dt.strftime('%Y-%m-%d %H:%M')}")
+                                    await rcm.remove_full_conversation_references(ids_to_prune)
+                                else:
+                                    logger.error("Pruner by count: chat_history_collection is None, cannot prune documents.")
+                            else:
+                                logger.warning(f"Pruner by count: No summary generated for block {block_start_dt.strftime('%Y-%m-%d %H:%M')} - {block_end_dt.strftime('%Y-%m-%d %H:%M')}; skipping deletion")
+                        except Exception as e:
+                            logger.error(f"Pruner by count: Failed to process a document block: {e}", exc_info=True)
+
+                    current_block_items = [doc]
+                    current_block_start_time = doc_ts
+                else:
+                    current_block_items.append(doc)
+
+        if current_block_items and current_block_start_time is not None:
+            logger.info(f"Pruner by count: Processing the final block of {len(current_block_items)} documents.")
+            try:
+                block_start_dt = current_block_items[0]["timestamp"]
+                block_end_dt = current_block_items[-1]["timestamp"]
+                block_key_for_id = f"{block_start_dt.strftime('%Y%m%d%H%M%S')}_{block_end_dt.strftime('%Y%m%d%H%M%S')}"
+
+                texts = [item["document"] for item in current_block_items]
+                text_pairs = [(t, "timeline_block") for t in texts]
+                query = (
+                    f"Summarize the included chat history that took place from "
+                    f"{block_start_dt.strftime('%Y-%m-%d %H:%M:%S')} to "
+                    f"{block_end_dt.strftime('%Y-%m-%d %H:%M:%S')} "
+                    f"as a keyword dense narrative focusing on content, date, novel learnings, etc. "
+                    f"Do not state anything about the reference the word snippet, conversation, retrieved, etc. "
+                    f"This is for a RAG db. Keep it clean."
+                )
+                summary = await rcm.synthesize_retrieved_contexts_llm(
+                    llm_client, text_pairs, query
+                )
+
+                if summary:
+                    ids_to_prune = [item["id"] for item in current_block_items]
+                    _store_timeline_summary(block_start_dt, block_end_dt, summary, ids_to_prune, block_key_for_id)
+                    if rcm.chat_history_collection:
+                        rcm.chat_history_collection.delete(ids=ids_to_prune)
+                        logger.info(f"Pruner by count: Pruned {len(ids_to_prune)} documents for final block {block_start_dt.strftime('%Y-%m-%d %H:%M')} - {block_end_dt.strftime('%Y-%m-%d %H:%M')}")
+                        await rcm.remove_full_conversation_references(ids_to_prune)
+                    else:
+                        logger.error("Pruner by count: chat_history_collection is None, cannot prune documents for final block.")
+                else:
+                    logger.warning(f"Pruner by count: No summary generated for final block {block_start_dt.strftime('%Y-%m-%d %H:%M')} - {block_end_dt.strftime('%Y-%m-%d %H:%M')}; skipping deletion")
+            except Exception as e:
+                logger.error(f"Pruner by count: Failed to process the final document block: {e}", exc_info=True)
+
+    except Exception as e:
+        logger.critical(f"Pruner by count: An unexpected critical error occurred in prune_and_summarize_by_count: {e}", exc_info=True)
+    finally:
+        logger.info("Pruner by count: prune_and_summarize_by_count function finished.")
+
+
 def main():
     """Main function to run the pruner from the command line."""
     import argparse
@@ -357,20 +568,30 @@ def main():
     )
 
     parser = argparse.ArgumentParser(description="Summarize and prune old chat history")
-    parser.add_argument("--days", type=int, default=PRUNE_DAYS, help="Prune items older than this many days")
+    parser.add_argument("--days", type=int, default=None, help="Prune items older than this many days")
+    parser.add_argument("--entries", type=int, default=None, help="Prune the oldest X entries.")
     parser.add_argument("--stats", action="store_true", help="Print metrics about ChromaDB collections and exit")
     args = parser.parse_args()
 
     if args.stats:
-        print_collection_metrics()
-    else:
+        print(get_collection_metrics_string())
+    elif args.entries:
+        try:
+            asyncio.run(prune_and_summarize_by_count(args.entries))
+        except KeyboardInterrupt:
+            logger.info("Pruning process interrupted by user.")
+        except Exception as e:
+            logger.critical(f"An unhandled error occurred during pruning by count: {e}", exc_info=True)
+    elif args.days:
         # This is a blocking call that runs the async function and manages the event loop.
         try:
             asyncio.run(prune_and_summarize(args.days))
         except KeyboardInterrupt:
             logger.info("Pruning process interrupted by user.")
         except Exception as e:
-            logger.critical(f"An unhandled error occurred during pruning: {e}", exc_info=True)
+            logger.critical(f"An unhandled error occurred during pruning by days: {e}", exc_info=True)
+    else:
+        logger.info("No action specified. Use --days, --entries, or --stats.")
 
 if __name__ == "__main__":
     # This block is executed only when the script is run directly (e.g., `python timeline_pruner.py`)

@@ -51,6 +51,7 @@ from utils import (
 from rss_cache import load_seen_entries, save_seen_entries
 from twitter_cache import load_seen_tweet_ids, save_seen_tweet_ids # New import
 from ground_news_cache import load_seen_links, save_seen_links
+from timeline_pruner import prune_and_summarize_by_count, get_collection_metrics_string
 
 logger = logging.getLogger(__name__)
 
@@ -1274,7 +1275,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
 
         try:
             webpage_text = await scrape_website(url)
-            if not webpage_text or "Failed to scrape" in webpage_text or "Scraping timed out" in webpage_text:
+            if not webpage_text or "Failed to scrape" in scraped_text or "Scraping timed out" in scraped_text:
                 error_message = f"Sorry, I couldn't properly roast {url}. Reason: {webpage_text or 'Could not retrieve any content from the page.'}"
                 if interaction.channel:
                     progress_message = await safe_message_edit(
@@ -2748,6 +2749,41 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
         except Exception as e:
             logger.error(f"Error in ap_slash_command for image '{image.filename}': {e}", exc_info=True)
             await interaction.edit_original_response(content=f"My camera lens for the AP command seems to be cracked! Error: {str(e)[:1000]}", embed=None)
+
+    @bot_instance.tree.command(name="collection_stats", description="Displays statistics about the document collections.")
+    @app_commands.checks.has_permissions(manage_messages=True)
+    async def collection_stats_slash_command(interaction: discord.Interaction):
+        logger.info(f"Collection stats command initiated by {interaction.user.name}.")
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        try:
+            output = get_collection_metrics_string()
+
+            embed = discord.Embed(
+                title="Collection Statistics",
+                description=f"```{output}```",
+                color=config.EMBED_COLOR["complete"]
+            )
+            await interaction.followup.send(embed=embed, ephemeral=True)
+
+        except Exception as e:
+            logger.error(f"Error getting collection stats: {e}", exc_info=True)
+            await interaction.followup.send(f"An error occurred while getting collection stats: {e}", ephemeral=True)
+
+    @bot_instance.tree.command(name="prune_timeline", description="Manually run the timeline pruner for the oldest X entries.")
+    @app_commands.describe(entries="The number of oldest entries to prune.")
+    @app_commands.checks.has_permissions(manage_messages=True)
+    async def prune_timeline_slash_command(interaction: discord.Interaction, entries: app_commands.Range[int, 1, 1000]):
+        logger.info(f"Prune timeline command initiated by {interaction.user.name} for the oldest {entries} entries.")
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        try:
+            # This is an async function, so we need to await it.
+            await prune_and_summarize_by_count(entry_limit=entries)
+            await interaction.followup.send(f"Timeline pruning and summarization process has been completed for the oldest {entries} entries.", ephemeral=True)
+        except Exception as e:
+            logger.error(f"Error during manual timeline pruning: {e}", exc_info=True)
+            await interaction.followup.send(f"An error occurred during the pruning process: {e}", ephemeral=True)
 
     @bot_instance.tree.command(name="clearhistory", description="Clears the bot's short-term message history for this channel.")
     @app_commands.checks.has_permissions(manage_messages=True)
