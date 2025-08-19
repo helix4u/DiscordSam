@@ -30,6 +30,7 @@ timeline_summary_collection: Optional[chromadb.Collection] = None
 relation_collection: Optional[chromadb.Collection] = None
 observation_collection: Optional[chromadb.Collection] = None
 tweets_collection: Optional[chromadb.Collection] = None # New collection for tweets
+podcast_summary_collection: Optional[chromadb.Collection] = None
 
 
 def _parse_json_with_recovery(content: str) -> Optional[Dict[str, Any]]:
@@ -130,7 +131,7 @@ def _parse_relative_date_range(query: str) -> Optional[Tuple[datetime, datetime]
 def initialize_chromadb() -> bool:
     global chroma_client, chat_history_collection, distilled_chat_summary_collection, \
            news_summary_collection, rss_summary_collection, timeline_summary_collection, \
-           relation_collection, observation_collection, tweets_collection # Added tweets_collection
+           relation_collection, observation_collection, tweets_collection, podcast_summary_collection
 
     if chroma_client:
         logger.debug("ChromaDB already initialized.")
@@ -163,6 +164,9 @@ def initialize_chromadb() -> bool:
         logger.info(f"Getting or creating ChromaDB collection: {config.CHROMA_TWEETS_COLLECTION_NAME}") # New
         tweets_collection = chroma_client.get_or_create_collection(name=config.CHROMA_TWEETS_COLLECTION_NAME) # New
 
+        logger.info(f"Getting or creating ChromaDB collection: {config.CHROMA_PODCAST_SUMMARY_COLLECTION_NAME}")
+        podcast_summary_collection = chroma_client.get_or_create_collection(name=config.CHROMA_PODCAST_SUMMARY_COLLECTION_NAME)
+
         logger.info(
             f"ChromaDB initialized successfully. Collections: "
             f"'{config.CHROMA_COLLECTION_NAME}', "
@@ -172,7 +176,8 @@ def initialize_chromadb() -> bool:
             f"'{config.CHROMA_TIMELINE_SUMMARY_COLLECTION_NAME}', "
             f"'{config.CHROMA_RELATIONS_COLLECTION_NAME}', "
             f"'{config.CHROMA_OBSERVATIONS_COLLECTION_NAME}', "
-            f"'{config.CHROMA_TWEETS_COLLECTION_NAME}'." # New
+            f"'{config.CHROMA_TWEETS_COLLECTION_NAME}', "
+            f"'{config.CHROMA_PODCAST_SUMMARY_COLLECTION_NAME}'."
         )
         return True
     except Exception as e:
@@ -186,6 +191,7 @@ def initialize_chromadb() -> bool:
         relation_collection = None
         observation_collection = None
         tweets_collection = None # New
+        podcast_summary_collection = None
         return False
 
 async def extract_structured_data_llm(
@@ -563,6 +569,7 @@ async def retrieve_and_prepare_rag_context(
         collections_to_search = [
             ("rss", rss_summary_collection),
             ("tweets", tweets_collection),
+            ("podcast", podcast_summary_collection),
             # ("news", news_summary_collection),
             ("timeline", timeline_summary_collection),
             ("chat_history", chat_history_collection),
@@ -711,6 +718,7 @@ async def retrieve_and_prepare_rag_context(
             # ("news", news_summary_collection),
             ("rss", rss_summary_collection),
             ("tweets", tweets_collection), # New
+            ("podcast", podcast_summary_collection),
             ("relation", relation_collection),
             ("observation", observation_collection),
         ]
@@ -1273,6 +1281,38 @@ async def store_rss_summary(feed_url: str, article_url: str, title: str, summary
         logger.error(f"Failed to store RSS summary for article {article_url} from feed {feed_url}: {e}", exc_info=True)
         return False
 
+async def store_podcast_summary(feed_url: str, episode_url: str, title: str, summary_text: str, timestamp: Optional[datetime] = None) -> bool:
+    if not chroma_client or not podcast_summary_collection:
+        logger.warning("ChromaDB podcast summary collection not available, skipping storage.")
+        return False
+
+    timestamp = timestamp or datetime.now()
+    url_hash_part = uuid4().hex[:8]
+    doc_id = f"podcast_{int(timestamp.timestamp())}_{url_hash_part}_{random.randint(1000,9999)}"
+
+    metadata = {
+        "feed_url": feed_url,
+        "episode_url": episode_url,
+        "title": title,
+        "timestamp": timestamp.isoformat(),
+        "type": "podcast_summary"
+    }
+
+    try:
+        await asyncio.to_thread(
+            podcast_summary_collection.add,
+            documents=[summary_text],
+            metadatas=[metadata],
+            ids=[doc_id],
+        )
+        logger.info(
+            f"Stored podcast summary (ID: {doc_id}) for episode '{title}' from feed '{feed_url}' (episode URL: '{episode_url}') in '{config.CHROMA_PODCAST_SUMMARY_COLLECTION_NAME}'."
+        )
+        return True
+    except Exception as e:
+        logger.error(f"Failed to store podcast summary for episode {episode_url} from feed {feed_url}: {e}", exc_info=True)
+        return False
+
 async def remove_full_conversation_references(pruned_doc_ids: List[str], batch_size: int = 100):
     """
     Finds distilled summaries linked to pruned full conversations and removes the linking metadata.
@@ -1346,6 +1386,7 @@ def get_collection_counts() -> Dict[str, int]:
         "relation": relation_collection,
         "observation": observation_collection,
         "tweets": tweets_collection,
+        "podcast_summary": podcast_summary_collection,
     }
 
     # Include entity collection if defined
