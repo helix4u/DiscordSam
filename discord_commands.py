@@ -23,7 +23,7 @@ from rag_chroma_manager import (
     retrieve_and_prepare_rag_context,
     parse_chatgpt_export,
     store_chatgpt_conversations_in_chromadb,
-    store_podcast_summary,
+    
     store_rss_summary,  # New import
     ingest_conversation_to_chromadb,
 )
@@ -40,7 +40,7 @@ from web_utils import (
 )
 from openai_api import create_chat_completion, extract_text
 from logit_biases import LOGIT_BIAS_UNWANTED_TOKENS_STR
-from audio_utils import send_tts_audio, transcribe_audio_file
+from audio_utils import send_tts_audio
 from utils import (
     parse_time_string_to_delta,
     chunk_text,
@@ -83,11 +83,6 @@ DEFAULT_RSS_FEEDS = [
     ("PBS Headlines", "https://www.pbs.org/newshour/feeds/rss/headlines"),
     ("Mother Jones", "https://www.motherjones.com/feed/"),
     ("Quartz", "https://qz.com/rss"),
-]
-
-DEFAULT_PODCAST_FEEDS = [
-    ("The Daily", "https://feeds.simplecast.com/54nAGcIl"),
-    ("NPR Up First", "https://feeds.npr.org/510318/podcast.xml"),
 ]
 
 # Default Twitter users for the /gettweets command dropdown
@@ -2834,168 +2829,3 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             await interaction.followup.send(
                 f"Failed to fetch counts: {str(e)[:500]}", ephemeral=True
             )
-
-    @bot_instance.tree.command(name="podcast", description="Fetches new episodes from a podcast feed and summarizes them.")
-    @app_commands.describe(
-        feed_url="Choose a preset podcast feed URL.",
-        feed_url_manual="Or, enter a podcast feed URL manually.",
-        limit="Number of new episodes to fetch (max 5)."
-    )
-    @app_commands.choices(
-        feed_url=[
-            app_commands.Choice(name=name, value=url)
-            for name, url in DEFAULT_PODCAST_FEEDS
-        ]
-    )
-    async def podcast_slash_command(
-        interaction: discord.Interaction,
-        feed_url: Optional[str] = None,
-        feed_url_manual: Optional[str] = None,
-        limit: app_commands.Range[int, 1, 5] = 1,
-    ):
-        if not all([llm_client_instance, bot_state_instance, bot_instance, bot_instance.user]):
-            logger.error("podcast_slash_command: One or more bot components are None.")
-            await interaction.response.send_message("Bot components not ready. Cannot fetch podcast.", ephemeral=True)
-            return
-
-        final_feed_url = feed_url_manual if feed_url_manual else feed_url
-        if not final_feed_url:
-            await interaction.response.send_message(
-                "Please either select a preset podcast feed or manually enter a URL.",
-                ephemeral=True
-            )
-            return
-
-        logger.info(f"Podcast command initiated by {interaction.user.name} for {final_feed_url}, limit {limit}.")
-        if interaction.channel_id is None:
-            await interaction.response.send_message("Error: This command must be used in a channel.", ephemeral=True)
-            return
-
-        await interaction.response.defer(ephemeral=False)
-        progress_message = await interaction.followup.send(content=f"Fetching podcast feed: {final_feed_url}...")
-
-        try:
-            seen = load_seen_entries()
-            seen_ids = set(seen.get(final_feed_url, []))
-
-            entries = await fetch_rss_entries(final_feed_url)
-            new_entries = [e for e in entries if e.get("guid") not in seen_ids]
-
-            if not new_entries:
-                await progress_message.edit(content=f"No new episodes found for {final_feed_url}.")
-                return
-
-            to_process = new_entries[:limit]
-            summaries: List[str] = []
-
-            for idx, ent in enumerate(to_process, 1):
-                title = ent.get("title") or "Untitled"
-                pub_date_dt: Optional[datetime] = ent.get("pubDate_dt")
-                pub_date = (
-                    pub_date_dt.astimezone().strftime("%Y-%m-%d %H:%M %Z")
-                    if pub_date_dt
-                    else (ent.get("pubDate") or "")
-                )
-                link = ent.get("link") or ""
-                guid = ent.get("guid") or link
-
-                audio_url = None
-                if ent.get('enclosures'):
-                    for enclosure in ent['enclosures']:
-                        if enclosure.get('type', '').startswith('audio/'):
-                            audio_url = enclosure.get('href')
-                            break
-
-                if not audio_url:
-                    summaries.append(f"**{title}**\n{pub_date}\n{link}\nCould not find audio enclosure for this episode.\n")
-                    seen_ids.add(guid)
-                    continue
-
-                await progress_message.edit(content=f"Downloading episode {idx}/{len(to_process)}: {title}...")
-
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(audio_url) as resp:
-                        if resp.status != 200:
-                            summaries.append(f"**{title}**\n{pub_date}\n{link}\nFailed to download audio.\n")
-                            seen_ids.add(guid)
-                            continue
-                        audio_data = await resp.read()
-
-                # Save audio to a temporary file
-                temp_dir = "temp_audio"
-                os.makedirs(temp_dir, exist_ok=True)
-                temp_file_path = os.path.join(temp_dir, f"{interaction.id}_{idx}.mp3")
-                with open(temp_file_path, "wb") as f:
-                    f.write(audio_data)
-
-                await progress_message.edit(content=f"Transcribing episode {idx}/{len(to_process)}: {title}...")
-
-                transcribed_text = await asyncio.to_thread(transcribe_audio_file, temp_file_path)
-
-                os.remove(temp_file_path)
-
-                if not transcribed_text:
-                    summaries.append(f"**{title}**\n{pub_date}\n{link}\nCould not transcribe audio.\n")
-                    seen_ids.add(guid)
-                    continue
-
-                await progress_message.edit(content=f"Summarizing episode {idx}/{len(to_process)}: {title}...")
-
-                prompt = (
-                    "Summarize the following podcast transcript in 5-7 sentences. "
-                    "Focus on the main topics and key takeaways. Present in a clear and concise manner.\n\n"
-                    f"Title: {title}\n\n{transcribed_text[:config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT]}"
-                )
-
-                try:
-                    response = await create_chat_completion(
-                        llm_client_instance,
-                        [
-                            {"role": "system", "content": "You are an expert podcast summarizer."},
-                            {"role": "user", "content": prompt}
-                        ],
-                        model=config.FAST_LLM_MODEL,
-                        max_tokens=3072,
-                        temperature=1,
-                        logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
-                        use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
-                    )
-                    summary = extract_text(
-                        response, config.FAST_LLM_USE_RESPONSES_API
-                    )
-                    if summary and summary != "[LLM summarization failed]":
-                        await store_podcast_summary(
-                            feed_url=final_feed_url,
-                            episode_url=link,
-                            title=title,
-                            summary_text=summary,
-                            timestamp=datetime.now(),
-                        )
-                except Exception as e_summ:
-                    logger.error(f"LLM summarization failed for {link}: {e_summ}")
-                    summary = "[LLM summarization failed]"
-
-                summaries.append(f"**{title}**\n{pub_date}\n{link}\n{summary}\n")
-                seen_ids.add(guid)
-
-            seen[final_feed_url] = list(seen_ids)
-            save_seen_entries(seen)
-
-            combined = "\n\n".join(summaries)
-            chunks = chunk_text(combined, config.EMBED_MAX_LENGTH)
-            for i, chunk in enumerate(chunks):
-                embed = discord.Embed(
-                    title=f"Podcast Summaries for {final_feed_url}" + ("" if i == 0 else f" (cont. {i+1})"),
-                    description=chunk,
-                    color=config.EMBED_COLOR["complete"],
-                )
-                if i == 0:
-                    await progress_message.edit(content=None, embed=embed)
-                else:
-                    await interaction.followup.send(embed=embed)
-
-            await send_tts_audio(interaction, combined, base_filename=f"podcast_{interaction.id}")
-
-        except Exception as e:
-            logger.error(f"Error in podcast_slash_command for {final_feed_url}: {e}", exc_info=True)
-            await interaction.followup.send(content=f"Failed to process podcast feed. Error: {str(e)[:500]}")

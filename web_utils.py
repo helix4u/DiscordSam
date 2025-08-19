@@ -763,10 +763,6 @@ async def fetch_rss_entries(feed_url: str) -> List[Dict[str, Any]]:
             raw_title = it.findtext("title") or ""
             title = html.unescape(raw_title).replace("\xa0", " ").strip()
 
-            enclosures = []
-            for enclosure in it.findall("enclosure"):
-                enclosures.append(enclosure.attrib)
-
             entries.append({
                 "title": title,
                 "link": link_url,
@@ -774,7 +770,6 @@ async def fetch_rss_entries(feed_url: str) -> List[Dict[str, Any]]:
                 "pubDate": pub_date_str,
                 "pubDate_dt": pub_date_dt,
                 "description": it.findtext("description") or "",
-                "enclosures": enclosures,
             })
         return entries
     except Exception as e:
