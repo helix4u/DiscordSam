@@ -206,13 +206,13 @@ async def extract_structured_data_llm(
 
     system_prompt = (
         "You are an expert data extraction system. Your task is to analyze the provided text "
-        "and extract entities, relations between those entities, and key observations or facts. "
+        "and extract relations between entities, and key observations or facts. "
         "Format your output as a single JSON object with three top-level keys: "
-        "'entities', 'relations', and 'observations'."
+        "'relations', and 'observations'."
     )
 
     user_prompt_template = """\
-Please extract entities, relations, and observations from the following text.
+Please extract relations, and observations from the following text.
 Pay close attention to the most recent interactions (user query and assistant response),
 typically found towards the end of the text, as they are of high importance for extraction.
 
@@ -224,13 +224,6 @@ TEXT TO ANALYZE:
 OUTPUT JSON STRUCTURE:
 Your output MUST be a single, valid JSON object.
 {{
-  "entities": [
-    {{
-      "name": "string (normalized name of the entity)",
-      "type": "string (e.g., Person, Organization, Location, Concept, Technology, Product, Event, Other)",
-      "text_span": "[integer, integer] (optional start and end character offset in the original text)"
-    }}
-  ],
   "relations": [
     {{
       "subject_name": "string (name of the subject entity, must match an entity in the 'entities' list)",
@@ -249,7 +242,6 @@ Your output MUST be a single, valid JSON object.
   ]
 }}
 
-Ensure all entity names in 'relations' and 'observations' correspond to entities defined in the 'entities' list.
 If no specific data can be extracted for a category (e.g. no relations found), provide an empty list for that category.
 Do not include any explanations or conversational text outside the JSON object.
 """
@@ -294,8 +286,7 @@ Do not include any explanations or conversational text outside the JSON object.
                 logger.error(f"extract_structured_data_llm: Failed to decode JSON from LLM response for {source_doc_id}. Content: {raw_content[:500]}")
                 return None
             if not isinstance(extracted_data, dict) or \
-               not all(key in extracted_data for key in ["entities", "relations", "observations"]) or \
-               not isinstance(extracted_data["entities"], list) or \
+               not all(key in extracted_data for key in ["relations", "observations"]) or \
                not isinstance(extracted_data["relations"], list) or \
                not isinstance(extracted_data["observations"], list):
                 logger.warning(f"extract_structured_data_llm: LLM response for {source_doc_id} was not the expected dict structure. Content: {raw_content[:500]}")
@@ -303,7 +294,6 @@ Do not include any explanations or conversational text outside the JSON object.
 
             logger.info(
                 f"Successfully extracted structured data for {source_doc_id}: "
-                f"{len(extracted_data['entities'])} entities, "
                 f"{len(extracted_data['relations'])} relations, "
                 f"{len(extracted_data['observations'])} observations."
             )
