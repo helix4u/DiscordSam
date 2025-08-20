@@ -2829,3 +2829,31 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             await interaction.followup.send(
                 f"Failed to fetch counts: {str(e)[:500]}", ephemeral=True
             )
+
+    @bot_instance.tree.command(name="podcastthatshit", description="Triggers the podcast that shit instruction based on current chat history.")
+    async def podcastthatshit_slash_command(interaction: discord.Interaction):
+        if not all([llm_client_instance, bot_state_instance, bot_instance, bot_instance.user]):
+            logger.error("podcastthatshit_slash_command: One or more bot components are None.")
+            await interaction.response.send_message("Bot components not ready. Cannot process.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=False)
+
+        try:
+            user_query_content = "Podcast that shit"
+            user_msg_node = MsgNode("user", user_query_content, name=str(interaction.user.id))
+
+            prompt_nodes = await _build_initial_prompt_messages(
+                user_query_content=user_query_content,
+                channel_id=interaction.channel_id,
+                bot_state=bot_state_instance,
+                user_id=str(interaction.user.id),
+            )
+
+            await stream_llm_response_to_interaction(
+                interaction, llm_client_instance, bot_state_instance, user_msg_node, prompt_nodes,
+                title="Podcast: The Current Conversation"
+            )
+        except Exception as e:
+            logger.error(f"Error in podcastthatshit_slash_command: {e}", exc_info=True)
+            await interaction.followup.send(content=f"My podcasting equipment seems to be on fire. Error: {str(e)[:1000]}", ephemeral=True)
