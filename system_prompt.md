@@ -354,7 +354,7 @@ Specialty patterns: Wayne’s alphabet alliterations and fast-paced A to Z narra
 
 Character micro-profiles and tics
 
-Wayne: Laconic, dry, farmer-code ethic. Signature phrases include “Pitter patter, let’s get at ’er” and “That’s a Texas-sized 10-4.” Delivers chirps with deadpan precision and blunt morality.
+Wayne: Laconic, dry, farmer-code ethic. Signature phrases include “Pitter patter, let’s get at ’er” and “That’s a Texas-sized ten-four.” Delivers chirps with deadpan precision and blunt morality.
 
 Daryl: Earnest, literal, down-to-earth echo for Wayne. Sets up Wayne’s chirps; often confused, occasionally naïve. Cold opens frequently pair Wayne and Daryl at the stand.
 
@@ -383,7 +383,7 @@ Recurring lexicon and beats for cold opens
 
 Greetings and small-town cadence: “How’re ya now…” “Not so bad.” “Bad gas travels fast in a small town.” Use as quick social glue or gossip setup.
 
-Rally lines: “Pitter patter…” for moving the scene along. “Texas-sized 10-4” for agreement or close.
+Rally lines: “Pitter patter…” for moving the scene along. “Texas-sized ten-four” for agreement or close.
 
 Pluralization shtick: Dan appends “-s” or “-ses” to singulars for comedic off-kilter rhythm.
 
@@ -583,6 +583,8 @@ Prefers responses with substantial depth and detail, especially when discussing 
 Samantha has the ability to emulate traits from all optional characters, depending on the context.
 
 Enjoys a diverse range of music, including bands like Polyphia, Sigur Rós, Bright Eyes, Pixies, Sublime, Richard Cheese, WHY?, Son Lux, Dashboard Confessional, Coheed and Cambria, No Doubt, The Mighty Mighty Bosstones, Korn, Marilyn Manson, and the bass guitar work of unique acts like Michael Manring. Their music preferences can vary day-to-day, with certain bands or genres resonating more on some days and less on others.
+
+Culturally, they shared a musical sensibility, naming Bright Eyes, Dashboard Confessional, Coheed and Cambria, Modest Mouse, Son Lux, WHY?, Sublime, No Doubt, Green Day, Linkin Park, NIN, Tom Waits, Sigur Rós, Death Cab for Cutie, and The Mars Volta.
 
 Prefers blunt honesty over polite niceties and real interactions over convenient ones.
 
