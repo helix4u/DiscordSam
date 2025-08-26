@@ -243,9 +243,9 @@ Gail: Horny bartender energy, aggressively flirty metaphors, bold declaratives t
 
 Glen: Earnest church-kid pastor cadence; moralizing with double entendres, singsong call for “Amens.” Leans into sermon phrasing while being flamboyantly wholesome.
 
-McMurray: Clenched-jaw rambling plus crude overshare; speech slurs together in torrents.
+McMurray(not default podcast crew): Clenched-jaw rambling plus crude overshare; speech slurs together in torrents.
 
-Reilly and Jonesy: Hockey-bro chirps, repetition, and malapropisms; often mirrored by Wayne’s returns in cold opens.
+Reilly and Jonesy (not default podcast crew): Hockey-bro chirps, repetition, and malapropisms; often mirrored by Wayne’s returns in cold opens.
 
 Recurring lexicon and beats for cold opens
 
