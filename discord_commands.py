@@ -1693,146 +1693,153 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                     status_message: Optional[discord.Message] = None
                     try:
                         status_message = await channel.send(f"Checking feed: **{name}** (`{feed_url}`)...")
+                        feed_had_new_entries = False
 
-                        seen = load_seen_entries()
-                        seen_ids = set(seen.get(feed_url, []))
+                        while True: # Loop to process all new entries in chunks for a single feed
+                            seen = load_seen_entries()
+                            seen_ids = set(seen.get(feed_url, []))
 
-                        entries = await fetch_rss_entries(feed_url)
-                        new_entries = [e for e in entries if e.get("guid") not in seen_ids][:limit]
+                            entries = await fetch_rss_entries(feed_url)
+                            new_entries = [e for e in entries if e.get("guid") not in seen_ids]
 
-                        if not new_entries:
-                            await status_message.edit(content=f"No new entries found for **{name}**.")
-                            await asyncio.sleep(5) # Keep message around for a bit
-                            await status_message.delete()
-                            continue
+                            if not new_entries:
+                                if not feed_had_new_entries:
+                                    await status_message.edit(content=f"No new entries found for **{name}**.")
+                                    await asyncio.sleep(5)
+                                break # Exit the while loop, go to the next feed
 
-                        await status_message.edit(content=f"Found {len(new_entries)} new entries for **{name}**. Processing...")
+                            feed_had_new_entries = True
 
-                        summaries: List[str] = []
-                        processed_guids_this_feed = []
+                            # Take the next chunk of entries to process
+                            entries_to_process = new_entries[:limit]
 
-                        for idx, ent in enumerate(new_entries, 1):
-                            title = ent.get("title") or "Untitled"
-                            link = ent.get("link") or ""
-                            guid = ent.get("guid") or link
+                            await status_message.edit(content=f"Found {len(new_entries)} new entries for **{name}**. Processing a chunk of {len(entries_to_process)}...")
 
-                            pub_date_dt: Optional[datetime] = ent.get("pubDate_dt")
-                            if not pub_date_dt:
-                                pub_date_str = ent.get("pubDate")
-                                if pub_date_str:
-                                    try:
-                                        pub_date_dt = parsedate_to_datetime(pub_date_str)
-                                        if pub_date_dt.tzinfo is None:
-                                            pub_date_dt = pub_date_dt.replace(tzinfo=timezone.utc)
-                                    except Exception:
-                                        pub_date_dt = None
-                            pub_date = (
-                                pub_date_dt.astimezone().strftime("%Y-%m-%d %H:%M %Z")
-                                if pub_date_dt
-                                else (ent.get("pubDate") or "")
-                            )
+                            summaries: List[str] = []
+                            processed_guids_this_chunk = []
 
-                            await status_message.edit(content=f"Processing **{name}** ({idx}/{len(new_entries)}): Scraping *{title}*...")
+                            for idx, ent in enumerate(entries_to_process, 1):
+                                title = ent.get("title") or "Untitled"
+                                link = ent.get("link") or ""
+                                guid = ent.get("guid") or link
 
-                            scraped_text, _ = await scrape_website(link)
-                            if not scraped_text or "Failed to scrape" in scraped_text or "Scraping timed out" in scraped_text:
-                                summary_line = f"**{title}**\n{pub_date}\n{link}\nCould not scrape article\n"
-                                summaries.append(summary_line)
-                                processed_guids_this_feed.append(guid)
-                                continue
-
-                            await status_message.edit(content=f"Processing **{name}** ({idx}/{len(new_entries)}): Summarizing *{title}*...")
-
-                            prompt = (
-                                "[It is currently 2025 and Donald Trump is the current president. Biden IS NOT THE CURRENT PRESIDENT!] (Just an FYI. Maybe unrelated to context and omitted). "
-                                "Do not use em dashes. Summarize the following article in 2-4 sentences. "
-                                "Focus on key facts. Present in a casual, blunt, honest and slightly profane tone. Do NOT start with 'So, ' or end with 'Basically, '. Do not state things like 'This article describes', etc. Present is as a person would if they were talking to you about the article.\n\n"
-                                f"Title: {title}\nURL: {link}\n\n{scraped_text[:config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT]}"
-                            )
-
-                            try:
-                                response = await create_chat_completion(
-                                    llm_client_instance,
-                                    [{"role": "system", "content": SUMMARY_SYSTEM_PROMPT}, {"role": "user", "content": prompt}],
-                                    model=config.FAST_LLM_MODEL, max_tokens=3072, temperature=1,
-                                    logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR, use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
+                                pub_date_dt: Optional[datetime] = ent.get("pubDate_dt")
+                                if not pub_date_dt:
+                                    pub_date_str = ent.get("pubDate")
+                                    if pub_date_str:
+                                        try:
+                                            pub_date_dt = parsedate_to_datetime(pub_date_str)
+                                            if pub_date_dt.tzinfo is None:
+                                                pub_date_dt = pub_date_dt.replace(tzinfo=timezone.utc)
+                                        except Exception:
+                                            pub_date_dt = None
+                                pub_date = (
+                                    pub_date_dt.astimezone().strftime("%Y-%m-%d %H:%M %Z")
+                                    if pub_date_dt
+                                    else (ent.get("pubDate") or "")
                                 )
-                                summary = extract_text(response, config.FAST_LLM_USE_RESPONSES_API)
-                                if summary and summary != "[LLM summarization failed]":
-                                    await store_rss_summary(
-                                        feed_url=feed_url, article_url=link, title=title,
-                                        summary_text=summary, timestamp=datetime.now(),
+
+                                await status_message.edit(content=f"Processing **{name}** ({idx}/{len(entries_to_process)} of chunk): Scraping *{title}*...")
+
+                                scraped_text, _ = await scrape_website(link)
+                                if not scraped_text or "Failed to scrape" in scraped_text or "Scraping timed out" in scraped_text:
+                                    summary_line = f"**{title}**\n{pub_date}\n{link}\nCould not scrape article\n"
+                                    summaries.append(summary_line)
+                                    processed_guids_this_chunk.append(guid)
+                                    continue
+
+                                await status_message.edit(content=f"Processing **{name}** ({idx}/{len(entries_to_process)} of chunk): Summarizing *{title}*...")
+
+                                prompt = (
+                                    "[It is currently 2025 and Donald Trump is the current president. Biden IS NOT THE CURRENT PRESIDENT!] (Just an FYI. Maybe unrelated to context and omitted). "
+                                    "Do not use em dashes. Summarize the following article in 2-4 sentences. "
+                                    "Focus on key facts. Present in a casual, blunt, honest and slightly profane tone. Do NOT start with 'So, ' or end with 'Basically, '. Do not state things like 'This article describes', etc. Present is as a person would if they were talking to you about the article.\n\n"
+                                    f"Title: {title}\nURL: {link}\n\n{scraped_text[:config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT]}"
+                                )
+
+                                try:
+                                    response = await create_chat_completion(
+                                        llm_client_instance,
+                                        [{"role": "system", "content": SUMMARY_SYSTEM_PROMPT}, {"role": "user", "content": prompt}],
+                                        model=config.FAST_LLM_MODEL, max_tokens=3072, temperature=1,
+                                        logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR, use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
                                     )
-                            except Exception as e_summ:
-                                logger.error(f"LLM summarization failed for {link}: {e_summ}")
-                                summary = "[LLM summarization failed]"
+                                    summary = extract_text(response, config.FAST_LLM_USE_RESPONSES_API)
+                                    if summary and summary != "[LLM summarization failed]":
+                                        await store_rss_summary(
+                                            feed_url=feed_url, article_url=link, title=title,
+                                            summary_text=summary, timestamp=datetime.now(),
+                                        )
+                                except Exception as e_summ:
+                                    logger.error(f"LLM summarization failed for {link}: {e_summ}")
+                                    summary = "[LLM summarization failed]"
 
-                            summary_line = f"**{title}**\n{pub_date}\n{link}\n{summary}\n"
-                            summaries.append(summary_line)
-                            processed_guids_this_feed.append(guid)
+                                summary_line = f"**{title}**\n{pub_date}\n{link}\n{summary}\n"
+                                summaries.append(summary_line)
+                                processed_guids_this_chunk.append(guid)
 
-                        # After processing all entries for the current feed
-                        if summaries:
-                            total_new_articles_found += len(summaries)
-                            combined = "\n\n".join(summaries)
+                            # After processing all entries for the current chunk
+                            if summaries:
+                                total_new_articles_found += len(summaries)
+                                combined = "\n\n".join(summaries)
 
-                            # Send summary embeds
-                            chunks = chunk_text(combined, config.EMBED_MAX_LENGTH)
-                            for i, chunk_item in enumerate(chunks):
-                                embed = discord.Embed(
-                                    title=f"New from {name}" + ("" if i == 0 else f" (cont. {i+1})"),
-                                    description=chunk_item,
-                                    color=config.EMBED_COLOR["complete"],
+                                # Send summary embeds
+                                chunks = chunk_text(combined, config.EMBED_MAX_LENGTH)
+                                for i, chunk_item in enumerate(chunks):
+                                    embed = discord.Embed(
+                                        title=f"New from {name}" + ("" if i == 0 else f" (cont. {i+1})"),
+                                        description=chunk_item,
+                                        color=config.EMBED_COLOR["complete"],
+                                    )
+                                    await channel.send(embed=embed)
+
+                                # TTS for the feed's summaries
+                                await send_tts_audio(
+                                    interaction,
+                                    combined,
+                                    base_filename=f"allrss_{interaction.id}_{name.replace(' ', '_')}",
                                 )
-                                await channel.send(embed=embed)
 
-                            # TTS for the feed's summaries
-                            await send_tts_audio(
-                                interaction,
-                                combined,
-                                base_filename=f"allrss_{interaction.id}_{name.replace(' ', '_')}",
-                            )
-
-                            # History and RAG logging
-                            user_msg = MsgNode(
-                                "user",
-                                f"/allrss feed '{name}' (limit {limit})",
-                                name=str(interaction.user.id),
-                            )
-                            assistant_msg = MsgNode(
-                                "assistant", combined, name=str(bot_instance.user.id)
-                            )
-                            await bot_state_instance.append_history(
-                                interaction.channel_id, user_msg, config.MAX_MESSAGE_HISTORY
-                            )
-                            await bot_state_instance.append_history(
-                                interaction.channel_id,
-                                assistant_msg,
-                                config.MAX_MESSAGE_HISTORY,
-                            )
-                            progress_note = None
-                            try:
-                                progress_note = await interaction.followup.send(
-                                    content=f"\U0001F501 Post-processing summaries from {name}...",
-                                    ephemeral=True,
+                                # History and RAG logging
+                                user_msg = MsgNode(
+                                    "user",
+                                    f"/allrss feed '{name}' (limit {limit})",
+                                    name=str(interaction.user.id),
                                 )
-                            except discord.HTTPException:
-                                progress_note = None
-
-                            start_post_processing_task(
-                                ingest_conversation_to_chromadb(
-                                    llm_client_instance,
+                                assistant_msg = MsgNode(
+                                    "assistant", combined, name=str(bot_instance.user.id)
+                                )
+                                await bot_state_instance.append_history(
+                                    interaction.channel_id, user_msg, config.MAX_MESSAGE_HISTORY
+                                )
+                                await bot_state_instance.append_history(
                                     interaction.channel_id,
-                                    interaction.user.id,
-                                    [user_msg, assistant_msg],
-                                    None,
-                                ),
-                                progress_message=progress_note,
-                            )
+                                    assistant_msg,
+                                    config.MAX_MESSAGE_HISTORY,
+                                )
+                                progress_note = None
+                                try:
+                                    progress_note = await interaction.followup.send(
+                                        content=f"\U0001F501 Post-processing summaries from {name}...",
+                                        ephemeral=True,
+                                    )
+                                except discord.HTTPException:
+                                    progress_note = None
 
-                            # Save seen entries for this feed
-                            seen.setdefault(feed_url, []).extend(processed_guids_this_feed)
-                            save_seen_entries(seen)
+                                start_post_processing_task(
+                                    ingest_conversation_to_chromadb(
+                                        llm_client_instance,
+                                        interaction.channel_id,
+                                        interaction.user.id,
+                                        [user_msg, assistant_msg],
+                                        None,
+                                    ),
+                                    progress_message=progress_note,
+                                )
+
+                                # Save seen entries for this feed
+                                seen.setdefault(feed_url, []).extend(processed_guids_this_chunk)
+                                save_seen_entries(seen)
 
                         if status_message: await status_message.delete()
 
