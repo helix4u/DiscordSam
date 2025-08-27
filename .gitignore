@@ -123,3 +123,10 @@ Thumbs.db
 # Agent-generated temporary files
 user_text.txt
 cleaned_text.txt
+
+# DiscordSam/
+DiscordSam/
+tests/
+chroma_data/
+chroma_data1/
+temp/
