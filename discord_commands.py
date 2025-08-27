@@ -6,6 +6,7 @@ import os
 import base64
 import random
 import asyncio
+import math
 from typing import Any, Optional, List  # Keep existing imports
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
