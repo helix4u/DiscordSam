@@ -155,7 +155,7 @@ This modular architecture allows for easier development, testing, and modificati
 **Optional (but Recommended for Full Functionality):**
 
 *   **A local TTS server:**
-    *   https://github.com/remsky/Kokoro-FastAPI OpenAI TTS API compatible (e.g., a local instance of https://github.com/remsky/Kokoro-FastAPI).
+    *   https://github.com/remsky/Kokoro-FastAPI OpenAI TTS API compatible.
     *   The URL for this server is set via `TTS_API_URL`.
 *   **A local SearXNG instance:**
     *   Required for the `/search` and `/news` commands to function.
@@ -607,3 +607,4 @@ Found a bug? Have a feature request? Want to contribute?
 *   If you'd like to contribute code, please **fork the repository** and submit a **pull request** with your changes. Ensure your code follows existing style conventions and consider adding tests for new features.
 
 We welcome contributions to improve and expand DiscordSam!
+
