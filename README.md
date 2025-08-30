@@ -198,6 +198,7 @@ Below is a comprehensive list of environment variables used by DiscordSam, along
 *   `VISION_LLM_MODEL` (Default: `llava`): The model used for tasks involving image understanding (e.g., the `/ap` command or describing screenshots).
 *   `LLM_SUPPORTS_JSON_MODE` (Default: `false`): Set to `true` if your LLM server and the selected model support JSON mode for structured output (e.g., for entity extraction).
 *   `IS_GOOGLE_MODEL` (Default: `false`): Set to `true` if you are using a Google Gemini model via an OpenAI-compatible endpoint. This disables unsupported features like `logit_bias` to prevent errors.
+*   `GPT5_MODE` (Default: `false`): Adapts requests for GPT‑5 models on Chat Completions: forces `temperature=1.0`, removes `logit_bias`, and maps `system` messages to `developer` role. No effect for the Responses API on temperature (it’s ignored there; roles are already `developer`).
 *   `USE_RESPONSES_API` (Default: `false`): Global default for whether to use OpenAI's Responses API instead of legacy Chat Completions.
 *   `LLM_USE_RESPONSES_API` (Default: follows `USE_RESPONSES_API`): Enable Responses API for the main conversational model.
 *   `FAST_LLM_USE_RESPONSES_API` (Default: follows `USE_RESPONSES_API`): Enable Responses API for the fast/summarization model.
@@ -221,6 +222,7 @@ Below is a comprehensive list of environment variables used by DiscordSam, along
 *   `TTS_MAX_AUDIO_BYTES` (Default: `8388608` (8MB)): Maximum size of a single generated TTS audio clip. Longer audio will be split into parts before uploading to stay under Discord's attachment limits.
 *   `TTS_SPEED` (Default: `1.3`): Playback speed multiplier for TTS audio. Use `1.0` for normal speed.
 *   `TTS_INCLUDE_THOUGHTS` (Default: `false`): If `true`, content within `<think>...</think>` tags will also be spoken using TTS. When `false`, only the user-facing portion of the response is processed.
+*   `PODCAST_ENABLE_TTS_AFTER` (Default: `true`): If `true`, automatically re-enables global TTS after the `/podcastthatshit` command completes.
 
 **Web Features & Scraping:**
 
@@ -254,7 +256,7 @@ Below is a comprehensive list of environment variables used by DiscordSam, along
 *   `RAG_NUM_DISTILLED_SENTENCES_TO_FETCH` (Default: `3`): How many relevant distilled sentences/summaries to fetch from `CHROMA_DISTILLED_COLLECTION_NAME` for RAG context.
 *   `RAG_NUM_COLLECTION_DOCS_TO_FETCH` (Default: `3`): How many relevant documents to fetch from other ChromaDB collections (news, timeline, entities, etc.) for RAG context.
 *   `RAG_MAX_FULL_CONVO_CHARS` (Default: `20000`): When retrieving full conversation logs for RAG context, only the last N characters of each log will be used, trimming the oldest text from the beginning.
-*   `RAG_MAX_DATE_RANGE_DOCS` (Default: `100`): Maximum number of RSS documents to include when using date-range retrieval. Other collections use `RAG_NUM_COLLECTION_DOCS_TO_FETCH` as their limit.
+*   `RAG_MAX_DATE_RANGE_DOCS` (Default: `15`): Maximum number of RSS documents to include when using date-range retrieval. Other collections use `RAG_NUM_COLLECTION_DOCS_TO_FETCH` as their limit.
 *   `ENABLE_MEMORY_MERGE` (Default: `false`): Set to `true` to merge retrieved memory snippets with new conversation summaries after each response.
 *   `TIMELINE_PRUNE_DAYS` (Default: `30`): How many days of chat history to retain in the main `CHROMA_COLLECTION_NAME` before the daily `timeline_pruner_task` summarizes and moves it to `CHROMA_TIMELINE_SUMMARY_COLLECTION_NAME`.
     *   The summarized timeline entries are stored in a separate collection so the main history stays small while older context remains searchable.

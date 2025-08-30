@@ -282,8 +282,11 @@ async def process_rss_feed(
     await bot_state_instance.append_history(interaction.channel_id, assistant_msg, config.MAX_MESSAGE_HISTORY)
     progress_msg = None
     try:
-        progress_msg = await interaction.followup.send(
-            content="\U0001F501 Post-processing...", ephemeral=True
+        progress_msg = await safe_followup_send(
+            interaction,
+            content="\U0001F501 Post-processing...",
+            ephemeral=True,
+            error_hint=" while sending RSS post-processing notice",
         )
     except discord.HTTPException:
         progress_msg = None
@@ -412,8 +415,11 @@ async def process_ground_news(
                 progress_ephemeral = None
         if progress_ephemeral is None:
             try:
-                progress_ephemeral = await interaction.followup.send(
-                    content="\U0001F501 Post-processing...", ephemeral=True
+                progress_ephemeral = await safe_followup_send(
+                    interaction,
+                    content="\U0001F501 Post-processing...",
+                    ephemeral=True,
+                    error_hint=" while sending Ground News post-processing notice",
                 )
             except discord.HTTPException:
                 progress_ephemeral = None
@@ -569,8 +575,11 @@ async def process_ground_news_topic(
                 progress_ephemeral = None
         if progress_ephemeral is None:
             try:
-                progress_ephemeral = await interaction.followup.send(
-                    content="\U0001F501 Post-processing...", ephemeral=True
+                progress_ephemeral = await safe_followup_send(
+                    interaction,
+                    content="\U0001F501 Post-processing...",
+                    ephemeral=True,
+                    error_hint=" while sending Ground Topic post-processing notice",
                 )
             except discord.HTTPException:
                 progress_ephemeral = None
@@ -1186,7 +1195,12 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 else:
                     await interaction.response.send_message(embed=error_embed, ephemeral=True)
             except discord.HTTPException:
-                await interaction.followup.send(embed=error_embed, ephemeral=True)
+                await safe_followup_send(
+                    interaction,
+                    embed=error_embed,
+                    ephemeral=True,
+                    error_hint=" while sending /news error",
+                )
 
 
     @bot_instance.tree.command(name="ingest_chatgpt_export", description="Ingests a conversations.json file from a ChatGPT export.")
@@ -1202,20 +1216,37 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
         logger.info(f"Ingestion of ChatGPT export file '{file_path}' initiated by {interaction.user.name} ({interaction.user.id}).")
 
         if not os.path.exists(file_path):
-            await interaction.followup.send(f"Error: File not found at the specified path: `{file_path}`", ephemeral=True)
+            await safe_followup_send(
+                interaction,
+                content=f"Error: File not found at the specified path: `{file_path}`",
+                ephemeral=True,
+            )
             return
 
         try:
             parsed_conversations = parse_chatgpt_export(file_path)
             if not parsed_conversations:
-                await interaction.followup.send("Could not parse any conversations from the file. It might be empty or in an unexpected format.", ephemeral=True)
+                await safe_followup_send(
+                    interaction,
+                    content="Could not parse any conversations from the file. It might be empty or in an unexpected format.",
+                    ephemeral=True,
+                )
                 return
 
             count = await store_chatgpt_conversations_in_chromadb(llm_client_instance, parsed_conversations)
-            await interaction.followup.send(f"Successfully processed and stored {count} conversations (with distillations) from the export file into ChromaDB.", ephemeral=True)
+            await safe_followup_send(
+                interaction,
+                content=f"Successfully processed and stored {count} conversations (with distillations) from the export file into ChromaDB.",
+                ephemeral=True,
+            )
         except Exception as e_ingest:
             logger.error(f"Error during ChatGPT export ingestion process for file '{file_path}': {e_ingest}", exc_info=True)
-            await interaction.followup.send(f"An error occurred during the ingestion process: {str(e_ingest)[:1000]}", ephemeral=True)
+            await safe_followup_send(
+                interaction,
+                content=f"An error occurred during the ingestion process: {str(e_ingest)[:1000]}",
+                ephemeral=True,
+                error_hint=" during ingest_chatgpt_export",
+            )
 
     @ingest_chatgpt_export_command.error
     async def ingest_export_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
@@ -1226,7 +1257,12 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             if not interaction.response.is_done():
                 await interaction.response.send_message(f"An unexpected error occurred: {str(error)[:500]}", ephemeral=True)
             else:
-                await interaction.followup.send(f"An unexpected error occurred: {str(error)[:500]}", ephemeral=True)
+                await safe_followup_send(
+                    interaction,
+                    content=f"An unexpected error occurred: {str(error)[:500]}",
+                    ephemeral=True,
+                    error_hint=" in ingest export error handler",
+                )
 
 
     @bot_instance.tree.command(name="remindme", description="Sets a reminder. E.g., /remindme 1h30m Check the oven.")
@@ -1651,7 +1687,11 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             await process_rss_feed(interaction, final_feed_url, limit)
         except Exception as e:
             logger.error(f"Error in rss_slash_command for {final_feed_url}: {e}", exc_info=True)
-            await interaction.followup.send(content=f"Failed to process RSS feed. Error: {str(e)[:500]}")
+            await safe_followup_send(
+                interaction,
+                content=f"Failed to process RSS feed. Error: {str(e)[:500]}",
+                error_hint=" while processing RSS feed",
+            )
         finally:
             if acquired_lock:
                 scrape_lock.release()
@@ -1678,9 +1718,11 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             return
 
         await interaction.response.defer(ephemeral=False)
-        await interaction.followup.send(
+        await safe_followup_send(
+            interaction,
             content=f"Starting to process all {len(DEFAULT_RSS_FEEDS)} default RSS feeds. "
-                    "New article summaries will be posted below as they are found. This may take a while."
+                    "New article summaries will be posted below as they are found. This may take a while.",
+            error_hint=" for allrss start notice",
         )
 
         total_new_articles_found = 0
@@ -1820,9 +1862,11 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                                 )
                                 progress_note = None
                                 try:
-                                    progress_note = await interaction.followup.send(
+                                    progress_note = await safe_followup_send(
+                                        interaction,
                                         content=f"\U0001F501 Post-processing summaries from {name}...",
                                         ephemeral=True,
+                                        error_hint=" for allrss post-processing",
                                     )
                                 except discord.HTTPException:
                                     progress_note = None
@@ -1916,14 +1960,18 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 logger.warning(
                     f"Timeout acquiring scrape_lock for /gettweets @{user_to_fetch.lstrip('@')}. Another task may be holding it too long."
                 )
-                await interaction.followup.send(
+                await safe_followup_send(
+                    interaction,
                     content=f"Could not acquire scrape lock for @{user_to_fetch.lstrip('@')} at this time. Please try again shortly.",
                     ephemeral=True,
+                    error_hint=" acquiring scrape lock for gettweets",
                 )
                 return
             acquired_lock = True
-            progress_message = await interaction.followup.send(
-                content=f"Scraping tweets for @{user_to_fetch.lstrip('@')} (up to {limit})..."
+            progress_message = await safe_followup_send(
+                interaction,
+                content=f"Scraping tweets for @{user_to_fetch.lstrip('@')} (up to {limit})...",
+                error_hint=" starting gettweets",
             )
         else:
             await scrape_lock.acquire()
@@ -2178,7 +2226,12 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             )
             try:
                 if interaction.response.is_done():
-                    await interaction.followup.send(content=error_content, ephemeral=True)
+                    await safe_followup_send(
+                        interaction,
+                        content=error_content,
+                        ephemeral=True,
+                        error_hint=" sending gettweets error",
+                    )
                 else:
                     if interaction.channel:
                         progress_message = await safe_message_edit(
@@ -2234,14 +2287,18 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 logger.warning(
                     "Timeout acquiring scrape_lock for /homefeed. Another task may be holding it too long."
                 )
-                await interaction.followup.send(
+                await safe_followup_send(
+                    interaction,
                     content="Could not acquire scrape lock for home timeline at this time. Please try again shortly.",
                     ephemeral=True,
+                    error_hint=" acquiring scrape lock for homefeed",
                 )
                 return
             acquired_lock = True
-            progress_message = await interaction.followup.send(
-                content=f"Scraping home timeline tweets (up to {limit})..."
+            progress_message = await safe_followup_send(
+                interaction,
+                content=f"Scraping home timeline tweets (up to {limit})...",
+                error_hint=" starting homefeed",
             )
         else:
             await scrape_lock.acquire()
@@ -2429,7 +2486,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                     else:
                         await progress_message.edit(content=None, embed=embed)
                 else:
-                    await interaction.followup.send(embed=embed)
+                    await safe_followup_send(interaction, embed=embed)
 
             user_query_content_for_summary = (
                 "Please analyze and summarize the main themes, topics discussed, and overall sentiment "
@@ -2466,7 +2523,12 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             )
             try:
                 if interaction.response.is_done():
-                    await interaction.followup.send(content=error_content, ephemeral=True)
+                    await safe_followup_send(
+                        interaction,
+                        content=error_content,
+                        ephemeral=True,
+                        error_hint=" final error in homefeed",
+                    )
                 else:
                     if interaction.channel:
                         progress_message = await safe_message_edit(
@@ -2515,12 +2577,20 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             )
             await scrape_lock.acquire()
             acquired_lock = True
-            await interaction.followup.send(content="Starting to scrape tweets from default accounts...")
+            await safe_followup_send(
+                interaction,
+                content="Starting to scrape tweets from default accounts...",
+                error_hint=" starting alltweets (queued)",
+            )
         else:
             await scrape_lock.acquire()
             acquired_lock = True
             await interaction.response.defer(ephemeral=False)
-            await interaction.followup.send(content="Starting to scrape tweets from default accounts...")
+            await safe_followup_send(
+                interaction,
+                content="Starting to scrape tweets from default accounts...",
+                error_hint=" starting alltweets",
+            )
 
         try:
             any_new = False
@@ -2545,8 +2615,11 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             await bot_state_instance.append_history(interaction.channel_id, assistant_msg, config.MAX_MESSAGE_HISTORY)
             progress_note = None
             try:
-                progress_note = await interaction.followup.send(
-                    content="\U0001F501 Post-processing...", ephemeral=True
+                progress_note = await safe_followup_send(
+                    interaction,
+                    content="\U0001F501 Post-processing...",
+                    ephemeral=True,
+                    error_hint=" for alltweets post-processing",
                 )
             except discord.HTTPException:
                 progress_note = None
@@ -2563,7 +2636,11 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             )
         except Exception as e:
             logger.error(f"Error in alltweets_slash_command: {e}", exc_info=True)
-            await interaction.followup.send(content=f"Failed to process tweets. Error: {str(e)[:500]}")
+            await safe_followup_send(
+                interaction,
+                content=f"Failed to process tweets. Error: {str(e)[:500]}",
+                error_hint=" in alltweets error",
+            )
         finally:
             if acquired_lock:
                 scrape_lock.release()
@@ -2597,11 +2674,20 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             )
             await scrape_lock.acquire()
             acquired_lock = True
-            await interaction.followup.send(content="Starting Ground News scraping...")
+            await safe_followup_send(
+                interaction,
+                content="Starting Ground News scraping...",
+                error_hint=" starting groundmy",
+            )
         else:
             await scrape_lock.acquire()
             acquired_lock = True
             await interaction.response.defer(ephemeral=False)
+            await safe_followup_send(
+                interaction,
+                content="Starting Ground News scraping...",
+                error_hint=" starting groundmy",
+            )
 
         try:
             processed = await process_ground_news(interaction, limit)
@@ -2613,7 +2699,11 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 )
         except Exception as e:
             logger.error("Error in groundnews_slash_command: %s", e, exc_info=True)
-            await interaction.followup.send(content=f"Failed to process Ground News articles. Error: {str(e)[:500]}")
+            await safe_followup_send(
+                interaction,
+                content=f"Failed to process Ground News articles. Error: {str(e)[:500]}",
+                error_hint=" in groundmy error",
+            )
         finally:
             if acquired_lock:
                 scrape_lock.release()
@@ -2652,11 +2742,20 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             )
             await scrape_lock.acquire()
             acquired_lock = True
-            await interaction.followup.send(content="Starting Ground News scraping...")
+            await safe_followup_send(
+                interaction,
+                content="Starting Ground News scraping...",
+                error_hint=" starting groundtopic",
+            )
         else:
             await scrape_lock.acquire()
             acquired_lock = True
             await interaction.response.defer(ephemeral=False)
+            await safe_followup_send(
+                interaction,
+                content="Starting Ground News scraping...",
+                error_hint=" starting groundtopic",
+            )
 
         try:
             processed = await process_ground_news_topic(interaction, topic, limit)
@@ -2668,7 +2767,11 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 )
         except Exception as e:
             logger.error("Error in groundtopic_slash_command: %s", e, exc_info=True)
-            await interaction.followup.send(content=f"Failed to process Ground News articles. Error: {str(e)[:500]}")
+            await safe_followup_send(
+                interaction,
+                content=f"Failed to process Ground News articles. Error: {str(e)[:500]}",
+                error_hint=" in groundtopic error",
+            )
         finally:
             if acquired_lock:
                 scrape_lock.release()
@@ -2782,7 +2885,12 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             if not interaction.response.is_done():
                  await interaction.response.send_message(f"An unexpected error occurred: {str(error)[:500]}", ephemeral=True)
             else:
-                 await interaction.followup.send(f"An unexpected error occurred: {str(error)[:500]}", ephemeral=True)
+                await safe_followup_send(
+                    interaction,
+                    content=f"An unexpected error occurred: {str(error)[:500]}",
+                    ephemeral=True,
+                    error_hint=" in clearhistory error handler",
+                )
 
     @bot_instance.tree.command(name="pruneitems", description="Summarize and prune the oldest N chat history entries.")
     @app_commands.describe(limit="Number of oldest entries to summarize and prune")
@@ -2805,19 +2913,22 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                         description=chunk,
                         color=config.EMBED_COLOR["complete"]
                     )
-                    await interaction.followup.send(embed=embed, ephemeral=True)
+                    await safe_followup_send(interaction, embed=embed, ephemeral=True)
             else:
                 embed = discord.Embed(
                     title=title,
                     description=summary_text,
                     color=config.EMBED_COLOR["complete"]
                 )
-                await interaction.followup.send(embed=embed, ephemeral=True)
+                await safe_followup_send(interaction, embed=embed, ephemeral=True)
 
         except Exception as e:
             logger.error(f"Error in pruneitems_slash_command: {e}", exc_info=True)
-            await interaction.followup.send(
-                f"Failed to prune items: {str(e)[:1900]}", ephemeral=True
+            await safe_followup_send(
+                interaction,
+                content=f"Failed to prune items: {str(e)[:1900]}",
+                ephemeral=True,
+                error_hint=" while sending pruneitems result",
             )
 
     @bot_instance.tree.command(name="dbcounts", description="List the number of entries in each ChromaDB collection.")
@@ -2826,16 +2937,25 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
         try:
             counts = rcm.get_collection_counts()
             if not counts:
-                await interaction.followup.send(
-                    "No collection data available.", ephemeral=True
+                await safe_followup_send(
+                    interaction,
+                    content="No collection data available.",
+                    ephemeral=True,
                 )
                 return
             lines = [f"{name}: {count}" for name, count in counts.items()]
-            await interaction.followup.send("\n".join(lines), ephemeral=True)
+            await safe_followup_send(
+                interaction,
+                content="\n".join(lines),
+                ephemeral=True,
+            )
         except Exception as e:
             logger.error(f"Error in dbcounts_slash_command: {e}", exc_info=True)
-            await interaction.followup.send(
-                f"Failed to fetch counts: {str(e)[:500]}", ephemeral=True
+            await safe_followup_send(
+                interaction,
+                content=f"Failed to fetch counts: {str(e)[:500]}",
+                ephemeral=True,
+                error_hint=" while sending dbcounts result",
             )
 
     @bot_instance.tree.command(name="podcastthatshit", description="Triggers the podcast that shit instruction based on current chat history.")
@@ -2864,4 +2984,17 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             )
         except Exception as e:
             logger.error(f"Error in podcastthatshit_slash_command: {e}", exc_info=True)
-            await interaction.followup.send(content=f"My podcasting equipment seems to be on fire. Error: {str(e)[:1000]}", ephemeral=True)
+            await safe_followup_send(
+                interaction,
+                content=f"My podcasting equipment seems to be on fire. Error: {str(e)[:1000]}",
+                ephemeral=True,
+                error_hint=" in podcastthatshit error",
+            )
+        finally:
+            # Optionally re-enable TTS after this command completes (env-controlled)
+            try:
+                if config.PODCAST_ENABLE_TTS_AFTER and not config.TTS_ENABLED_DEFAULT:
+                    config.TTS_ENABLED_DEFAULT = True
+                    logger.info("TTS has been enabled after /podcastthatshit command (per PODCAST_ENABLE_TTS_AFTER).")
+            except Exception:
+                pass

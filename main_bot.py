@@ -27,6 +27,15 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__) # Get a logger for this main file
 
+# Announce GPT-5 mode if active (after logging is configured)
+try:
+    if config.GPT5_MODE:
+        logger.info(
+            "GPT-5 mode enabled: temperature=1.0, system->developer mapping, logit_bias disabled"
+        )
+except Exception:
+    pass
+
 # --- Bot Initialization ---
 intents = discord.Intents.default()
 intents.message_content = True # Required for on_message to read content

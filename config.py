@@ -91,6 +91,12 @@ class Config:
             "LLM_REQUEST_TIMEOUT_SECONDS", 900.0
         )
 
+        # GPT-5 mode: adapt Chat Completions for GPT-5 models
+        # - Force temperature to 1.0
+        # - Remove logit_bias
+        # - Map system role to developer
+        self.GPT5_MODE = _get_bool("GPT5_MODE", False)
+
         # Whisper ASR model settings
         self.WHISPER_DEVICE = os.getenv("WHISPER_DEVICE") # e.g. "cuda", "cpu". None for auto-detect
         self.RESPONSES_REASONING_EFFORT = _get_choice(
@@ -118,6 +124,8 @@ class Config:
         self.TTS_VOICE = os.getenv("TTS_VOICE", "af_sky+af+af_nicole")
         self.TTS_ENABLED_DEFAULT = _get_bool("TTS_ENABLED_DEFAULT", True)
         self.TTS_INCLUDE_THOUGHTS = _get_bool("TTS_INCLUDE_THOUGHTS", False)
+        # If true, re-enable TTS globally after the /podcastthatshit command completes
+        self.PODCAST_ENABLE_TTS_AFTER = _get_bool("PODCAST_ENABLE_TTS_AFTER", True)
         # Discord limits attachments from bots to 8MB on most servers.
         # Use 8MB as the default so TTS audio gets split automatically if needed.
         self.TTS_MAX_AUDIO_BYTES = _get_int("TTS_MAX_AUDIO_BYTES", 8 * 1024 * 1024)
@@ -175,7 +183,7 @@ class Config:
         self.RAG_NUM_DISTILLED_SENTENCES_TO_FETCH = _get_int("RAG_NUM_DISTILLED_SENTENCES_TO_FETCH", 3)
         self.RAG_NUM_COLLECTION_DOCS_TO_FETCH = _get_int("RAG_NUM_COLLECTION_DOCS_TO_FETCH", 3)
         self.RAG_MAX_FULL_CONVO_CHARS = _get_int("RAG_MAX_FULL_CONVO_CHARS", 20000)
-        self.RAG_MAX_DATE_RANGE_DOCS = _get_int("RAG_MAX_DATE_RANGE_DOCS", 100)
+        self.RAG_MAX_DATE_RANGE_DOCS = _get_int("RAG_MAX_DATE_RANGE_DOCS", 15)
         self.ENABLE_MEMORY_MERGE = _get_bool("ENABLE_MEMORY_MERGE", False)
 
         self.NEWS_MAX_LINKS_TO_PROCESS = _get_int("NEWS_MAX_LINKS_TO_PROCESS", 5)

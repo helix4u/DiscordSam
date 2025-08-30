@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 import logging
 import httpx
-from openai import RateLimitError
+from openai import RateLimitError, BadRequestError
 
 from config import config
 
@@ -76,9 +76,18 @@ async def create_chat_completion(
         converted: List[Dict[str, Any]] = []
         for msg in messages:
             role = msg.get("role")
-            if role == "developer":
-                msg = dict(msg, role="system")
-            msg = dict(msg)
+            # In GPT-5 mode, gpt-5 chat completions expect 'developer' for
+            # hidden instructions, so map system->developer. Otherwise keep
+            # legacy mapping developer->system for compatibility.
+            new_role = role
+            if config.GPT5_MODE:
+                if role == "system":
+                    new_role = "developer"
+            else:
+                if role == "developer":
+                    new_role = "system"
+
+            msg = dict(msg, role=new_role)
             content = msg.get("content")
             if isinstance(content, list):
                 msg["content"] = _convert_content(content, False)
@@ -89,11 +98,14 @@ async def create_chat_completion(
             "messages": converted,
             "stream": stream,
         }
-        if temperature is not None:
-            params["temperature"] = temperature
+        # GPT-5 mode: force temperature to 1.0 for Chat Completions
+        forced_temperature: Optional[float] = 1.0 if config.GPT5_MODE else temperature
+        if forced_temperature is not None:
+            params["temperature"] = forced_temperature
         if max_tokens is not None:
             params["max_completion_tokens"] = max_tokens
-        if logit_bias and not config.IS_GOOGLE_MODEL:
+        # gpt-5 models do not support logit_bias in Chat Completions
+        if logit_bias and not config.IS_GOOGLE_MODEL and not config.GPT5_MODE:
             params["logit_bias"] = logit_bias
         params.update(kwargs)
 
@@ -106,6 +118,28 @@ async def create_chat_completion(
                 wait_time = 2 ** attempt
                 logger.warning(
                     f"Attempt {attempt + 1}/3 failed with RemoteProtocolError. Retrying in {wait_time}s..."
+                )
+                await asyncio.sleep(wait_time)
+            except BadRequestError as e:
+                # If mapping system->developer causes a role validation error in some clients,
+                # retry once with roles normalized back to 'system'.
+                if attempt == 0 and config.GPT5_MODE:
+                    try:
+                        fixed_messages: List[Dict[str, Any]] = []
+                        for m in converted:
+                            r = m.get("role")
+                            if r == "developer":
+                                m = dict(m, role="system")
+                            fixed_messages.append(m)
+                        fixed_params = dict(params, messages=fixed_messages)
+                        return await llm_client.chat.completions.create(**fixed_params)
+                    except Exception:
+                        # Fall through to normal retry chain
+                        pass
+                last_exception = e
+                wait_time = 2 ** attempt
+                logger.warning(
+                    f"Attempt {attempt + 1}/3 failed with BadRequestError. Retrying in {wait_time}s..."
                 )
                 await asyncio.sleep(wait_time)
         if last_exception:
