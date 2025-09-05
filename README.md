@@ -2,6 +2,8 @@
 
 ## 1. Project Overview
 
+i test in main. lol. deal with it.
+
 DiscordSam is an advanced, context-aware Discord bot designed to provide intelligent, detailed, and rational responses. Its primary purpose is to serve as a highly interactive and knowledgeable assistant within a Discord server, capable of engaging in complex conversations, accessing and processing external information, and performing various tasks through slash commands. The bot leverages local Large Language Models (LLMs), Retrieval Augmented Generation (RAG) for long-term memory (including structured data extraction), web scraping, multimedia understanding, and Text-to-Speech (TTS) to create a rich and dynamic user experience.
 
 ---
@@ -605,5 +607,4 @@ Found a bug? Have a feature request? Want to contribute?
 *   If you'd like to contribute code, please **fork the repository** and submit a **pull request** with your changes. Ensure your code follows existing style conventions and consider adding tests for new features.
 
 We welcome contributions to improve and expand DiscordSam!
-
 

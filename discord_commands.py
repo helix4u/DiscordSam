@@ -1886,6 +1886,24 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                                 seen.setdefault(feed_url, []).extend(processed_guids_this_chunk)
                                 save_seen_entries(seen)
 
+                                # Keep the status message as the latest message after chunk output
+                                # Editing does not bump message order, so delete and re-send an updated status
+                                try:
+                                    remaining_after_chunk = max(0, len(new_entries) - len(entries_to_process))
+                                    status_text = (
+                                        f"✅ Sent {len(entries_to_process)} summary(ies) from **{name}**. "
+                                        f"Remaining in this feed: {remaining_after_chunk}. "
+                                        f"Total new articles so far: {total_new_articles_found}."
+                                    )
+                                    if status_message is not None:
+                                        try:
+                                            await status_message.delete()
+                                        except discord.HTTPException:
+                                            pass
+                                    status_message = await channel.send(status_text)
+                                except Exception as bump_err:
+                                    logger.warning(f"Failed to refresh status message for {name}: {bump_err}")
+
                         if status_message: await status_message.delete()
 
                     except Exception as e_feed:
