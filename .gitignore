@@ -88,6 +88,15 @@ ENV/
 env.bak/
 venv.bak/
 
+# Env variants and examples
+.env.local
+.env.development
+.env.production
+.env.test
+.env.*
+*.env
+!example.env
+
 # Pyre type checker
 .pyre/
 
@@ -106,8 +115,9 @@ celerybeat.pid
 .dmypy.json
 dmypy.json
 
-# PyCharm
-# .idea/
+# IDE settings
+.idea/
+.vscode/
 
 # Ruff cache
 .ruff_cache/
@@ -115,10 +125,19 @@ dmypy.json
 # Playwright profiles
 .pw-profile/
 playwright-report/
+ms-playwright/
+test-results/
 
 # Other
 .DS_Store
 Thumbs.db
+logs/
+
+# Runtime/local data caches and state
+rss_seen.json
+ground_news_seen.json
+twitter_seen_ids.json
+*.bak
 
 # Agent-generated temporary files
 user_text.txt
