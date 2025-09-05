@@ -178,7 +178,10 @@ def cleanup_playwright_processes() -> int:
 
     Returns the number of processes terminated."""
     killed = 0
-    markers = [".pw-", "playwright"]
+    # Only target processes associated with this bot's Playwright profile.
+    # Using the more specific ".pw-" avoids killing other unrelated Playwright
+    # instances the user might be running elsewhere.
+    markers = [".pw-"]
     for proc in psutil.process_iter(["pid", "cmdline"]):
         try:
             cmdline = " ".join(proc.info.get("cmdline") or [])
