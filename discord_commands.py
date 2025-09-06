@@ -96,7 +96,7 @@ DEFAULT_TWITTER_USERS = [
     "trumpdailyposts",
     "whitehouse",
     "sec_noem",
-    "secdef",
+    "secwar",
     "petehegseth",
     "presssec",
     "unusual_whales",
@@ -3016,3 +3016,4 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                     logger.info("TTS has been enabled after /podcastthatshit command (per PODCAST_ENABLE_TTS_AFTER).")
             except Exception:
                 pass
+
