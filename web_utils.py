@@ -349,7 +349,13 @@ async def scrape_website(
     finally:
         await _graceful_close_playwright(page, context_manager, browser_instance_sw, profile_dir_usable)
 
-async def scrape_latest_tweets(username_queried: str, limit: int = 20, progress_callback: Optional[Callable[[str], Awaitable[None]]] = None) -> List[TweetData]:
+async def scrape_latest_tweets(
+    username_queried: str,
+    limit: int = 20,
+    progress_callback: Optional[Callable[[str], Awaitable[None]]] = None,
+    seen_checker: Optional[Callable[[TweetData], bool]] = None,
+    stop_after_seen_consecutive: int = 3,
+) -> List[TweetData]:
     logger.info(f"Scraping last {limit} tweets for @{username_queried} (profile page, with replies) using Playwright JS execution.")
     tweets_collected: List[TweetData] = []
     seen_tweet_ids: set[str] = set()
@@ -400,8 +406,13 @@ async def scrape_latest_tweets(username_queried: str, limit: int = 20, progress_
                     logger.warning(f"Timed out waiting for initial tweet articles for @{username_queried}. Page might be empty or blocked."); return []
 
                 max_scroll_attempts = limit + 15
+                consecutive_prev_seen = 0
+                should_stop_early = False
                 for scroll_attempt in range(max_scroll_attempts):
-                    if len(tweets_collected) >= limit: break
+                    if len(tweets_collected) >= limit:
+                        break
+                    if should_stop_early:
+                        break
 
                     try:
                         clicked_count = await page.evaluate(JS_EXPAND_SHOWMORE_TWITTER, 5)
@@ -447,12 +458,39 @@ async def scrape_latest_tweets(username_queried: str, limit: int = 20, progress_
                             tweets_collected.append(tweet)
                             seen_tweet_ids.add(uid)
                             newly_added_count +=1
+
+                            # Early-stop check: if we encounter more than N consecutive
+                            # previously seen tweets (from persistent cache), we likely
+                            # reached the already-processed boundary and can stop.
+                            if seen_checker is not None:
+                                try:
+                                    if seen_checker(tweet):
+                                        consecutive_prev_seen += 1
+                                    else:
+                                        consecutive_prev_seen = 0
+                                except Exception:
+                                    # If checker fails, don't let it break scraping
+                                    consecutive_prev_seen = 0
+
+                                if consecutive_prev_seen > stop_after_seen_consecutive:
+                                    should_stop_early = True
+                                    if progress_callback:
+                                        try:
+                                            await progress_callback(
+                                                "Stopping early: detected 4+ consecutive previously seen tweets; likely caught up."
+                                            )
+                                        except Exception:
+                                            pass
+                                    break
                             if progress_callback:
                                 try:
                                     await progress_callback(f"Scraped {len(tweets_collected)}/{limit} tweets for @{username_queried}...")
                                 except Exception as e_cb:
                                     logger.warning(f"Progress callback error: {e_cb}")
                             if len(tweets_collected) >= limit: break
+
+                    if should_stop_early:
+                        break
 
                     if newly_added_count == 0 and scroll_attempt > (limit // 2 + 7): # Increased patience slightly
                         logger.info("No new unique tweets found in several scroll attempts. Stopping.")

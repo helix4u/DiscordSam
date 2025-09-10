@@ -729,8 +729,16 @@ async def process_twitter_user(
         all_seen_tweet_ids_cache = load_seen_tweet_ids()
         user_seen_tweet_ids = all_seen_tweet_ids_cache.get(clean_username, set())
 
+        # Provide seen-checker so scraping can stop early after 4+ seen in a row
+        def _seen_checker(td: TweetData) -> bool:
+            return bool(td.tweet_url) and td.tweet_url in user_seen_tweet_ids
+
         fetched_tweets_data = await scrape_latest_tweets(
-            clean_username, limit=limit, progress_callback=send_progress
+            clean_username,
+            limit=limit,
+            progress_callback=send_progress,
+            seen_checker=_seen_checker,
+            stop_after_seen_consecutive=3,
         )
 
         if not fetched_tweets_data:
@@ -789,6 +797,7 @@ async def process_twitter_user(
                     display_ts = dt_obj.astimezone().strftime("%Y-%m-%d %H:%M %Z")
             except Exception:
                 pass
+    
 
             author_display = t_data.username or clean_username
             content_display = discord.utils.escape_markdown(t_data.content or "N/A")
@@ -1634,7 +1643,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
     @app_commands.describe(
         feed_url="Choose a preset RSS feed URL.",
         feed_url_manual="Or, enter an RSS feed URL manually.",
-        limit="Number of new entries to fetch (max 20)."
+        limit="Number of new entries to fetch (max 50)."
     )
     @app_commands.choices(
         feed_url=[
@@ -1646,7 +1655,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
         interaction: discord.Interaction,
         feed_url: Optional[str] = None,  # Made optional
         feed_url_manual: Optional[str] = None, # New manual field
-        limit: app_commands.Range[int, 1, 20] = 15,
+        limit: app_commands.Range[int, 1, 50] = 20,
     ):
         if not llm_client_instance or not bot_state_instance or not bot_instance or not bot_instance.user:
             logger.error("rss_slash_command: One or more bot components are None.")
@@ -1698,11 +1707,11 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
 
     @bot_instance.tree.command(name="allrss", description="Fetches new entries from all default RSS feeds until up to date.")
     @app_commands.describe(
-        limit="Number of new entries per feed to fetch at a time (max 20)."
+        limit="Number of new entries per feed to fetch at a time (max 50)."
     )
     async def allrss_slash_command(
         interaction: discord.Interaction,
-        limit: app_commands.Range[int, 1, 20] = 15,
+        limit: app_commands.Range[int, 1, 50] = 20,
     ) -> None:
         if not all([llm_client_instance, bot_state_instance, bot_instance, bot_instance.user, interaction.channel]):
             logger.error("allrss_slash_command: One or more bot components are None.")
@@ -1932,7 +1941,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
     @app_commands.describe(
         username="The X/Twitter username (without @).",
         preset_user="Choose a preset account instead of typing one.",
-        limit="Number of tweets to fetch (max 100)."
+        limit="Number of tweets to fetch (max 200)."
     )
     @app_commands.choices(
         preset_user=[app_commands.Choice(name=u, value=u) for u in DEFAULT_TWITTER_USERS]
@@ -1941,7 +1950,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
         interaction: discord.Interaction,
         username: str = "",
         preset_user: str = "",
-        limit: app_commands.Range[int, 1, 100] = 25,
+        limit: app_commands.Range[int, 1, 200] = 50,
     ):
         if not llm_client_instance or not bot_state_instance or not bot_instance or not bot_instance.user:
             logger.error("gettweets_slash_command: One or more bot components are None.")
@@ -2032,7 +2041,17 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             # If `scrape_latest_tweets` is not returning IDs, it will need to be modified.
             # For now, I'll proceed assuming 'tweet_url' is the unique identifier.
 
-            fetched_tweets_data = await scrape_latest_tweets(clean_username, limit=limit, progress_callback=send_progress)
+            # Provide seen-checker so scraping can stop early after 4+ seen in a row
+            def _seen_checker2(td: TweetData) -> bool:
+                return bool(td.tweet_url) and td.tweet_url in user_seen_tweet_ids
+
+            fetched_tweets_data = await scrape_latest_tweets(
+                clean_username,
+                limit=limit,
+                progress_callback=send_progress,
+                seen_checker=_seen_checker2,
+                stop_after_seen_consecutive=3,
+            )
 
             if not fetched_tweets_data:
                 final_content_message = (
@@ -2211,7 +2230,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
 
             user_query_content_for_summary = (
                 f"Please analyze and summarize the main themes, topics discussed, and overall sentiment "
-                f"from @{clean_username}'s recent tweets provided below. Extract key points and present a concise yet detailed overview of this snapshot in time. "
+                f"from @{clean_username}'s recent tweets provided below. Extract key points and present a detailed overview of this snapshot in time and present to the user in a casual, yet informed manner."
                 f"Do not just re-list the tweets.\n\nRecent Tweets:\n{raw_tweets_display_str[:config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT]}"
             )
             user_msg_node = MsgNode("user", user_query_content_for_summary, name=str(interaction.user.id))
@@ -2276,7 +2295,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
     )
     async def homefeed_slash_command(
         interaction: discord.Interaction,
-        limit: app_commands.Range[int, 1, 200] = 25,
+        limit: app_commands.Range[int, 1, 200] = 30,
     ):
         if not llm_client_instance or not bot_state_instance or not bot_instance or not bot_instance.user:
             logger.error("homefeed_slash_command: One or more bot components are None.")
@@ -2567,11 +2586,11 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
 
     @bot_instance.tree.command(name="alltweets", description="Fetches tweets from all default accounts.")
     @app_commands.describe(
-        limit="Number of tweets per account to fetch (max 50)."
+        limit="Number of tweets per account to fetch (max 100)."
     )
     async def alltweets_slash_command(
         interaction: discord.Interaction,
-        limit: app_commands.Range[int, 1, 50] = 25,
+        limit: app_commands.Range[int, 1, 100] = 50,
     ) -> None:
         if not llm_client_instance or not bot_state_instance or not bot_instance or not bot_instance.user:
             logger.error("alltweets_slash_command: One or more bot components are None.")
@@ -2667,11 +2686,11 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
 
     @bot_instance.tree.command(name="groundnews", description="Scrapes Ground News 'My Feed' and summarizes new articles.")
     @app_commands.describe(
-        limit="Number of articles to fetch (max 50)."
+        limit="Number of articles to fetch (max 100)."
     )
     async def groundnews_slash_command(
         interaction: discord.Interaction,
-        limit: app_commands.Range[int, 1, 50] = 20,
+        limit: app_commands.Range[int, 1, 100] = 50,
     ) -> None:
         if not llm_client_instance or not bot_state_instance or not bot_instance or not bot_instance.user:
             logger.error("groundnews_slash_command: One or more bot components are None.")
@@ -2731,7 +2750,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
     @bot_instance.tree.command(name="groundtopic", description="Scrapes a Ground News topic page and summarizes new articles.")
     @app_commands.describe(
         topic="Topic page to scrape.",
-        limit="Number of articles to fetch (max 50).",
+        limit="Number of articles to fetch (max 100).",
     )
     @app_commands.choices(
         topic=GROUND_NEWS_TOPIC_CHOICES
@@ -2739,7 +2758,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
     async def groundtopic_slash_command(
         interaction: discord.Interaction,
         topic: str,
-        limit: app_commands.Range[int, 1, 50] = 20,
+        limit: app_commands.Range[int, 1, 100] = 50,
     ) -> None:
         if not llm_client_instance or not bot_state_instance or not bot_instance or not bot_instance.user:
             logger.error("groundtopic_slash_command: One or more bot components are None.")
@@ -2914,7 +2933,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
     @app_commands.describe(limit="Number of oldest entries to summarize and prune")
     async def pruneitems_slash_command(
         interaction: discord.Interaction,
-        limit: app_commands.Range[int, 1, 1000],
+        limit: app_commands.Range[int, 1, 10],
     ):
         await interaction.response.defer(thinking=True, ephemeral=True)
         try:
@@ -3017,3 +3036,22 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             except Exception:
                 pass
 
+    # Toggle inclusion of <think> thoughts in TTS audio
+    @bot_instance.tree.command(name="tts_thoughts", description="Enable or disable TTS playback of <think> thoughts.")
+    @app_commands.describe(enabled="True to include thoughts in TTS; False to skip thoughts")
+    async def tts_thoughts(interaction: discord.Interaction, enabled: bool):
+        try:
+            prev = bool(getattr(config, "TTS_INCLUDE_THOUGHTS", False))
+            config.TTS_INCLUDE_THOUGHTS = bool(enabled)
+            await interaction.response.send_message(
+                f"Thoughts TTS is now {'ENABLED' if enabled else 'DISABLED'} (was {'ENABLED' if prev else 'DISABLED'}).",
+                ephemeral=True,
+            )
+        except Exception as e:
+            logger.error("/tts_thoughts failed: %s", e, exc_info=True)
+            try:
+                await interaction.response.send_message(
+                    f"Failed to update thoughts TTS: {str(e)[:500]}", ephemeral=True
+                )
+            except discord.HTTPException:
+                pass
