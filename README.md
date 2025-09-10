@@ -203,7 +203,7 @@ Below is a comprehensive list of environment variables used by DiscordSam, along
 *   `LLM_USE_RESPONSES_API` (Default: follows `USE_RESPONSES_API`): Enable Responses API for the main conversational model.
 *   `FAST_LLM_USE_RESPONSES_API` (Default: follows `USE_RESPONSES_API`): Enable Responses API for the fast/summarization model.
 *   `VISION_LLM_USE_RESPONSES_API` (Default: follows `USE_RESPONSES_API`): Enable Responses API for the vision-capable model.
-*   `LLM_STREAMING` (Default: `false`): Stream token-by-token responses when `true`. Some models require organization verification to enable streaming.
+*   `LLM_STREAMING` (Default: `true`): Stream token-by-token responses when `true`. Some models require organization verification to enable streaming.
 *   `RESPONSES_REASONING_EFFORT` (Optional): Controls the reasoning effort for Responses models. Options are `minimal`, `low`, `medium`, or `high`.
 *   `RESPONSES_VERBOSITY` (Optional): Sets the verbosity of Responses output. Options are `low`, `medium`, or `high`.
 *   `RESPONSES_SERVICE_TIER` (Optional): Selects the service tier for Responses requests. Options are `auto`, `default`, `flex`, or `priority`.
@@ -230,11 +230,11 @@ Below is a comprehensive list of environment variables used by DiscordSam, along
 *   `SEARX_PREFERENCES` (Optional, Default: `""`): Optional JSON string or formatted string for SearXNG engine preferences. Example: `{"engines" : ["google", "wikipedia"]}` or for dynamic query insertion: `!google %s`.
 *   `MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT` (Default: `8000`): Maximum number of characters from a single scraped webpage or YouTube transcript to include in the LLM prompt.
 *   `MAX_IMAGE_BYTES_FOR_PROMPT` (Default: `4194304` (4MB)): Maximum size in bytes for an image to be processed and sent to the vision LLM.
-*   `NEWS_MAX_LINKS_TO_PROCESS` (Default: `5`): The maximum number of news links or search results the bot will attempt to scrape and process for commands like `/news` or `/search`.
+*   `NEWS_MAX_LINKS_TO_PROCESS` (Default: `15`): The maximum number of news links or search results the bot will attempt to scrape and process for commands like `/news` or `/search`.
 *   `HEADLESS_PLAYWRIGHT` (Default: `true`): Set to `false` to run Playwright browser instances in non-headless mode (visible window), useful for debugging scraping.
-*   `PLAYWRIGHT_MAX_CONCURRENCY` (Default: `2`): Maximum number of concurrent Playwright browser instances/contexts allowed.
-*   `SCRAPE_SCROLL_ATTEMPTS` (Default: `3`): How many times the bot will attempt to scroll down a webpage when scraping to load dynamically loaded content.
-*   `GROUND_NEWS_SEE_MORE_CLICKS` (Default: `3`): How many times to click Ground News's "See more stories" button before scraping.
+*   `PLAYWRIGHT_MAX_CONCURRENCY` (Default: `1`): Maximum number of concurrent Playwright browser instances/contexts allowed.
+*   `SCRAPE_SCROLL_ATTEMPTS` (Default: `5`): How many times the bot will attempt to scroll down a webpage when scraping to load dynamically loaded content.
+*   `GROUND_NEWS_SEE_MORE_CLICKS` (Default: `10`): How many times to click Ground News's "See more stories" button before scraping.
 *   `GROUND_NEWS_CLICK_DELAY_SECONDS` (Default: `1.0`): Seconds to wait after each "See more stories" click when scraping Ground News.
 *   `GROUND_NEWS_ARTICLE_DELAY_SECONDS` (Default: `5.0`): Seconds to wait between scraping each Ground News article.
 *   `PLAYWRIGHT_CLEANUP_INTERVAL_MINUTES` (Default: `5`): How often the background task runs to check for and clean up idle Playwright processes.
@@ -258,7 +258,7 @@ Below is a comprehensive list of environment variables used by DiscordSam, along
 *   `RAG_MAX_FULL_CONVO_CHARS` (Default: `20000`): When retrieving full conversation logs for RAG context, only the last N characters of each log will be used, trimming the oldest text from the beginning.
 *   `RAG_MAX_DATE_RANGE_DOCS` (Default: `15`): Maximum number of RSS documents to include when using date-range retrieval. Other collections use `RAG_NUM_COLLECTION_DOCS_TO_FETCH` as their limit.
 *   `ENABLE_MEMORY_MERGE` (Default: `false`): Set to `true` to merge retrieved memory snippets with new conversation summaries after each response.
-*   `TIMELINE_PRUNE_DAYS` (Default: `30`): How many days of chat history to retain in the main `CHROMA_COLLECTION_NAME` before the daily `timeline_pruner_task` summarizes and moves it to `CHROMA_TIMELINE_SUMMARY_COLLECTION_NAME`.
+*   `TIMELINE_PRUNE_DAYS` (Default: `365`): How many days of chat history to retain in the main `CHROMA_COLLECTION_NAME` before the daily `timeline_pruner_task` summarizes and moves it to `CHROMA_TIMELINE_SUMMARY_COLLECTION_NAME`.
     *   The summarized timeline entries are stored in a separate collection so the main history stays small while older context remains searchable.
 
 **Discord Embed & Streaming Settings:**
@@ -392,7 +392,7 @@ DiscordSam offers a variety of slash commands for diverse functionalities. Here'
     *   **Purpose:** Fetches new entries from a specified RSS feed, scrapes the linked articles, summarizes them, and displays the summaries.
     *   **Arguments:**
         *   `feed_url` (Required): The URL of the RSS feed. Can be selected from a preset list or provided directly.
-        *   `limit` (Optional, Default: 15): The maximum number of new entries to fetch and process (max 20).
+        *   `limit` (Optional, Default: 20): The maximum number of new entries to fetch and process (max 50).
     *   **Behavior:**
         1.  Fetches the RSS feed using `web_utils.fetch_rss_entries`.
         2.  Skips CBS News entries from `https://www.cbsnews.com/video/` as these pages lack article text.
@@ -404,19 +404,21 @@ DiscordSam offers a variety of slash commands for diverse functionalities. Here'
         6.  Updates the `rss_seen.json` cache.
         7.  Provides TTS for the combined summaries if enabled.
         8.  The user's command and the bot's full summarized response are added to short-term history and ingested into ChromaDB. A brief ephemeral "Post-processing..." notice appears while this occurs.
+        9.  If auto-podcast is enabled for the channel (see `/rss_podcast`), the bot will immediately follow up with a podcast-style rendering of the just-posted summaries.
         9.  If no new entries are found, the bot replies with an ephemeral message instead of posting publicly.
     *   **Output:** One or more embed messages containing summaries of new RSS feed entries, each showing the title, local publication date, link, and summary.
 
 *   **`/allrss [limit]`**
     *   **Purpose:** Fetches recent articles from all default RSS feeds in chronological order.
     *   **Arguments:**
-        *   `limit` (Optional, Default: 15): Maximum number of entries to pull from each feed (max 20).
+        *   `limit` (Optional, Default: 20): Maximum number of entries to pull from each feed (max 50).
     *   **Behavior:**
         1.  Prefetches entries from every preset RSS feed (up to `limit` per feed).
         2.  Combines and sorts all new entries by publication time using the user's local timezone.
         3.  Processes articles in batches of `limit`, scraping and summarizing each just like `/rss`.
         4.  After each batch, sends an embed with the summaries and optional TTS before moving to the next batch.
         5.  Each batch's summary is immediately archived to ChromaDB so RAG stays updated throughout the run, showing a short ephemeral "Post-processing..." indicator.
+        6.  If auto-podcast is enabled for the channel (see `/rss_podcast`), the bot will immediately follow up each batch with a podcast-style rendering of that batch.
     *   **Output:** Summaries are delivered in batches of `limit` entries until all new articles are processed.
 
 *   **`/gettweets [username] [preset_user] [limit]`**
@@ -424,7 +426,7 @@ DiscordSam offers a variety of slash commands for diverse functionalities. Here'
     *   **Arguments:**
         *   `username` (Optional): The X/Twitter username (without the '@').
         *   `preset_user` (Optional): Choose a username from a predefined list. If both `username` and `preset_user` are provided, `username` takes precedence. One must be provided.
-        *   `limit` (Optional, Default: 25): The maximum number of tweets to fetch (max 100).
+        *   `limit` (Optional, Default: 50): The maximum number of tweets to fetch (max 200).
     *   **Behavior:**
         1.  Uses `web_utils.scrape_latest_tweets` (Playwright with JS execution) to scrape recent tweets from the user's profile (specifically their "with_replies" timeline).
         2.  Displays the raw fetched tweets (timestamp, author, content, link) in Discord embeds, chunked if necessary. Any images are downloaded and described via the vision LLM, and these descriptions are included with the tweet text.
@@ -440,7 +442,7 @@ DiscordSam offers a variety of slash commands for diverse functionalities. Here'
 *   **`/homefeed [limit]`**
     *   **Purpose:** Fetches and summarizes tweets from the logged-in X/Twitter home timeline.
     *   **Arguments:**
-        *   `limit` (Optional, Default: 25): The maximum number of tweets to fetch (max 200).
+        *   `limit` (Optional, Default: 30): The maximum number of tweets to fetch (max 200).
     *   **Behavior:**
         1.  Uses `web_utils.scrape_home_timeline` (Playwright with JS execution) to scrape tweets from `https://x.com/home`.
         2.  Displays the raw fetched tweets (timestamp, author, content, link) in Discord embeds, chunked if necessary. Any images are downloaded and described via the vision LLM, and these descriptions are included with the tweet text.
@@ -456,7 +458,7 @@ DiscordSam offers a variety of slash commands for diverse functionalities. Here'
 *   **`/alltweets [limit]`**
     *   **Purpose:** Fetches and summarizes tweets from all default X/Twitter accounts.
     *   **Arguments:**
-        *   `limit` (Optional, Default: 25): The maximum number of tweets to fetch per account (max 50).
+        *   `limit` (Optional, Default: 50): The maximum number of tweets to fetch per account (max 100).
     *   **Behavior:**
         1.  Iterates through each preset Twitter account defined for the bot.
         2.  Uses `web_utils.scrape_latest_tweets` to scrape recent tweets for each account.
@@ -469,7 +471,7 @@ DiscordSam offers a variety of slash commands for diverse functionalities. Here'
 *   **`/groundnews [limit]`**
     *   **Purpose:** Scrapes the Ground News "My Feed" page and summarizes new articles.
     *   **Arguments:**
-        *   `limit` (Optional, Default: 20): Maximum number of articles to process (max 50).
+        *   `limit` (Optional, Default: 50): Maximum number of articles to process (max 100).
     *   **Behavior:**
         1.  Uses `web_utils.scrape_ground_news_my` (Playwright) to extract "See the Story" links, scrolling the page to load more items if necessary.
         2.  Skips any links already recorded in `ground_news_seen.json`.
@@ -484,7 +486,7 @@ DiscordSam offers a variety of slash commands for diverse functionalities. Here'
     *   **Purpose:** Scrapes a specified Ground News topic page and summarizes new articles.
     *   **Arguments:**
         *   `topic` (Required): The topic to fetch, chosen from a preset list.
-        *   `limit` (Optional, Default: 20): Maximum number of articles to process (max 50).
+        *   `limit` (Optional, Default: 50): Maximum number of articles to process (max 100).
     *   **Behavior:**
         1.  Uses `web_utils.scrape_ground_news_topic` to extract "See the Story" links from the selected topic page.
         2.  Skips links already recorded in `ground_news_seen.json`.
@@ -526,6 +528,13 @@ DiscordSam offers a variety of slash commands for diverse functionalities. Here'
     *   **Purpose:** Displays the number of documents stored in each ChromaDB collection.
     *   **Arguments:** None.
     *   **Output:** An ephemeral message listing each collection and its count.
+
+*   **`/rss_podcast <enabled>`**
+    *   **Purpose:** Toggles automatic “podcast that shit” after each `/rss` and `/allrss` chunk in the current channel.
+    *   **Arguments:**
+        *   `enabled` (Required): `true` to enable; `false` to disable. Default is `false`.
+    *   **Behavior:** When enabled in a channel, after posting a chunk of RSS summaries the bot immediately injects “Podcast that shit” into the recent history and generates a podcast-style narration of that chunk.
+    *   **Output:** An ephemeral confirmation indicating whether auto-podcast is enabled or disabled for the channel.
 
 ---
 
