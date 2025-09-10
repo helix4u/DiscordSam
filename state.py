@@ -2,6 +2,7 @@ import asyncio
 from collections import defaultdict
 from datetime import datetime, timedelta # Added timedelta
 from typing import List, Tuple, Any, Optional # Added Optional
+from typing import Dict
 
 class BotState:
     """An async-safe container for the bot's shared, mutable state."""
@@ -17,6 +18,8 @@ class BotState:
         self.channel_locks = defaultdict(asyncio.Lock)
         # Global lock to serialize scraping operations across commands
         self.scrape_lock = asyncio.Lock()
+        # Per-channel toggle: auto "podcast that shit" after RSS/allrss chunks
+        self._podcast_after_rss_by_channel: Dict[int, bool] = {}
 
     async def update_last_playwright_usage_time(self):
         """Updates the timestamp for the last Playwright usage."""
@@ -69,3 +72,13 @@ class BotState:
     def get_scrape_lock(self) -> asyncio.Lock:
         """Retrieve the global lock used for serializing scraping tasks."""
         return self.scrape_lock
+
+    async def set_podcast_after_rss_enabled(self, channel_id: int, enabled: bool) -> None:
+        """Enable/disable auto-"podcast that shit" after RSS/allrss chunks for a channel."""
+        async with self._lock:
+            self._podcast_after_rss_by_channel[channel_id] = bool(enabled)
+
+    async def is_podcast_after_rss_enabled(self, channel_id: int) -> bool:
+        """Check if auto-podcast-after-RSS is enabled for the given channel."""
+        async with self._lock:
+            return bool(self._podcast_after_rss_by_channel.get(channel_id, False))

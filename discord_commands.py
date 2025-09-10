@@ -58,6 +58,12 @@ logger = logging.getLogger(__name__)
 
 SUMMARY_SYSTEM_PROMPT = "You are an expert news summarizer."
 
+# Temporal grounding to prevent outdated references in generated content
+TEMPORAL_SYSTEM_CONTEXT = (
+    "Temporal context: The year is 2025. Donald Trump is the current President of the United States. "
+    "Joe Biden is the former president. Use correct current titles and do not assert outdated office-holders."
+)
+
 # Default RSS feeds users can choose from with the /rss command
 DEFAULT_RSS_FEEDS = [
     ("Google News", "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en"),
@@ -280,6 +286,29 @@ async def process_rss_feed(
     assistant_msg = MsgNode("assistant", combined, name=str(bot_instance.user.id))
     await bot_state_instance.append_history(interaction.channel_id, user_msg, config.MAX_MESSAGE_HISTORY)
     await bot_state_instance.append_history(interaction.channel_id, assistant_msg, config.MAX_MESSAGE_HISTORY)
+
+    # Optionally trigger a follow-up "podcast that shit" on the just-posted chunk
+    try:
+        if await bot_state_instance.is_podcast_after_rss_enabled(interaction.channel_id):
+            podcast_user_query = "Podcast that shit"
+            podcast_user_msg_node = MsgNode("user", podcast_user_query, name=str(interaction.user.id))
+            podcast_prompt_nodes = await _build_initial_prompt_messages(
+                user_query_content=podcast_user_query,
+                channel_id=interaction.channel_id,
+                bot_state=bot_state_instance,
+                user_id=str(interaction.user.id),
+            )
+            await stream_llm_response_to_interaction(
+                interaction,
+                llm_client_instance,
+                bot_state_instance,
+                podcast_user_msg_node,
+                podcast_prompt_nodes,
+                title="Podcast: The Current Conversation",
+                force_new_followup_flow=True,
+            )
+    except Exception as e:
+        logger.error(f"Auto-podcast after /rss chunk failed: {e}", exc_info=True)
     progress_msg = None
     try:
         progress_msg = await safe_followup_send(
@@ -643,6 +672,10 @@ async def describe_image(image_url: str) -> Optional[str]:
                 "content": "You are a helpful assistant that describes images for visually impaired users.",
             },
             {
+                "role": "system",
+                "content": TEMPORAL_SYSTEM_CONTEXT,
+            },
+            {
                 "role": "user",
                 "content": [
                     {
@@ -927,32 +960,35 @@ async def process_twitter_user(
         )
         user_msg_node = MsgNode("user", user_query_content_for_summary, name=str(interaction.user.id))
 
-        rag_query_for_tweets_summary = (
-            f"summary of recent tweets from Twitter user @{clean_username}"
-        )
-        synthesized_summary, raw_snippets = await retrieve_and_prepare_rag_context(
-            llm_client_instance, rag_query_for_tweets_summary
-        )
-
+        # Build a minimal prompt using only the scraped tweets as context (no RAG, no prior channel history)
         prompt_nodes_summary = await _build_initial_prompt_messages(
             user_query_content=user_query_content_for_summary,
-            channel_id=interaction.channel_id,
+            channel_id=None,  # exclude prior channel history to save tokens
             bot_state=bot_state_instance,
             user_id=str(interaction.user.id),
-            synthesized_rag_context_str=synthesized_summary,
-            raw_rag_snippets=raw_snippets,
         )
+        # Insert temporal system context to avoid outdated references
+        insert_idx_sum = 0
+        for idx, node in enumerate(prompt_nodes_summary):
+            if node.role != "system":
+                insert_idx_sum = idx
+                break
+            insert_idx_sum = idx + 1
+        final_prompt_nodes_summary = (
+            prompt_nodes_summary[:insert_idx_sum]
+            + [MsgNode("system", TEMPORAL_SYSTEM_CONTEXT)]
+            + prompt_nodes_summary[insert_idx_sum:]
+        )
+
         await stream_llm_response_to_interaction(
             interaction,
             llm_client_instance,
             bot_state_instance,
             user_msg_node,
-            prompt_nodes_summary,
+            final_prompt_nodes_summary,
             title=f"Tweet Summary for @{clean_username}",
             force_new_followup_flow=True,
-            synthesized_rag_context_for_display=synthesized_summary,
             bot_user_id=bot_instance.user.id,
-            retrieved_snippets=raw_snippets,
         )
     except Exception as e:
         logger.error(
@@ -1891,6 +1927,29 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                                     progress_message=progress_note,
                                 )
 
+                                # Optionally trigger a follow-up "podcast that shit" on this chunk
+                                try:
+                                    if await bot_state_instance.is_podcast_after_rss_enabled(interaction.channel_id):
+                                        podcast_user_query2 = "Podcast that shit"
+                                        podcast_user_msg_node2 = MsgNode("user", podcast_user_query2, name=str(interaction.user.id))
+                                        podcast_prompt_nodes2 = await _build_initial_prompt_messages(
+                                            user_query_content=podcast_user_query2,
+                                            channel_id=interaction.channel_id,
+                                            bot_state=bot_state_instance,
+                                            user_id=str(interaction.user.id),
+                                        )
+                                        await stream_llm_response_to_interaction(
+                                            interaction,
+                                            llm_client_instance,
+                                            bot_state_instance,
+                                            podcast_user_msg_node2,
+                                            podcast_prompt_nodes2,
+                                            title="Podcast: The Current Conversation",
+                                            force_new_followup_flow=True,
+                                        )
+                                except Exception as e_auto_pod:
+                                    logger.error(f"Auto-podcast after /allrss chunk failed: {e_auto_pod}", exc_info=True)
+
                                 # Save seen entries for this feed
                                 seen.setdefault(feed_url, []).extend(processed_guids_this_chunk)
                                 save_seen_entries(seen)
@@ -2235,24 +2294,31 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             )
             user_msg_node = MsgNode("user", user_query_content_for_summary, name=str(interaction.user.id))
 
-            rag_query_for_tweets_summary = f"summary of recent tweets from Twitter user @{clean_username}"
-            synthesized_summary, raw_snippets = await retrieve_and_prepare_rag_context(llm_client_instance, rag_query_for_tweets_summary)
-
+            # Build a minimal prompt using only the scraped tweets as context (no RAG, no prior channel history)
             prompt_nodes_summary = await _build_initial_prompt_messages(
                 user_query_content=user_query_content_for_summary,
-                channel_id=interaction.channel_id,
+                channel_id=None,
                 bot_state=bot_state_instance,
                 user_id=str(interaction.user.id),
-                synthesized_rag_context_str=synthesized_summary,
-                raw_rag_snippets=raw_snippets
             )
+            # Insert temporal system context to avoid outdated references
+            insert_idx_sum2 = 0
+            for idx, node in enumerate(prompt_nodes_summary):
+                if node.role != "system":
+                    insert_idx_sum2 = idx
+                    break
+                insert_idx_sum2 = idx + 1
+            final_prompt_nodes_summary2 = (
+                prompt_nodes_summary[:insert_idx_sum2]
+                + [MsgNode("system", TEMPORAL_SYSTEM_CONTEXT)]
+                + prompt_nodes_summary[insert_idx_sum2:]
+            )
+
             await stream_llm_response_to_interaction(
-                interaction, llm_client_instance, bot_state_instance, user_msg_node, prompt_nodes_summary,
+                interaction, llm_client_instance, bot_state_instance, user_msg_node, final_prompt_nodes_summary2,
                 title=f"Tweet Summary for @{clean_username}",
                 force_new_followup_flow=True,
-                synthesized_rag_context_for_display=synthesized_summary,
                 bot_user_id=bot_instance.user.id,
-                retrieved_snippets=raw_snippets
             )
         except Exception as e:
             logger.error(
@@ -2532,24 +2598,31 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             )
             user_msg_node = MsgNode("user", user_query_content_for_summary, name=str(interaction.user.id))
 
-            rag_query_for_tweets_summary = "summary of recent tweets from Twitter home timeline"
-            synthesized_summary, raw_snippets = await retrieve_and_prepare_rag_context(llm_client_instance, rag_query_for_tweets_summary)
-
+            # Build a minimal prompt using only the scraped tweets as context (no RAG, no prior channel history)
             prompt_nodes_summary = await _build_initial_prompt_messages(
                 user_query_content=user_query_content_for_summary,
-                channel_id=interaction.channel_id,
+                channel_id=None,
                 bot_state=bot_state_instance,
                 user_id=str(interaction.user.id),
-                synthesized_rag_context_str=synthesized_summary,
-                raw_rag_snippets=raw_snippets
             )
+            # Insert temporal system context to avoid outdated references
+            insert_idx_sum3 = 0
+            for idx, node in enumerate(prompt_nodes_summary):
+                if node.role != "system":
+                    insert_idx_sum3 = idx
+                    break
+                insert_idx_sum3 = idx + 1
+            final_prompt_nodes_summary3 = (
+                prompt_nodes_summary[:insert_idx_sum3]
+                + [MsgNode("system", TEMPORAL_SYSTEM_CONTEXT)]
+                + prompt_nodes_summary[insert_idx_sum3:]
+            )
+
             await stream_llm_response_to_interaction(
-                interaction, llm_client_instance, bot_state_instance, user_msg_node, prompt_nodes_summary,
+                interaction, llm_client_instance, bot_state_instance, user_msg_node, final_prompt_nodes_summary3,
                 title="Tweet Summary for Home Timeline",
                 force_new_followup_flow=True,
-                synthesized_rag_context_for_display=synthesized_summary,
                 bot_user_id=bot_instance.user.id,
-                retrieved_snippets=raw_snippets
             )
         except Exception as e:
             logger.error(
@@ -2885,7 +2958,12 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             for idx, node in enumerate(base_prompt_nodes):
                 if node.role != "system": insert_idx = idx; break
                 insert_idx = idx + 1
-            final_prompt_nodes = base_prompt_nodes[:insert_idx] + [MsgNode("system", ap_task_prompt_text)] + base_prompt_nodes[insert_idx:]
+            # Add temporal grounding to avoid outdated references in image captions
+            final_prompt_nodes = (
+                base_prompt_nodes[:insert_idx]
+                + [MsgNode("system", TEMPORAL_SYSTEM_CONTEXT), MsgNode("system", ap_task_prompt_text)]
+                + base_prompt_nodes[insert_idx:]
+            )
 
             await stream_llm_response_to_interaction(
                 interaction, llm_client_instance, bot_state_instance, user_msg_node, final_prompt_nodes,
@@ -2994,6 +3072,27 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 ephemeral=True,
                 error_hint=" while sending dbcounts result",
             )
+
+    @bot_instance.tree.command(name="rss_podcast", description="Toggle auto-podcast after RSS/allrss chunks in this channel.")
+    @app_commands.describe(enabled="True to enable; False to disable")
+    async def rss_podcast_toggle(interaction: discord.Interaction, enabled: bool):
+        try:
+            if interaction.channel_id is None:
+                await interaction.response.send_message("This command must be used in a channel.", ephemeral=True)
+                return
+            await bot_state_instance.set_podcast_after_rss_enabled(interaction.channel_id, bool(enabled))
+            await interaction.response.send_message(
+                f"Auto-podcast after RSS chunks is now {'ENABLED' if enabled else 'DISABLED'} in this channel.",
+                ephemeral=True,
+            )
+        except Exception as e:
+            logger.error("/rss_podcast toggle failed: %s", e, exc_info=True)
+            try:
+                await interaction.response.send_message(
+                    f"Failed to update setting: {str(e)[:500]}", ephemeral=True
+                )
+            except discord.HTTPException:
+                pass
 
     @bot_instance.tree.command(name="podcastthatshit", description="Triggers the podcast that shit instruction based on current chat history.")
     async def podcastthatshit_slash_command(interaction: discord.Interaction):
