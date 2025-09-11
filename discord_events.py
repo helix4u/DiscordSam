@@ -1,4 +1,5 @@
 import logging
+import re
 import discord # type: ignore
 from discord import app_commands
 from discord.ext import commands, tasks # type: ignore
@@ -308,7 +309,19 @@ def setup_events_and_tasks(bot: commands.Bot, llm_client_in: Any, bot_state_in: 
                 break
 
         scraped_content_accumulator = []
-        if detected_urls_in_text := detect_urls(str(current_text_for_url_detection)):
+        just_urls_only = False
+        detected_urls_in_text = detect_urls(str(current_text_for_url_detection)) or []
+        # Determine if the user message text is only URLs (no other meaningful text)
+        if detected_urls_in_text:
+            remainder_text = str(current_text_for_url_detection)
+            for _u in detected_urls_in_text:
+                remainder_text = remainder_text.replace(_u, " ")
+            # Strip common separators/punctuation; if nothing remains, it's URL-only
+            remainder_text = re.sub(r"[\s\-–—:|,;()\[\]{}'\"“”’]+", "", remainder_text)
+            if remainder_text == "":
+                just_urls_only = True
+
+        if detected_urls_in_text:
             playwright_used_in_loop = False
             temp_screenshots_base_dir = f"temp/screenshots_{message.id}"
 
@@ -445,7 +458,20 @@ def setup_events_and_tasks(bot: commands.Bot, llm_client_in: Any, bot_state_in: 
         rag_query_text = user_message_text_for_processing.strip() if user_message_text_for_processing.strip() else \
                          ("User sent an image/attachment" if image_added_to_prompt else "User sent a message with no textual content.")
 
-        synthesized_rag_summary, raw_rag_snippets = await retrieve_and_prepare_rag_context(llm_client_instance, rag_query_text)
+        # Skip RAG for URL-only or attachment-only (no text) messages
+        attachments_only = False
+        try:
+            attachments_only = (not str(user_message_text_for_processing).strip()) and bool(message.attachments)
+        except Exception:
+            attachments_only = False
+
+        if just_urls_only or attachments_only:
+            reason = "URL-only" if just_urls_only else "attachment-only"
+            logger.info(f"Skipping RAG retrieval: message is {reason} after cleaning.")
+            synthesized_rag_summary = ""
+            raw_rag_snippets = []
+        else:
+            synthesized_rag_summary, raw_rag_snippets = await retrieve_and_prepare_rag_context(llm_client_instance, rag_query_text)
 
         user_msg_node_for_short_term_history = MsgNode("user", user_msg_node_content_final, name=str(message.author.id))
 
