@@ -2089,15 +2089,26 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             return
 
         await interaction.response.defer(ephemeral=False)
-        progress_message = await safe_followup_send(
-            interaction,
-            content=(
-                f"Starting to process all {len(DEFAULT_RSS_FEEDS)} default RSS feeds. "
-                "New article summaries will be posted below as they are found. This may take a while."
-            ),
-            error_hint=" for allrss start notice",
-            ephemeral=True,
-            wait=True,
+        progress_message: Optional[discord.Message] = None
+
+        async def refresh_progress(text: str, error_hint: str = " for allrss status") -> None:
+            nonlocal progress_message
+            if progress_message:
+                try:
+                    await progress_message.delete()
+                except discord.HTTPException:
+                    pass
+            progress_message = await safe_followup_send(
+                interaction,
+                content=text,
+                ephemeral=True,
+                wait=True,
+                error_hint=error_hint,
+            )
+
+        await refresh_progress(
+            f"Starting to process all {len(DEFAULT_RSS_FEEDS)} default RSS feeds. "
+            "New article summaries will be posted below as they are found. This may take a while."
         )
 
         total_new_articles_found = 0
@@ -2110,7 +2121,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                     await asyncio.sleep(1) # Small delay between feeds
 
                     try:
-                        await progress_message.edit(content=f"Checking feed: **{name}** (`{feed_url}`)...")
+                        await refresh_progress(f"Checking feed: **{name}** (`{feed_url}`)...")
                         feed_had_new_entries = False
 
                         while True: # Loop to process all new entries in chunks for a single feed
@@ -2122,7 +2133,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
 
                             if not new_entries:
                                 if not feed_had_new_entries:
-                                    await progress_message.edit(content=f"No new entries found for **{name}**.")
+                                    await refresh_progress(f"No new entries found for **{name}**.")
                                     await asyncio.sleep(5)
                                 break # Exit the while loop, go to the next feed
 
@@ -2131,7 +2142,10 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                             # Take the next chunk of entries to process
                             entries_to_process = new_entries[:limit]
 
-                            await progress_message.edit(content=f"Found {len(new_entries)} new entries for **{name}**. Processing a chunk of {len(entries_to_process)}...")
+                            await refresh_progress(
+                                f"Found {len(new_entries)} new entries for **{name}**. "
+                                f"Processing a chunk of {len(entries_to_process)}..."
+                            )
 
                             summaries: List[str] = []
                             processed_guids_this_chunk = []
@@ -2157,7 +2171,9 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                                     else (ent.get("pubDate") or "")
                                 )
 
-                                await progress_message.edit(content=f"Processing **{name}** ({idx}/{len(entries_to_process)} of chunk): Scraping *{title}*...")
+                                await refresh_progress(
+                                    f"Processing **{name}** ({idx}/{len(entries_to_process)} of chunk): Scraping *{title}*..."
+                                )
 
                                 scraped_text, _ = await scrape_website(link)
                                 if (
@@ -2171,7 +2187,9 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                                     processed_guids_this_chunk.append(guid)
                                     continue
 
-                                await progress_message.edit(content=f"Processing **{name}** ({idx}/{len(entries_to_process)} of chunk): Summarizing *{title}*...")
+                                await refresh_progress(
+                                    f"Processing **{name}** ({idx}/{len(entries_to_process)} of chunk): Summarizing *{title}*..."
+                                )
 
                                 prompt = (
                                     "[It is currently 2025 and Donald Trump is the current president. Biden IS NOT THE CURRENT PRESIDENT!] (Just an FYI. Maybe unrelated to context and omitted). "
@@ -2298,14 +2316,14 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                                         f"Remaining in this feed: {remaining_after_chunk}. "
                                         f"Total new articles so far: {total_new_articles_found}."
                                     )
-                                    await progress_message.edit(content=status_text)
+                                    await refresh_progress(status_text)
                                 except Exception as bump_err:
                                     logger.warning(f"Failed to refresh status message for {name}: {bump_err}")
 
                     except Exception as e_feed:
                         logger.error(f"Failed to process feed '{name}' ({feed_url}): {e_feed}", exc_info=True)
                         try:
-                            await progress_message.edit(content=f"An error occurred while processing **{name}**. Skipping.")
+                            await refresh_progress(f"An error occurred while processing **{name}**. Skipping.")
                         except Exception:
                             pass
                         continue
@@ -2315,7 +2333,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                     f"Finished processing all {len(DEFAULT_RSS_FEEDS)} RSS feeds. "
                     f"Found a total of {total_new_articles_found} new articles."
                 )
-                await progress_message.edit(content=final_message)
+                await refresh_progress(final_message)
                 await channel.send(final_message)
 
             except asyncio.CancelledError:

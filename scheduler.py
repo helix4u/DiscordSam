@@ -44,11 +44,19 @@ async def run_allrss_digest(
     header: Optional[discord.Message] = None
     if status_interaction:
         try:
-            header = await status_interaction.followup.send(
-                content=f"Starting scheduled RSS digest (limit {limit}).",
-                ephemeral=True,
-                wait=True,
-            )
+            if status_interaction.response.is_done():
+                header = await status_interaction.followup.send(
+                    content=f"Starting scheduled RSS digest (limit {limit}).",
+                    ephemeral=True,
+                    wait=True,
+                )
+            else:
+                await status_interaction.response.defer(ephemeral=True)
+                header = await status_interaction.followup.send(
+                    content=f"Starting scheduled RSS digest (limit {limit}).",
+                    ephemeral=True,
+                    wait=True,
+                )
         except Exception:
             header = None
     if header is None:
@@ -96,9 +104,22 @@ async def run_allrss_digest(
                 status_text = f"[{name}] {idx}/{len(to_process)}: Scraping {title}…"
                 if header:
                     try:
-                        await header.edit(content=status_text)
+                        await header.delete()
                     except Exception:
                         pass
+                    header = None
+
+                if status_interaction:
+                    try:
+                        header = await status_interaction.followup.send(
+                            content=status_text,
+                            ephemeral=True,
+                            wait=True,
+                        )
+                    except Exception:
+                        header = None
+                if header is None:
+                    header = await ch.send(status_text)
 
                 scraped_text, _ = await scrape_website(link)
                 if (
@@ -163,6 +184,27 @@ async def run_allrss_digest(
                     await send_tts_audio(ch, combined_feed, base_filename=f"scheduled_rss_{channel_id}_{name}")
                 except Exception as tts_exc:
                     logger.error("Scheduled allrss: TTS failed for %s: %s", name, tts_exc)
+
+                completion_text = (
+                    f"✅ Finished processing **{name}**. Posted {len(feed_summaries)} summary(ies)."
+                )
+                if header:
+                    try:
+                        await header.delete()
+                    except Exception:
+                        pass
+                    header = None
+                if status_interaction:
+                    try:
+                        header = await status_interaction.followup.send(
+                            content=completion_text,
+                            ephemeral=True,
+                            wait=True,
+                        )
+                    except Exception:
+                        header = None
+                if header is None:
+                    header = await ch.send(completion_text)
 
                 if bot_state:
                     try:
