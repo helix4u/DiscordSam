@@ -6,7 +6,9 @@ from datetime import datetime
 import discord
 
 from config import config
-from rag_chroma_manager import store_rss_summary
+from rag_chroma_manager import store_rss_summary, ingest_conversation_to_chromadb
+from common_models import MsgNode
+from rss_cache import load_seen_entries, save_seen_entries
 from utils import chunk_text
 from web_utils import fetch_rss_entries, scrape_website
 from openai_api import create_chat_completion, extract_text
@@ -22,6 +24,7 @@ async def run_allrss_digest(
     *,
     limit: int = 10,
     bot_state: Optional[Any] = None,
+    status_interaction: Optional[discord.Interaction] = None,
 ) -> None:
     """Post a combined RSS digest to a channel without requiring an interaction.
 
@@ -38,11 +41,22 @@ async def run_allrss_digest(
         return
 
 
-    header = await ch.send(
-        content=(
-            f"Starting scheduled RSS digest (limit {limit}). This may take a while…"
+    header: Optional[discord.Message] = None
+    if status_interaction:
+        try:
+            header = await status_interaction.followup.send(
+                content=f"Starting scheduled RSS digest (limit {limit}).",
+                ephemeral=True,
+                wait=True,
+            )
+        except Exception:
+            header = None
+    if header is None:
+        header = await ch.send(
+            content=(
+                f"Starting scheduled RSS digest (limit {limit}). This may take a while…"
+            )
         )
-    )
 
     total_summaries: List[str] = []
 
@@ -71,14 +85,20 @@ async def run_allrss_digest(
 
             feed_summaries: List[str] = []
 
+            seen_record = load_seen_entries()
+            seen_ids = set(seen_record.get(feed_url, []))
+
             for idx, ent in enumerate(to_process, 1):
                 title = ent.get("title") or "Untitled"
                 link = ent.get("link") or ""
+                guid = ent.get("guid") or link
 
-                try:
-                    await header.edit(content=f"[{name}] {idx}/{len(to_process)}: Scraping {title}…")
-                except Exception:
-                    pass
+                status_text = f"[{name}] {idx}/{len(to_process)}: Scraping {title}…"
+                if header:
+                    try:
+                        await header.edit(content=status_text)
+                    except Exception:
+                        pass
 
                 scraped_text, _ = await scrape_website(link)
                 if (
@@ -89,6 +109,7 @@ async def run_allrss_digest(
                 ):
                     summary_entry = f"[{name}] **{title}**\n{link}\nCould not scrape article\n"
                     feed_summaries.append(summary_entry)
+                    seen_ids.add(guid)
                     continue
 
                 prompt = (
@@ -123,6 +144,7 @@ async def run_allrss_digest(
 
                 summary_entry = f"[{name}] **{title}**\n{link}\n{summary}\n"
                 feed_summaries.append(summary_entry)
+                seen_ids.add(guid)
                 await asyncio.sleep(0.2)
 
             if feed_summaries:
@@ -142,15 +164,45 @@ async def run_allrss_digest(
                 except Exception as tts_exc:
                     logger.error("Scheduled allrss: TTS failed for %s: %s", name, tts_exc)
 
-        if not total_summaries:
-            await header.edit(content="Scheduled RSS digest found nothing new.")
-        else:
-            await header.edit(content=f"Scheduled RSS digest completed. Posted {len(total_summaries)} article summaries.")
+                if bot_state:
+                    try:
+                        user_node = MsgNode("user", f"Scheduled digest chunk for {name}", name=str(channel_id))
+                        assistant_node = MsgNode(
+                            "assistant",
+                            combined_feed,
+                            name=str(bot.user.id) if bot.user else None,
+                        )
+                        ingest_task = ingest_conversation_to_chromadb(
+                            llm_client,
+                            channel_id,
+                            channel_id,
+                            [user_node, assistant_node],
+                            None,
+                        )
+                        await ingest_task
+                    except Exception as ingest_exc:
+                        logger.error("Scheduled allrss: Failed to ingest chunk into RAG: %s", ingest_exc, exc_info=True)
+
+            seen_record[feed_url] = list(seen_ids)
+            save_seen_entries(seen_record)
+
+        if header:
+            if not total_summaries:
+                try:
+                    await header.edit(content="Scheduled RSS digest found nothing new.")
+                except Exception:
+                    pass
+            else:
+                try:
+                    await header.edit(content=f"Scheduled RSS digest completed. Posted {len(total_summaries)} article summaries.")
+                except Exception:
+                    pass
     except asyncio.CancelledError:
-        try:
-            await header.edit(content="Scheduled RSS digest cancelled.")
-        except Exception:
-            pass
+        if header:
+            try:
+                await header.edit(content="Scheduled RSS digest cancelled.")
+            except Exception:
+                pass
         await ch.send("Scheduled RSS digest cancelled.")
         raise
     finally:
