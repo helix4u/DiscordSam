@@ -22,6 +22,7 @@ DiscordSam is an advanced, context-aware Discord bot designed to provide intelli
     *   Perform web searches (optionally via a local SearXNG instance) and summarize results.
     *   Fetch and summarize recent tweets from X/Twitter users.
     *   Process RSS feeds, summarizing new articles.
+    *   Validate user-supplied URLs before scraping to block localhost and private-network targets for safety.
 *   **Multimedia Interaction:**
     *   Analyze and describe attached images (with a creative "AP Photo" twist using a vision LLM).
     *   Transcribe attached audio files using a local Whisper model.
@@ -186,6 +187,8 @@ Below is a comprehensive list of environment variables used by DiscordSam, along
     *   Example: `123456789012345678,987654321098765432`
 *   `ALLOWED_ROLE_IDS` (Optional): A comma-separated list of Discord role IDs. If set, users must have at least one of these roles for the bot to respond to their general messages in allowed channels. Does not affect DMs or direct mentions. If empty, no role restrictions apply (beyond channel/mention checks).
     *   Example: `112233445566778899,009988776655443322`
+*   `ADMIN_USER_IDS` (Optional but recommended): Comma-separated Discord user IDs that are allowed to run privileged commands such as `/ingest_chatgpt_export`, `/analytics`, and `/memoryinspector`. These commands are disabled if this variable is not set.
+*   `CHATGPT_EXPORT_IMPORT_ROOT` (Optional, Default: current working directory): Absolute or relative path that bounds where `/ingest_chatgpt_export` is allowed to read `conversations.json` files from. Paths outside this directory are rejected for safety.
 *   `SYSTEM_PROMPT_FILE` (Default: `system_prompt.md`): Path to a text or markdown file containing the main system prompt that defines the bot's persona and core instructions.
 *   `USER_PROVIDED_CONTEXT` (Optional): Additional global context that will be prepended to the system prompt for every LLM interaction. Useful for providing persistent high-level instructions or information.
 
@@ -330,12 +333,13 @@ DiscordSam offers a variety of slash commands for diverse functionalities. Here'
     *   **Purpose:** Ingests conversations from a ChatGPT data export file (`conversations.json`) into the bot's long-term memory (ChromaDB).
     *   **Arguments:**
         *   `file_path` (Required): The full local path to your `conversations.json` file.
-    *   **Permissions:** Requires 'Manage Messages' permission.
+    *   **Access Control:** Only Discord user IDs listed in the `ADMIN_USER_IDS` environment variable may run this command. The target file must reside inside the directory specified by `CHATGPT_EXPORT_IMPORT_ROOT` (defaults to the bot's working directory).
     *   **Behavior:**
-        1.  Parses the `conversations.json` file.
-        2.  For each conversation, it stores the full text in the main chat history collection (`CHROMA_COLLECTION_NAME`).
-        3.  It then distills each conversation (typically the last user/assistant turn, or full text as fallback) into keyword-rich sentences using an LLM.
-        4.  These distilled sentences are stored in `CHROMA_DISTILLED_COLLECTION_NAME` (prefixed with a `Conversation recorded at:` timestamp) and linked to the full conversation document, enabling RAG.
+        1.  Validates admin identity and ensures the file path is inside the allowed import directory.
+        2.  Parses the `conversations.json` file.
+        3.  For each conversation, it stores the full text in the main chat history collection (`CHROMA_COLLECTION_NAME`).
+        4.  It then distills each conversation (typically the last user/assistant turn, or full text as fallback) into keyword-rich sentences using an LLM.
+        5.  These distilled sentences are stored in `CHROMA_DISTILLED_COLLECTION_NAME` (prefixed with a `Conversation recorded at:` timestamp) and linked to the full conversation document, enabling RAG.
     *   **Output:** An ephemeral message confirming the number of conversations successfully processed and stored.
 
 *   **`/remindme <time_duration> <reminder_message>`**
@@ -351,6 +355,21 @@ DiscordSam offers a variety of slash commands for diverse functionalities. Here'
     *   **Output:**
         *   Immediate: A confirmation message that the reminder has been set.
         *   Later: When due, the bot sends a message in the original channel, mentioning the user with the reminder message and providing TTS.
+
+*   **`/analytics`**
+    *   **Purpose:** Provides an admin-only snapshot of the bot's operational metrics.
+    *   **Access Control:** Limited to users in `ADMIN_USER_IDS`.
+    *   **Behavior:** Summarizes cached message counts per channel, active reminder totals, the most recent Playwright usage time, RSS auto-podcast status, and ChromaDB collection sizes, returning the data in an embed (ephemeral by default).
+    *   **Output:** A compact analytics dashboard highlighting the bot's current workload and storage footprint.
+
+*   **`/memoryinspector <scope> [limit]`**
+    *   **Purpose:** Lets admins review the most recent stored memories for the current channel.
+    *   **Arguments:**
+        *   `scope` (Required): Either "Distilled summaries" (RAG-ready snippets) or "Full conversation logs".
+        *   `limit` (Optional, Default: 5): Number of items to display (1–10).
+    *   **Access Control:** Limited to users in `ADMIN_USER_IDS`.
+    *   **Behavior:** Fetches the latest matching entries from ChromaDB, orders them by timestamp, and presents previews in an ephemeral embed so admins can audit what the bot is storing.
+    *   **Output:** An embed containing timestamped IDs and trimmed previews of the requested memories.
 
 *   **`/roast <url>`**
     *   **Purpose:** Generates a short, witty, and biting comedy roast routine based on the content of a given webpage.
@@ -588,7 +607,7 @@ Several helper scripts are provided for upkeep and optional functionality:
 *   **Playwright Processes:** If Chromium or Playwright processes remain running after scraping, the bot has a built-in task (`cleanup_playwright_task` in `discord_events.py`) that attempts to clean them up periodically based on `PLAYWRIGHT_CLEANUP_INTERVAL_MINUTES` and `PLAYWRIGHT_IDLE_CLEANUP_THRESHOLD_MINUTES`. You can also manually kill these processes if needed.
 *   **Model Not Found Errors:** Ensure the model names specified in your `.env` file (e.g., `LLM`, `VISION_LLM_MODEL`, `FAST_LLM_MODEL`) exactly match the models loaded and available on your LLM server at `LOCAL_SERVER_URL`.
 *   **Connection Errors:** Verify that all specified server URLs (`LOCAL_SERVER_URL`, `TTS_API_URL`, `SEARX_URL`) are correct and that the respective services are running and accessible from where the bot is running.
-*   **Permissions:** If slash commands don't appear or certain commands fail, check the bot's permissions in your Discord server settings. It generally needs permissions to read messages, send messages, use embeds, attach files, and use slash commands. Some commands like `/clearhistory` or `/ingest_chatgpt_export` might require 'Manage Messages'.
+*   **Permissions:** If slash commands don't appear or certain commands fail, check the bot's permissions in your Discord server settings. It generally needs permissions to read messages, send messages, use embeds, attach files, and use slash commands. Commands such as `/clearhistory` still require 'Manage Messages', and admin-focused commands (`/ingest_chatgpt_export`, `/analytics`, `/memoryinspector`) additionally require the invoking user's ID to be present in `ADMIN_USER_IDS`.
 
 ---
 
@@ -617,3 +636,23 @@ Found a bug? Have a feature request? Want to contribute?
 
 We welcome contributions to improve and expand DiscordSam!
 
+*   **`/schedule_allrss <interval_minutes> [limit]`**
+    *   **Purpose:** Schedule recurring all-feeds RSS digests for the current channel.
+    *   **Access Control:** Admin-only (`ADMIN_USER_IDS`).
+    *   **Arguments:**
+        *   `interval_minutes` (Required, min 15): How frequently to run.
+        *   `limit` (Optional, Default: 10): Max entries per feed each run.
+    *   **Behavior:** Registers a background job that periodically posts combined RSS summaries into the channel.
+
+*   **`/schedules`**
+    *   **Purpose:** List scheduled jobs for the current channel.
+    *   **Access Control:** Admin-only (`ADMIN_USER_IDS`).
+
+*   **`/unschedule <schedule_id>`**
+    *   **Purpose:** Remove a scheduled job by its ID as shown in `/schedules`.
+    *   **Access Control:** Admin-only (`ADMIN_USER_IDS`).
+
+*   **`/cancel`**
+    *   **Purpose:** Cancel the current long-running task (e.g., `/allrss`, scheduled digest) in the active channel.
+    *   **Access Control:** Admin-only (`ADMIN_USER_IDS`).
+    *   **Behavior:** Requests cancellation of the tracked task; the task posts a short confirmation as it exits.

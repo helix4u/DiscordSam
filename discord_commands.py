@@ -3,10 +3,11 @@ import discord
 from discord import app_commands  # type: ignore
 from discord.ext import commands  # For bot type hint
 import os
+from pathlib import Path
 import base64
 import random
 import asyncio
-import math
+import textwrap
 from typing import Any, Optional, List  # Keep existing imports
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
@@ -24,9 +25,11 @@ from rag_chroma_manager import (
     retrieve_and_prepare_rag_context,
     parse_chatgpt_export,
     store_chatgpt_conversations_in_chromadb,
-    
+
     store_rss_summary,  # New import
     ingest_conversation_to_chromadb,
+    get_chroma_collection_counts,
+    fetch_recent_channel_memories,
 )
 import rag_chroma_manager as rcm
 import aiohttp
@@ -48,6 +51,7 @@ from utils import (
     safe_followup_send,
     safe_message_edit,
     start_post_processing_task,
+    is_admin_user,
 )
 from rss_cache import load_seen_entries, save_seen_entries
 from twitter_cache import load_seen_tweet_ids, save_seen_tweet_ids # New import
@@ -133,6 +137,11 @@ GROUND_NEWS_TOPIC_CHOICES = [
     app_commands.Choice(name=disp, value=slug)
     for slug, (disp, _) in GROUND_NEWS_TOPICS.items()
 ]
+
+MEMORY_SCOPE_CHOICES = [
+    app_commands.Choice(name="Distilled summaries", value="distilled"),
+    app_commands.Choice(name="Full conversation logs", value="full"),
+]
 # Module-level globals to store instances passed from main_bot.py
 bot_instance: Optional[commands.Bot] = None
 llm_client_instance: Optional[Any] = None
@@ -216,7 +225,12 @@ async def process_rss_feed(
         )
 
         scraped_text, _ = await scrape_website(link)
-        if not scraped_text or "Failed to scrape" in scraped_text or "Scraping timed out" in scraped_text:
+        if (
+            not scraped_text
+            or "Failed to scrape" in scraped_text
+            or "Scraping timed out" in scraped_text
+            or "Blocked from fetching URL" in scraped_text
+        ):
             summaries.append(f"**{title}**\n{pub_date}\n{link}\nCould not scrape article\n")
             seen_ids.add(guid)
             continue
@@ -320,16 +334,16 @@ async def process_rss_feed(
     except discord.HTTPException:
         progress_msg = None
 
-        start_post_processing_task(
-            ingest_conversation_to_chromadb(
-                llm_client_instance,
-                interaction.channel_id,
-                interaction.user.id,
-                [user_msg, assistant_msg],
-                None,
-            ),
-            progress_message=progress_msg,
-        )
+    start_post_processing_task(
+        ingest_conversation_to_chromadb(
+            llm_client_instance,
+            interaction.channel_id,
+            interaction.user.id,
+            [user_msg, assistant_msg],
+            None,
+        ),
+        progress_message=progress_msg,
+    )
 
     return True
 
@@ -371,7 +385,12 @@ async def process_ground_news(
         )
 
         scraped_text, _ = await scrape_website(art.url)
-        if not scraped_text or "Failed to scrape" in scraped_text or "Scraping timed out" in scraped_text:
+        if (
+            not scraped_text
+            or "Failed to scrape" in scraped_text
+            or "Scraping timed out" in scraped_text
+            or "Blocked from fetching URL" in scraped_text
+        ):
             summaries.append(f"**{art.title}**\n{art.url}\nCould not scrape article\n")
             seen_urls.add(art.url)
             continue
@@ -531,7 +550,12 @@ async def process_ground_news_topic(
         )
 
         scraped_text, _ = await scrape_website(art.url)
-        if not scraped_text or "Failed to scrape" in scraped_text or "Scraping timed out" in scraped_text:
+        if (
+            not scraped_text
+            or "Failed to scrape" in scraped_text
+            or "Scraping timed out" in scraped_text
+            or "Blocked from fetching URL" in scraped_text
+        ):
             summaries.append(f"**{art.title}**\n{art.url}\nCould not scrape article\n")
             seen_urls.add(art.url)
             continue
@@ -1100,9 +1124,14 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 if bot_state_instance and hasattr(bot_state_instance, 'update_last_playwright_usage_time'):
                     await bot_state_instance.update_last_playwright_usage_time() # Made awaitable
 
-                scraped_content = await scrape_website(article_url)
+                scraped_content, _ = await scrape_website(article_url)
 
-                if not scraped_content or "Failed to scrape" in scraped_content or "Scraping timed out" in scraped_content:
+                if (
+                    not scraped_content
+                    or "Failed to scrape" in scraped_content
+                    or "Scraping timed out" in scraped_content
+                    or "Blocked from fetching URL" in scraped_content
+                ):
                     logger.warning(f"Failed to scrape '{article_title}' from {article_url}. Reason: {scraped_content}")
                     article_summaries_for_briefing.append(f"Source: {article_title} ({article_url})\nSummary: [Could not retrieve content for summarization]\n\n")
                     continue
@@ -1250,8 +1279,16 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
 
     @bot_instance.tree.command(name="ingest_chatgpt_export", description="Ingests a conversations.json file from a ChatGPT export.")
     @app_commands.describe(file_path="The full local path to your conversations.json file.")
-    @app_commands.checks.has_permissions(manage_messages=False)
     async def ingest_chatgpt_export_command(interaction: discord.Interaction, file_path: str):
+        if not config.ADMIN_USER_IDS:
+            logger.error("ADMIN_USER_IDS env variable is not configured; refusing to run /ingest_chatgpt_export.")
+            await interaction.response.send_message("This command is disabled until ADMIN_USER_IDS is configured.", ephemeral=True)
+            return
+
+        if not is_admin_user(interaction.user.id):
+            await interaction.response.send_message("You are not authorized to run this admin command.", ephemeral=True)
+            return
+
         if not llm_client_instance:
             logger.error("ingest_chatgpt_export_command: llm_client_instance is None.")
             await interaction.response.send_message("LLM client not available. Cannot process.", ephemeral=True)
@@ -1260,16 +1297,42 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
         await interaction.response.defer(ephemeral=True)
         logger.info(f"Ingestion of ChatGPT export file '{file_path}' initiated by {interaction.user.name} ({interaction.user.id}).")
 
-        if not os.path.exists(file_path):
+        base_dir_env = os.getenv("CHATGPT_EXPORT_IMPORT_ROOT")
+        base_dir = Path(base_dir_env).expanduser().resolve() if base_dir_env else Path.cwd().resolve()
+
+        try:
+            requested_path = Path(file_path).expanduser().resolve()
+        except (OSError, RuntimeError) as exc:
             await safe_followup_send(
                 interaction,
-                content=f"Error: File not found at the specified path: `{file_path}`",
+                content=f"Error: Unable to resolve the provided path: {exc}",
+                ephemeral=True,
+            )
+            return
+
+        if not requested_path.is_file():
+            await safe_followup_send(
+                interaction,
+                content=f"Error: File not found at the specified path: `{requested_path}`",
                 ephemeral=True,
             )
             return
 
         try:
-            parsed_conversations = parse_chatgpt_export(file_path)
+            requested_path.relative_to(base_dir)
+        except ValueError:
+            await safe_followup_send(
+                interaction,
+                content=(
+                    "Error: That file path is outside the allowed import directory. "
+                    "Move the export under the configured CHATGPT_EXPORT_IMPORT_ROOT and retry."
+                ),
+                ephemeral=True,
+            )
+            return
+
+        try:
+            parsed_conversations = parse_chatgpt_export(str(requested_path))
             if not parsed_conversations:
                 await safe_followup_send(
                     interaction,
@@ -1308,6 +1371,259 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                     ephemeral=True,
                     error_hint=" in ingest export error handler",
                 )
+
+    @bot_instance.tree.command(name="analytics", description="Display an admin analytics dashboard for the bot.")
+    async def analytics_command(interaction: discord.Interaction):
+        if not bot_state_instance:
+            await interaction.response.send_message("Bot state not ready.", ephemeral=True)
+            return
+
+        if not config.ADMIN_USER_IDS or not is_admin_user(interaction.user.id):
+            await interaction.response.send_message("This command is restricted to bot administrators.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        history_counts = await bot_state_instance.get_history_counts()
+        reminders_count = await bot_state_instance.get_reminder_count()
+        last_playwright = await bot_state_instance.get_last_playwright_usage_time()
+        rss_toggle_channels = await bot_state_instance.get_podcast_after_rss_channels()
+        chroma_counts = await get_chroma_collection_counts()
+
+        total_cached_messages = sum(history_counts.values())
+        top_channels = sorted(history_counts.items(), key=lambda item: item[1], reverse=True)[:5]
+        top_channels_text = (
+            "\n".join(
+                f"• <#{channel_id}>: {count} message(s) cached"
+                for channel_id, count in top_channels
+            )
+            if top_channels
+            else "No cached messages yet."
+        )
+
+        reminder_text = f"{reminders_count} active reminder(s)."
+
+        if rss_toggle_channels:
+            rss_lines = [f"<#{cid}>" for cid, enabled in rss_toggle_channels.items() if enabled]
+            rss_text = f"{len(rss_lines)} channel(s): " + ", ".join(rss_lines) if rss_lines else "None"
+        else:
+            rss_text = "None"
+
+        if last_playwright:
+            last_playwright_display = last_playwright.astimezone().strftime("%Y-%m-%d %H:%M %Z")
+        else:
+            last_playwright_display = "Never used"
+
+        chroma_text = (
+            "\n".join(f"• {name}: {count}" for name, count in sorted(chroma_counts.items()))
+            if chroma_counts
+            else "No Chroma collections initialized."
+        )
+
+        embed = discord.Embed(
+            title="Conversation Analytics Dashboard",
+            color=config.EMBED_COLOR["complete"],
+        )
+        embed.add_field(
+            name="Message history cache",
+            value=(
+                f"Total cached messages: {total_cached_messages} across {len(history_counts)} channel(s).\n"
+                f"{top_channels_text}"
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="Reminders",
+            value=reminder_text,
+            inline=True,
+        )
+        embed.add_field(
+            name="Auto podcast after RSS",
+            value=rss_text,
+            inline=True,
+        )
+        embed.add_field(
+            name="Playwright last used",
+            value=last_playwright_display,
+            inline=False,
+        )
+        embed.add_field(
+            name="ChromaDB collection counts",
+            value=chroma_text,
+            inline=False,
+        )
+        embed.set_footer(text="Analytics visible to configured bot administrators only.")
+
+        await interaction.edit_original_response(embed=embed)
+
+    @bot_instance.tree.command(name="schedule_allrss", description="Schedule periodic RSS digests for this channel (admin only).")
+    @app_commands.describe(
+        interval_minutes="How often to run (minimum 15 minutes).",
+        limit="Max entries per feed per run (1-50).",
+    )
+    async def schedule_allrss_command(
+        interaction: discord.Interaction,
+        interval_minutes: app_commands.Range[int, 15, 1440],
+        limit: app_commands.Range[int, 1, 50] = 10,
+    ):
+        if not config.ADMIN_USER_IDS or not is_admin_user(interaction.user.id):
+            await interaction.response.send_message("This command is restricted to bot administrators.", ephemeral=True)
+            return
+
+        if interaction.channel_id is None:
+            await interaction.response.send_message("No channel ID present for scheduling.", ephemeral=True)
+            return
+
+        # Prevent overlapping RSS digests
+        cancelled = await bot_state_instance.cancel_active_task(interaction.channel_id)
+        if cancelled:
+            await asyncio.sleep(0)
+
+        await interaction.response.defer(ephemeral=True)
+
+        sched = {
+            "id": f"allrss_{interaction.channel_id}_{int(datetime.now().timestamp())}",
+            "channel_id": interaction.channel_id,
+            "type": "allrss",
+            "interval_seconds": int(interval_minutes) * 60,
+            "params": {"limit": int(limit)},
+            "last_run": None,
+            "created_by": str(interaction.user.id),
+        }
+        await bot_state_instance.add_schedule(sched)
+
+        await interaction.edit_original_response(
+            content=(
+                f"Scheduled all-RSS digest every {interval_minutes} minute(s) in this channel. "
+                f"Schedule ID: `{sched['id']}`. Limit per feed: {limit}."
+            )
+        )
+
+    @bot_instance.tree.command(name="schedules", description="List scheduled jobs for this channel (admin only).")
+    async def schedules_list_command(interaction: discord.Interaction):
+        if not config.ADMIN_USER_IDS or not is_admin_user(interaction.user.id):
+            await interaction.response.send_message("This command is restricted to bot administrators.", ephemeral=True)
+            return
+        if interaction.channel_id is None:
+            await interaction.response.send_message("No channel available.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        items = await bot_state_instance.list_schedules(interaction.channel_id)
+        if not items:
+            await interaction.edit_original_response(content="No schedules configured for this channel.")
+            return
+        lines = []
+        now = datetime.now()
+        for s in items:
+            last_run = s.get("last_run") or "never"
+            interval_sec = int(s.get("interval_seconds", 0))
+            interval_min = interval_sec // 60 if interval_sec else 0
+            lines.append(
+                f"• `{s.get('id','?')}` – {s.get('type')} every {interval_min} minute(s); last run: {last_run}"
+            )
+        await interaction.edit_original_response(content="\n".join(lines))
+
+    @bot_instance.tree.command(name="unschedule", description="Remove a scheduled job by ID (admin only).")
+    @app_commands.describe(schedule_id="The ID returned by /schedules")
+    async def unschedule_command(interaction: discord.Interaction, schedule_id: str):
+        if not config.ADMIN_USER_IDS or not is_admin_user(interaction.user.id):
+            await interaction.response.send_message("This command is restricted to bot administrators.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        ok = await bot_state_instance.remove_schedule(schedule_id)
+        if ok:
+            await interaction.edit_original_response(content=f"Removed schedule `{schedule_id}`.")
+        else:
+            await interaction.edit_original_response(content=f"No schedule found with ID `{schedule_id}`.")
+
+    @unschedule_command.autocomplete("schedule_id")
+    async def unschedule_schedule_id_autocomplete(
+        interaction: discord.Interaction,
+        current: str,
+    ) -> List[app_commands.Choice[str]]:
+        if not bot_state_instance or interaction.channel_id is None:
+            return []
+        try:
+            schedules = await bot_state_instance.list_schedules(interaction.channel_id)
+        except Exception:
+            return []
+
+        matches: List[app_commands.Choice[str]] = []
+        current_lower = (current or "").lower()
+        for sched in schedules:
+            sched_id = str(sched.get("id", ""))
+            if not sched_id:
+                continue
+            if current_lower and current_lower not in sched_id.lower():
+                continue
+            label = f"{sched.get('type', 'unknown')} ({sched_id})"
+            matches.append(app_commands.Choice(name=label[:100], value=sched_id))
+            if len(matches) >= 25:
+                break
+        return matches
+
+    @bot_instance.tree.command(name="cancel", description="Cancel the current long-running task in this channel (admin only).")
+    async def cancel_command(interaction: discord.Interaction):
+        if not config.ADMIN_USER_IDS or not is_admin_user(interaction.user.id):
+            await interaction.response.send_message("This command is restricted to bot administrators.", ephemeral=True)
+            return
+        if interaction.channel_id is None:
+            await interaction.response.send_message("No channel available to cancel tasks.", ephemeral=True)
+            return
+
+        cancelled = await bot_state_instance.cancel_active_task(interaction.channel_id)
+        if cancelled:
+            await interaction.response.send_message("Cancellation requested. The task will stop shortly.", ephemeral=True)
+        else:
+            await interaction.response.send_message("No active task to cancel in this channel.", ephemeral=True)
+
+    @bot_instance.tree.command(name="memoryinspector", description="Inspect stored memories for this channel.")
+    @app_commands.choices(scope=MEMORY_SCOPE_CHOICES)
+    @app_commands.describe(limit="Number of entries to show (1-10).")
+    async def memory_inspector_command(
+        interaction: discord.Interaction,
+        scope: app_commands.Choice[str],
+        limit: app_commands.Range[int, 1, 10] = 5,
+    ):
+        if not bot_state_instance:
+            await interaction.response.send_message("Bot state not ready.", ephemeral=True)
+            return
+
+        if not config.ADMIN_USER_IDS or not is_admin_user(interaction.user.id):
+            await interaction.response.send_message("This command is restricted to bot administrators.", ephemeral=True)
+            return
+
+        if interaction.channel_id is None:
+            await interaction.response.send_message("Unable to determine channel for this interaction.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        records = await fetch_recent_channel_memories(scope.value, interaction.channel_id, limit)
+        if not records:
+            await interaction.edit_original_response(content="No stored memories found for this channel and scope.")
+            return
+
+        lines = []
+        for record in records:
+            timestamp = record.get("timestamp")
+            if isinstance(timestamp, datetime):
+                timestamp_text = timestamp.astimezone().strftime("%Y-%m-%d %H:%M %Z")
+            else:
+                timestamp_text = "Unknown timestamp"
+
+            document_text = record.get("document", "")
+            preview = textwrap.shorten(document_text.replace("\n", " "), width=560, placeholder="…")
+            lines.append(f"**{timestamp_text}** • `{record.get('id', 'unknown')}`\n{preview}")
+
+        embed = discord.Embed(
+            title=f"Memory inspector ({scope.name})",
+            description="\n\n".join(lines),
+            color=config.EMBED_COLOR["complete"],
+        )
+        embed.set_footer(text="Showing the most recent stored items for this channel.")
+
+        await interaction.edit_original_response(embed=embed)
 
 
     @bot_instance.tree.command(name="remindme", description="Sets a reminder. E.g., /remindme 1h30m Check the oven.")
@@ -1356,8 +1672,13 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             logger.debug(f"Updated last_playwright_usage_time via bot_state_instance for /roast command")
 
         try:
-            webpage_text = await scrape_website(url)
-            if not webpage_text or "Failed to scrape" in webpage_text or "Scraping timed out" in webpage_text:
+            webpage_text, _ = await scrape_website(url)
+            if (
+                not webpage_text
+                or "Failed to scrape" in webpage_text
+                or "Scraping timed out" in webpage_text
+                or "Blocked from fetching URL" in webpage_text
+            ):
                 error_message = f"Sorry, I couldn't properly roast {url}. Reason: {webpage_text or 'Could not retrieve any content from the page.'}"
                 if interaction.channel:
                     progress_message = await safe_message_edit(
@@ -1485,9 +1806,14 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 if bot_state_instance and hasattr(bot_state_instance, 'update_last_playwright_usage_time'):
                     await bot_state_instance.update_last_playwright_usage_time()
 
-                scraped_content = await scrape_website(page_url)
+                scraped_content, _ = await scrape_website(page_url)
 
-                if not scraped_content or "Failed to scrape" in scraped_content or "Scraping timed out" in scraped_content:
+                if (
+                    not scraped_content
+                    or "Failed to scrape" in scraped_content
+                    or "Scraping timed out" in scraped_content
+                    or "Blocked from fetching URL" in scraped_content
+                ):
                     logger.warning(f"Failed to scrape '{page_title}' from {page_url} for search. Reason: {scraped_content}")
                     page_summaries_for_final_synthesis.append(f"Source: {page_title} ({page_url})\nSummary: [Could not retrieve content for summarization]\n\n")
                     continue
@@ -1774,6 +2100,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
         channel = interaction.channel
 
         async with scrape_lock:
+            await bot_state_instance.set_active_task(interaction.channel_id, asyncio.current_task())
             try:
                 for name, feed_url in DEFAULT_RSS_FEEDS:
                     await asyncio.sleep(1) # Small delay between feeds
@@ -1830,7 +2157,12 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                                 await status_message.edit(content=f"Processing **{name}** ({idx}/{len(entries_to_process)} of chunk): Scraping *{title}*...")
 
                                 scraped_text, _ = await scrape_website(link)
-                                if not scraped_text or "Failed to scrape" in scraped_text or "Scraping timed out" in scraped_text:
+                                if (
+                                    not scraped_text
+                                    or "Failed to scrape" in scraped_text
+                                    or "Scraping timed out" in scraped_text
+                                    or "Blocked from fetching URL" in scraped_text
+                                ):
                                     summary_line = f"**{title}**\n{pub_date}\n{link}\nCould not scrape article\n"
                                     summaries.append(summary_line)
                                     processed_guids_this_chunk.append(guid)
@@ -1992,9 +2324,14 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 )
                 await channel.send(final_message)
 
+            except asyncio.CancelledError:
+                await channel.send("`/allrss` command cancelled.")
+                return
             except Exception as e:
                 logger.error(f"A critical error occurred in the main /allrss loop: {e}", exc_info=True)
                 await channel.send(f"The `/allrss` command encountered a critical error and had to stop: {str(e)[:500]}")
+            finally:
+                await bot_state_instance.clear_active_task(interaction.channel_id)
 
     @bot_instance.tree.command(name="gettweets", description="Fetches and summarizes recent tweets from a user.")
     @app_commands.describe(

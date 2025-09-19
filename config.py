@@ -116,6 +116,9 @@ class Config:
         self.ALLOWED_CHANNEL_IDS = _parse_int_list("ALLOWED_CHANNEL_IDS")
         self.ALLOWED_ROLE_IDS = _parse_int_list("ALLOWED_ROLE_IDS")
 
+        # IDs of users allowed to run privileged admin-only commands.
+        self.ADMIN_USER_IDS = _parse_int_list("ADMIN_USER_IDS")
+
         self.MAX_IMAGES_PER_MESSAGE = _get_int("MAX_IMAGES_PER_MESSAGE", 1)
         self.MAX_MESSAGE_HISTORY = _get_int("MAX_MESSAGE_HISTORY", 10)
         self.MAX_COMPLETION_TOKENS = _get_int("MAX_COMPLETION_TOKENS", 2048)
@@ -131,7 +134,6 @@ class Config:
         self.TTS_MAX_AUDIO_BYTES = _get_int("TTS_MAX_AUDIO_BYTES", 8 * 1024 * 1024)
         self.TTS_SPEED = _get_float("TTS_SPEED", 1.3)
         self.TTS_REQUEST_TIMEOUT_SECONDS = _get_int("TTS_REQUEST_TIMEOUT_SECONDS", 180)
-        self.TTS_CHARACTER_LIMIT = _get_int("TTS_CHARACTER_LIMIT", 2500)
 
         self.SEARX_URL = os.getenv("SEARX_URL", "http://192.168.1.3:9092/search")
         # Changed default for SEARX_PREFERENCES to an empty string.

@@ -1263,6 +1263,96 @@ async def store_rss_summary(feed_url: str, article_url: str, title: str, summary
         logger.error(f"Failed to store RSS summary for article {article_url} from feed {feed_url}: {e}", exc_info=True)
         return False
 
+async def get_chroma_collection_counts() -> Dict[str, int]:
+    """Return document counts for available Chroma collections."""
+
+    collections = {
+        "chat_history": chat_history_collection,
+        "distilled": distilled_chat_summary_collection,
+        "rss": rss_summary_collection,
+        "timeline": timeline_summary_collection,
+        "relations": relation_collection,
+        "observations": observation_collection,
+        "tweets": tweets_collection,
+    }
+
+    counts: Dict[str, int] = {}
+    for name, coll in collections.items():
+        if not coll:
+            continue
+        try:
+            counts[name] = await asyncio.to_thread(coll.count)
+        except Exception as exc:
+            logger.error("Failed to count documents in collection '%s': %s", name, exc, exc_info=True)
+    return counts
+
+
+async def fetch_recent_channel_memories(
+    collection_key: str,
+    channel_id: int,
+    limit: int = 5,
+) -> List[Dict[str, Any]]:
+    """Fetch the most recent ``limit`` memories for ``channel_id`` from the specified collection."""
+
+    collection_map: Dict[str, Optional[chromadb.Collection]] = {
+        "distilled": distilled_chat_summary_collection,
+        "full": chat_history_collection,
+    }
+
+    coll = collection_map.get(collection_key)
+    if not coll:
+        logger.warning("Memory inspector requested unknown collection key '%s'.", collection_key)
+        return []
+
+    where_clause = {"channel_id": str(channel_id)}
+    fetch_limit = max(limit * 5, limit)
+    try:
+        raw = await asyncio.to_thread(
+            coll.get,
+            where=where_clause,
+            include=["documents", "metadatas"],
+            limit=fetch_limit,
+        )
+    except Exception as exc:
+        logger.error(
+            "Failed to fetch memories for channel %s from '%s': %s",
+            channel_id,
+            collection_key,
+            exc,
+            exc_info=True,
+        )
+        return []
+
+    documents = raw.get("documents") or []
+    metadatas = raw.get("metadatas") or []
+    ids = raw.get("ids") or []
+
+    records: List[Dict[str, Any]] = []
+    for doc_id, doc_text, metadata in zip(ids, documents, metadatas):
+        if not isinstance(doc_text, str) or not isinstance(metadata, dict):
+            continue
+        timestamp_val = metadata.get("timestamp")
+        timestamp_dt: Optional[datetime]
+        if isinstance(timestamp_val, str):
+            try:
+                timestamp_dt = datetime.fromisoformat(timestamp_val)
+            except ValueError:
+                timestamp_dt = None
+        else:
+            timestamp_dt = None
+
+        records.append(
+            {
+                "id": doc_id,
+                "document": doc_text,
+                "metadata": metadata,
+                "timestamp": timestamp_dt,
+            }
+        )
+
+    records.sort(key=lambda item: item["timestamp"] or datetime.min, reverse=True)
+    return records[:limit]
+
 async def remove_full_conversation_references(pruned_doc_ids: List[str], batch_size: int = 100):
     """
     Finds distilled summaries linked to pruned full conversations and removes the linking metadata.

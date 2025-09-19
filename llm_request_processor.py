@@ -133,7 +133,12 @@ async def llm_request_processor_task(bot_state: BotState, llm_client: Any, bot_i
                                     await bot_state.update_last_playwright_usage_time()
                                 scraped_content, _ = await scrape_website(article_url) # Ignoring screenshots for now
 
-                                if not scraped_content or "Failed to scrape" in scraped_content or "Scraping timed out" in scraped_content:
+                                if (
+                                    not scraped_content
+                                    or "Failed to scrape" in scraped_content
+                                    or "Scraping timed out" in scraped_content
+                                    or "Blocked from fetching URL" in scraped_content
+                                ):
                                     article_summaries_for_briefing.append(f"Source: {article_title} ({article_url})\nSummary: [Could not retrieve content for summarization]\n\n")
                                     continue
 

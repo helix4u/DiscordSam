@@ -3,7 +3,7 @@ import logging
 import os
 import re
 import json
-from typing import List, Optional, Dict, Any, Callable, Awaitable, Tuple, Set
+from typing import List, Optional, Dict, Any, Callable, Awaitable, Tuple, Set, Union
 from bs4 import BeautifulSoup
 import random
 from datetime import datetime, timedelta, timezone
@@ -15,6 +15,9 @@ import aiohttp
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError # type: ignore
 from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound # type: ignore
 import xml.etree.ElementTree
+import ipaddress
+import socket
+from urllib.parse import urlparse
 
 # Assuming config is imported from config.py
 from config import config
@@ -24,6 +27,79 @@ from common_models import TweetData, GroundNewsArticle
 logger = logging.getLogger(__name__)
 
 PLAYWRIGHT_SEM = asyncio.Semaphore(config.PLAYWRIGHT_MAX_CONCURRENCY)
+
+
+class UnsafeRemoteURLError(RuntimeError):
+    """Raised when a URL points to an unsafe or disallowed host."""
+
+
+IPAddress = Union[ipaddress.IPv4Address, ipaddress.IPv6Address]
+
+
+async def _resolve_host_ips(host: str) -> List[IPAddress]:
+    """Resolve *host* to IP addresses in a thread pool."""
+
+    try:
+        # Direct IP literal
+        return [ipaddress.ip_address(host)]
+    except ValueError:
+        pass
+
+    try:
+        infos = await asyncio.to_thread(socket.getaddrinfo, host, None)
+    except socket.gaierror as exc:
+        raise UnsafeRemoteURLError(f"Failed to resolve host '{host}': {exc}") from exc
+
+    addresses: List[IPAddress] = []
+    for info in infos:
+        addr = info[4][0]
+        try:
+            addresses.append(ipaddress.ip_address(addr))
+        except ValueError:
+            continue
+
+    if not addresses:
+        raise UnsafeRemoteURLError(f"No valid IP addresses resolved for host '{host}'.")
+    return addresses
+
+
+async def ensure_safe_remote_url(url: str) -> None:
+    """Ensure *url* resolves to a public host using http(s).
+
+    Raises
+    ------
+    UnsafeRemoteURLError
+        If the URL is missing/invalid, uses a disallowed scheme, or resolves to
+        a non-public IP address.
+    """
+
+    parsed = urlparse(url)
+    scheme = parsed.scheme.lower()
+    if scheme not in {"http", "https"}:
+        raise UnsafeRemoteURLError("Only http(s) URLs are allowed.")
+
+    host = parsed.hostname
+    if not host:
+        raise UnsafeRemoteURLError("URL is missing a hostname.")
+
+    if host.lower() in {"localhost", "127.0.0.1", "::1"}:
+        raise UnsafeRemoteURLError("Requests to localhost are blocked.")
+
+    addresses = await _resolve_host_ips(host)
+    for ip in addresses:
+        if any(
+            (
+                ip.is_private,
+                ip.is_loopback,
+                ip.is_reserved,
+                ip.is_link_local,
+                ip.is_multicast,
+                ip.is_unspecified,
+            )
+        ):
+            raise UnsafeRemoteURLError(
+                f"Requests to non-public hosts are blocked (resolved {ip})."
+            )
 
 async def _graceful_close_playwright(page: Optional[Any], context: Optional[Any], browser: Optional[Any], profile_dir_usable: bool, timeout: float = 1.0) -> None:
     """Attempt to close Playwright objects; kill lingering processes if they remain."""
@@ -181,6 +257,12 @@ async def scrape_website(
     progress_callback: Optional[Callable[[str], Awaitable[None]]] = None,
     screenshots_dir: Optional[str] = None
 ) -> Tuple[Optional[str], List[str]]:
+    try:
+        await ensure_safe_remote_url(url)
+    except UnsafeRemoteURLError as exc:
+        logger.warning("Blocked scrape to unsafe URL %s: %s", url, exc)
+        return f"Blocked from fetching URL: {exc}", []
+
     if (
         url.startswith("https://www.nytimes.com/")
         or url.startswith("https://www.wsj.com/")
@@ -760,6 +842,12 @@ async def fetch_rss_entries(feed_url: str) -> List[Dict[str, Any]]:
     Each returned entry includes ``pubDate_dt`` as a timezone-aware
     ``datetime`` for easier sorting and display.
     """
+    try:
+        await ensure_safe_remote_url(feed_url)
+    except UnsafeRemoteURLError as exc:
+        logger.warning("Blocked RSS fetch for unsafe URL %s: %s", feed_url, exc)
+        return []
+
     logger.info(f"Fetching RSS feed: {feed_url}")
     try:
         async with aiohttp.ClientSession() as session:

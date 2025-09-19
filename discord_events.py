@@ -31,6 +31,7 @@ from utils import (
 from web_utils import scrape_website, fetch_youtube_transcript
 from audio_utils import transcribe_audio_file, send_tts_audio
 from timeline_pruner import prune_and_summarize
+from scheduler import run_allrss_digest
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +125,62 @@ def setup_events_and_tasks(bot: commands.Bot, llm_client_in: Any, bot_state_in: 
         except Exception as e:
             logger.error(f"Timeline pruner task failed: {e}", exc_info=True)
 
+    @tasks.loop(seconds=60)
+    async def scheduler_task():
+        """Check and run due background schedules (scoped per-channel)."""
+        if not bot_state_instance or not bot_instance:
+            return
+        try:
+            schedules = await bot_state_instance.list_schedules()
+            now = datetime.now()
+            for s in schedules:
+                try:
+                    sched_id = s.get("id")
+                    channel_id = int(s.get("channel_id"))
+                    kind = s.get("type")
+                    interval_seconds = int(s.get("interval_seconds", 0))
+                    last_run_iso = s.get("last_run")
+                    last_run_dt = None
+                    if isinstance(last_run_iso, str):
+                        try:
+                            last_run_dt = datetime.fromisoformat(last_run_iso)
+                        except Exception:
+                            last_run_dt = None
+
+                    due = False
+                    if interval_seconds > 0:
+                        if not last_run_dt:
+                            due = True
+                        else:
+                            due = (now - last_run_dt).total_seconds() >= interval_seconds
+                    else:
+                        # If interval not set, skip
+                        continue
+
+                    if not due:
+                        continue
+
+                    # Serialize execution per global scrape lock for heavy tasks
+                    if kind == "allrss":
+                        async with bot_state_instance.get_scrape_lock():
+                            lim = int(s.get("params", {}).get("limit", 10))
+                            try:
+                                await run_allrss_digest(
+                                    bot_instance,
+                                    llm_client_instance,
+                                    channel_id,
+                                    limit=lim,
+                                    bot_state=bot_state_instance,
+                                )
+                            except asyncio.CancelledError:
+                                logger.info("Scheduler: digest for channel %s cancelled.", channel_id)
+                                continue
+                            await bot_state_instance.update_schedule_last_run(sched_id, now)
+                except Exception as inner:
+                    logger.error("Scheduler: error running schedule %s: %s", s, inner, exc_info=True)
+        except Exception as e:
+            logger.error("Scheduler: loop error: %s", e, exc_info=True)
+
 
     @bot_instance.event # type: ignore
     async def on_ready():
@@ -157,6 +214,10 @@ def setup_events_and_tasks(bot: commands.Bot, llm_client_in: Any, bot_state_in: 
         if not timeline_pruner_task.is_running():
             timeline_pruner_task.start()
             logger.info("Timeline pruner task started.")
+
+        if not scheduler_task.is_running():
+            scheduler_task.start()
+            logger.info("Scheduler task started.")
 
         await bot_instance.change_presence(activity=discord.Game(name="with /commands | Ask me anything!"))
         logger.info("Bot presence updated.")
@@ -351,7 +412,7 @@ def setup_events_and_tasks(bot: commands.Bot, llm_client_in: Any, bot_state_in: 
                         if bot_state_instance: await bot_state_instance.update_last_playwright_usage_time()
                         playwright_used_in_loop = True
                         scraped_text, screenshot_paths = await scrape_website(url, screenshots_dir=current_url_screenshots_dir)
-                        if scraped_text and "Failed to scrape" not in scraped_text and "Scraping timed out" not in scraped_text:
+                        if scraped_text and "Failed to scrape" not in scraped_text and "Scraping timed out" not in scraped_text and "Blocked from fetching URL" not in scraped_text:
                             content_piece = f"\n\n--- Webpage Content (fallback for YouTube URL {url}) ---\n{scraped_text}\n--- End Webpage Content ---"
                             logger.info(f"Fetched webpage content for {url} (YouTube transcript fallback).")
                             if screenshot_paths and llm_client_instance:
@@ -367,7 +428,7 @@ def setup_events_and_tasks(bot: commands.Bot, llm_client_in: Any, bot_state_in: 
                     if bot_state_instance: await bot_state_instance.update_last_playwright_usage_time()
                     playwright_used_in_loop = True
                     scraped_text, screenshot_paths = await scrape_website(url, screenshots_dir=current_url_screenshots_dir)
-                    if scraped_text and "Failed to scrape" not in scraped_text and "Scraping timed out" not in scraped_text:
+                    if scraped_text and "Failed to scrape" not in scraped_text and "Scraping timed out" not in scraped_text and "Blocked from fetching URL" not in scraped_text:
                         content_piece = f"\n\n--- Webpage Content for {url} ---\n{scraped_text}\n--- End Webpage Content ---"
                         logger.info(f"Fetched webpage content for non-YouTube URL: {url}.")
                         if screenshot_paths and llm_client_instance:

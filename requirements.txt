@@ -14,12 +14,9 @@ beautifulsoup4>=4.12.2
 # Whisper speech-to-text (choose one, usually openai-whisper)
 
 openai-whisper>=20231117
+torch>=2.1.0
+torchaudio>=2.1.0
 
-# PyTorch - install per [https://pytorch.org/get-started/locally/](https://pytorch.org/get-started/locally/) if using GPU/CPU acceleration
-
-# You should NOT install torch here for production—use a custom install line. This is just the minimum version required.
-
-torch>=2.0.0
 
 # Vector DB for RAG
 
@@ -30,6 +27,6 @@ chromadb>=0.4.22
 playwright>=1.30.0
 
 youtube-transcript-api>=0.6.0
-numpy>=1.23.0
+numpy
 psutil>=5.9.0
 dateparser>=1.1.8

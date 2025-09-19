@@ -159,18 +159,30 @@ def parse_time_string_to_delta(time_str: str) -> Tuple[Optional[timedelta], Opti
             original_parts.append(f"{value} {unit_full.rstrip('s') if value == 1 else unit_full}")
         # Remove matched parts from the string to avoid re-matching
         time_str_processed = re.sub(pattern_regex, "", time_str_processed)
-    
+
     if not any(val > 0 for val in delta_args.values()):
         return None, None # No valid time units found
 
     time_delta = timedelta(**delta_args)
     descriptive_str = ", ".join(original_parts) if original_parts else "immediately"
-    
+
     # Fallback descriptive string if delta_args had values but original_parts somehow didn't form
     if not descriptive_str and time_delta.total_seconds() > 0 :
         descriptive_str = "a duration" # Should ideally not be reached if parsing is correct
 
     return time_delta, descriptive_str
+
+
+def is_admin_user(user_id: int) -> bool:
+    """Return True if ``user_id`` is configured as an admin."""
+
+    if not config.ADMIN_USER_IDS:
+        return False
+    try:
+        user_id_int = int(user_id)
+    except (TypeError, ValueError):
+        return False
+    return user_id_int in config.ADMIN_USER_IDS
 
 
 def cleanup_playwright_processes() -> int:
