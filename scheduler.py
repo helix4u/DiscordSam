@@ -87,8 +87,8 @@ async def run_allrss_digest(
                     or "Scraping timed out" in scraped_text
                     or "Blocked from fetching URL" in scraped_text
                 ):
-                    chunk_text = f"[{name}] **{title}**\n{link}\nCould not scrape article\n"
-                    feed_summaries.append(chunk_text)
+                    summary_entry = f"[{name}] **{title}**\n{link}\nCould not scrape article\n"
+                    feed_summaries.append(summary_entry)
                     continue
 
                 prompt = (
@@ -121,8 +121,8 @@ async def run_allrss_digest(
                     logger.error("Scheduled allrss: summarize failed for %s: %s", link, e_summ)
                     summary = "[LLM summarization failed]"
 
-                chunk_text = f"[{name}] **{title}**\n{link}\n{summary}\n"
-                feed_summaries.append(chunk_text)
+                summary_entry = f"[{name}] **{title}**\n{link}\n{summary}\n"
+                feed_summaries.append(summary_entry)
                 await asyncio.sleep(0.2)
 
             if feed_summaries:
