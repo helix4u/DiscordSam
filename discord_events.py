@@ -18,10 +18,8 @@ import shutil # For deleting directories
 from llm_handling import (
     _build_initial_prompt_messages,
     stream_llm_response_to_message,
-    get_description_for_image # Import the new function
-)
-from rag_chroma_manager import (
-    retrieve_and_prepare_rag_context
+    get_description_for_image,
+    retrieve_rag_context_with_progress,
 )
 from utils import (
     detect_urls,
@@ -532,7 +530,13 @@ def setup_events_and_tasks(bot: commands.Bot, llm_client_in: Any, bot_state_in: 
             synthesized_rag_summary = ""
             raw_rag_snippets = []
         else:
-            synthesized_rag_summary, raw_rag_snippets = await retrieve_and_prepare_rag_context(llm_client_instance, rag_query_text)
+            synthesized_rag_summary, raw_rag_snippets = await retrieve_rag_context_with_progress(
+                llm_client=llm_client_instance,
+                query=rag_query_text,
+                channel=message.channel,
+                initial_status="🔍 Searching memories for related context...",
+                send_kwargs={"reference": message, "silent": True},
+            )
 
         user_msg_node_for_short_term_history = MsgNode("user", user_msg_node_content_final, name=str(message.author.id))
 

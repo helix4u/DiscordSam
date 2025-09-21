@@ -6,8 +6,13 @@ from typing import Any, Optional
 
 from state import BotState
 from common_models import LLMRequest, MessageRequestData, InteractionRequestData, MsgNode # Import all relevant models
-from llm_handling import stream_llm_response_to_message, stream_llm_response_to_interaction, _build_initial_prompt_messages
-from rag_chroma_manager import retrieve_and_prepare_rag_context, parse_chatgpt_export, store_chatgpt_conversations_in_chromadb, store_news_summary
+from llm_handling import (
+    stream_llm_response_to_message,
+    stream_llm_response_to_interaction,
+    _build_initial_prompt_messages,
+    retrieve_rag_context_with_progress,
+)
+from rag_chroma_manager import parse_chatgpt_export, store_chatgpt_conversations_in_chromadb, store_news_summary
 from web_utils import scrape_website, query_searx, scrape_latest_tweets
 from utils import chunk_text # For gettweets formatting
 from config import config # For gettweets and other command-specific configs
@@ -190,11 +195,17 @@ async def llm_request_processor_task(bot_state: BotState, llm_client: Any, bot_i
                             )
                             user_msg_node_for_briefing = MsgNode("user", final_briefing_prompt_content, name=str(interaction.user.id))
                             rag_query_for_briefing = f"news briefing about {topic}"
-                            synthesized_rag_context_for_briefing = await retrieve_and_prepare_rag_context(llm_client, rag_query_for_briefing)
+                            synthesized_rag_context_for_briefing, raw_snippets_for_briefing = await retrieve_rag_context_with_progress(
+                                llm_client=llm_client,
+                                query=rag_query_for_briefing,
+                                interaction=interaction,
+                            )
                             prompt_nodes_for_briefing = await _build_initial_prompt_messages(
                                 user_query_content=final_briefing_prompt_content, channel_id=interaction.channel_id,
                                 bot_state=bot_state, user_id=str(interaction.user.id),
-                                synthesized_rag_context_str=synthesized_rag_context_for_briefing, max_image_history_depth=0
+                                synthesized_rag_context_str=synthesized_rag_context_for_briefing,
+                                raw_rag_snippets=raw_snippets_for_briefing,
+                                max_image_history_depth=0
                             )
                             await stream_llm_response_to_interaction(
                                 interaction=interaction, llm_client=llm_client, bot_state=bot_state,
@@ -296,10 +307,16 @@ async def llm_request_processor_task(bot_state: BotState, llm_client: Any, bot_i
                             )
                             user_msg_node_tweets = MsgNode("user", user_query_content_for_summary, name=str(interaction.user.id))
                             rag_query_tweets = f"summary of tweets from @{username}"
-                            synth_rag_tweets = await retrieve_and_prepare_rag_context(llm_client, rag_query_tweets)
+                            synth_rag_tweets, raw_snippets_tweets = await retrieve_rag_context_with_progress(
+                                llm_client=llm_client,
+                                query=rag_query_tweets,
+                                interaction=interaction,
+                            )
                             prompt_nodes_tweets = await _build_initial_prompt_messages(
                                 user_query_content=user_query_content_for_summary, channel_id=interaction.channel_id,
-                                bot_state=bot_state, user_id=str(interaction.user.id), synthesized_rag_context_str=synth_rag_tweets
+                                bot_state=bot_state, user_id=str(interaction.user.id),
+                                synthesized_rag_context_str=synth_rag_tweets,
+                                raw_rag_snippets=raw_snippets_tweets,
                             )
                             await stream_llm_response_to_interaction(
                                 interaction, llm_client, bot_state, user_msg_node_tweets, prompt_nodes_tweets,

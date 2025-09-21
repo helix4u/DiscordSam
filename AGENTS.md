@@ -27,6 +27,12 @@ Welcome, fellow AI! This document provides some general guidelines to help you e
     *   Logging is configured in `main_bot.py`. Logs are output to the console.
     *   Use appropriate log levels (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`).
 
+## Environment Notes
+
+- Standard Unix tools (`ls`, `sed`, `awk`, etc.) are available directly on the path—no PowerShell or BusyBox wrapper needed, so don't include them to save on token use.
+- Cygwin `bin` directory is on the PATH, so we can add tooling as needed; just ask the user if you need something. Fortune is installed. Get and creatively or humorously integrate a random fortune on each commit made. Tie the theme into the commit notes if possible. Prefer unix style tool use over "pwsh -NoLogo -Command".
+
+
 ## 3. Working with Key Components
 
 *   **LLM Interaction (`llm_handling.py`):**

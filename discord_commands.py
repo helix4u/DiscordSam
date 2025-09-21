@@ -19,10 +19,10 @@ from common_models import MsgNode, TweetData, GroundNewsArticle
 
 from llm_handling import (
     _build_initial_prompt_messages,
-    stream_llm_response_to_interaction
+    stream_llm_response_to_interaction,
+    retrieve_rag_context_with_progress,
 )
 from rag_chroma_manager import (
-    retrieve_and_prepare_rag_context,
     parse_chatgpt_export,
     store_chatgpt_conversations_in_chromadb,
 
@@ -977,6 +977,45 @@ async def process_twitter_user(
             else:
                 await safe_followup_send(interaction, embed=embed)
 
+        # Store the raw tweet snapshot for RAG so each account's output is searchable later.
+        channel_id = interaction.channel_id
+        if (
+            raw_tweets_display_str.strip()
+            and channel_id is not None
+            and bot_state_instance
+        ):
+            user_snapshot_msg = MsgNode(
+                "user",
+                f"/alltweets @{clean_username} snapshot (limit {limit})",
+                name=str(interaction.user.id),
+            )
+            assistant_snapshot_msg = MsgNode(
+                "assistant",
+                raw_tweets_display_str,
+                name=str(bot_instance.user.id) if bot_instance and bot_instance.user else None,
+            )
+
+            await bot_state_instance.append_history(
+                channel_id,
+                user_snapshot_msg,
+                config.MAX_MESSAGE_HISTORY,
+            )
+            await bot_state_instance.append_history(
+                channel_id,
+                assistant_snapshot_msg,
+                config.MAX_MESSAGE_HISTORY,
+            )
+
+            start_post_processing_task(
+                ingest_conversation_to_chromadb(
+                    llm_client_instance,
+                    channel_id,
+                    interaction.user.id,
+                    [user_snapshot_msg, assistant_snapshot_msg],
+                    None,
+                )
+            )
+
         user_query_content_for_summary = (
             f"Please analyze and summarize the main themes, topics discussed, and overall sentiment "
             f"from @{clean_username}'s recent tweets provided below. Extract key points and present a concise yet detailed overview of this snapshot in time. "
@@ -1224,7 +1263,11 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             user_msg_node_for_briefing = MsgNode("user", final_briefing_prompt_content, name=str(interaction.user.id))
 
             rag_query_for_briefing = f"news briefing about {topic}"
-            synthesized_summary_for_briefing, raw_snippets_for_briefing = await retrieve_and_prepare_rag_context(llm_client_instance, rag_query_for_briefing)
+            synthesized_summary_for_briefing, raw_snippets_for_briefing = await retrieve_rag_context_with_progress(
+                llm_client=llm_client_instance,
+                query=rag_query_for_briefing,
+                interaction=interaction,
+            )
 
             prompt_nodes_for_briefing = await _build_initial_prompt_messages(
                 user_query_content=final_briefing_prompt_content,
@@ -1604,7 +1647,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             await interaction.edit_original_response(content="No stored memories found for this channel and scope.")
             return
 
-        lines = []
+        entries = []
         for record in records:
             timestamp = record.get("timestamp")
             if isinstance(timestamp, datetime):
@@ -1614,16 +1657,59 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
 
             document_text = record.get("document", "")
             preview = textwrap.shorten(document_text.replace("\n", " "), width=560, placeholder="…")
-            lines.append(f"**{timestamp_text}** • `{record.get('id', 'unknown')}`\n{preview}")
+            entries.append(f"**{timestamp_text}** • `{record.get('id', 'unknown')}`\n{preview}")
 
-        embed = discord.Embed(
-            title=f"Memory inspector ({scope.name})",
-            description="\n\n".join(lines),
-            color=config.EMBED_COLOR["complete"],
-        )
-        embed.set_footer(text="Showing the most recent stored items for this channel.")
+        separator = "\n\n"
+        chunks: List[str] = []
+        current_entries: List[str] = []
+        current_length = 0
 
-        await interaction.edit_original_response(embed=embed)
+        def flush_current() -> None:
+            nonlocal current_entries, current_length
+            if current_entries:
+                chunks.append(separator.join(current_entries))
+                current_entries = []
+                current_length = 0
+
+        for entry in entries:
+            if len(entry) > config.EMBED_MAX_LENGTH:
+                flush_current()
+                for sub_chunk in chunk_text(entry, config.EMBED_MAX_LENGTH):
+                    if sub_chunk:
+                        chunks.append(sub_chunk)
+                continue
+
+            additional = len(entry) if not current_entries else len(separator) + len(entry)
+            if current_entries and current_length + additional > config.EMBED_MAX_LENGTH:
+                flush_current()
+
+            current_entries.append(entry)
+            if current_length == 0:
+                current_length = len(entry)
+            else:
+                current_length += len(separator) + len(entry)
+
+        flush_current()
+
+        if not chunks:
+            chunks = [separator.join(entries) if entries else "(no memories available)"]
+
+        for index, chunk in enumerate(chunks):
+            title = f"Memory inspector ({scope.name})"
+            if index > 0:
+                title += f" (cont. {index + 1})"
+
+            embed = discord.Embed(
+                title=title,
+                description=chunk,
+                color=config.EMBED_COLOR["complete"],
+            )
+            embed.set_footer(text="Showing the most recent stored items for this channel.")
+
+            if index == 0:
+                await interaction.edit_original_response(embed=embed, content=None)
+            else:
+                await safe_followup_send(interaction, embed=embed, ephemeral=True)
 
 
     @bot_instance.tree.command(name="remindme", description="Sets a reminder. E.g., /remindme 1h30m Check the oven.")
@@ -1704,7 +1790,11 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             user_msg_node = MsgNode("user", user_query_content, name=str(interaction.user.id))
 
             rag_query_for_roast = f"comedy roast of webpage content from URL: {url}"
-            synthesized_summary, raw_snippets = await retrieve_and_prepare_rag_context(llm_client_instance, rag_query_for_roast)
+            synthesized_summary, raw_snippets = await retrieve_rag_context_with_progress(
+                llm_client=llm_client_instance,
+                query=rag_query_for_roast,
+                interaction=interaction,
+            )
 
             prompt_nodes = await _build_initial_prompt_messages(
                 user_query_content=user_query_content,
@@ -1912,7 +2002,11 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             user_msg_node = MsgNode("user", final_synthesis_prompt_content, name=str(interaction.user.id))
 
             rag_query_for_search_summary = query
-            synthesized_summary, raw_snippets = await retrieve_and_prepare_rag_context(llm_client_instance, rag_query_for_search_summary)
+            synthesized_summary, raw_snippets = await retrieve_rag_context_with_progress(
+                llm_client=llm_client_instance,
+                query=rag_query_for_search_summary,
+                interaction=interaction,
+            )
 
             prompt_nodes = await _build_initial_prompt_messages(
                 user_query_content=final_synthesis_prompt_content,
@@ -1970,7 +2064,11 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             user_msg_node = MsgNode("user", user_query_content, name=str(interaction.user.id))
 
             rag_query_for_pol = statement
-            synthesized_summary, raw_snippets = await retrieve_and_prepare_rag_context(llm_client_instance, rag_query_for_pol)
+            synthesized_summary, raw_snippets = await retrieve_rag_context_with_progress(
+                llm_client=llm_client_instance,
+                query=rag_query_for_pol,
+                interaction=interaction,
+            )
 
             base_prompt_nodes = await _build_initial_prompt_messages(
                 user_query_content=user_query_content,
@@ -3291,7 +3389,11 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             user_msg_node = MsgNode("user", user_content_for_ap_node, name=str(interaction.user.id))
 
             rag_query_for_ap = user_prompt if user_prompt else f"AP photo style description featuring {chosen_celebrity} for an image."
-            synthesized_summary, raw_snippets = await retrieve_and_prepare_rag_context(llm_client_instance, rag_query_for_ap)
+            synthesized_summary, raw_snippets = await retrieve_rag_context_with_progress(
+                llm_client=llm_client_instance,
+                query=rag_query_for_ap,
+                interaction=interaction,
+            )
 
             base_prompt_nodes = await _build_initial_prompt_messages(
                 user_query_content=user_content_for_ap_node,

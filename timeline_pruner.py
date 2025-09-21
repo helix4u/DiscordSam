@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -23,7 +23,7 @@ def _fetch_old_documents(prune_days: int) -> List[Dict[str, Any]]:
         logger.warning("Chat history collection unavailable for fetching old documents.")
         return []
 
-    cutoff_date = datetime.now() - timedelta(days=prune_days)
+    cutoff_date = datetime.now(timezone.utc) - timedelta(days=prune_days)
     # ChromaDB stores timestamps as ISO-8601 strings. Use an ISO string for the
     # comparison so we don't have to migrate existing data.
     cutoff_iso = cutoff_date.isoformat()
@@ -67,25 +67,8 @@ def _fetch_old_documents(prune_days: int) -> List[Dict[str, Any]]:
 
             # Some imports store timestamps under 'create_time'. Check both
             ts_val = meta.get("timestamp") or meta.get("create_time")
+            ts = _parse_timestamp(ts_val)
 
-            try:
-                if isinstance(ts_val, (int, float)):
-                    ts = datetime.fromtimestamp(ts_val)
-                elif isinstance(ts_val, str):
-                    # Handle common ISO formats. If parsing fails, fall back to None.
-                    ts = datetime.fromisoformat(ts_val.replace("Z", "+00:00"))
-                else:
-                    ts = None
-            except (ValueError, TypeError) as e:
-                logger.warning(
-                    "Could not convert timestamp '%s' for document ID %s. Error: %s. Skipping.",
-                    ts_val,
-                    doc_id,
-                    e,
-                )
-                ts = None
-
-            # We filtered in Python, but double-check just in case:
             if ts and ts <= cutoff_date:
                 old_docs.append({"id": doc_id, "document": doc_content, "metadata": meta, "timestamp": ts})
 
@@ -177,13 +160,15 @@ def _parse_timestamp(ts_val: Any) -> Optional[datetime]:
         return None
     try:
         if isinstance(ts_val, (int, float)):
-            return datetime.fromtimestamp(ts_val)
+            dt = datetime.fromtimestamp(ts_val, tz=timezone.utc)
         elif isinstance(ts_val, str):
-            # Handle ISO 8601 format, including 'Z' for UTC
-            return datetime.fromisoformat(ts_val.replace("Z", "+00:00"))
+            dt = datetime.fromisoformat(ts_val.replace("Z", "+00:00"))
         else:
             logger.warning(f"Unrecognized timestamp type: {type(ts_val)}")
             return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
     except (ValueError, TypeError) as e:
         logger.debug(f"Could not parse timestamp '{ts_val}': {e}")
         return None

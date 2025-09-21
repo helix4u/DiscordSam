@@ -1,8 +1,9 @@
 import asyncio
 import re
 import unicodedata
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
-from typing import Any, Coroutine, List, Optional, Tuple
+from typing import Any, Coroutine, List, Optional, Tuple, Callable, Awaitable, Dict, AsyncIterator
 import logging
 import psutil
 import discord
@@ -298,3 +299,77 @@ def start_post_processing_task(
                     pass
 
     return asyncio.create_task(_runner())
+
+
+@asynccontextmanager
+async def temporary_status_message(
+    *,
+    interaction: Optional[discord.Interaction] = None,
+    channel: Optional[discord.abc.Messageable] = None,
+    initial_text: str,
+    send_kwargs: Optional[Dict[str, Any]] = None,
+) -> AsyncIterator[Callable[[str], Awaitable[None]]]:
+    """Post a temporary status message that can be updated and cleaned up automatically."""
+
+    message: Optional[discord.Message] = None
+    send_available = True
+    send_kwargs = dict(send_kwargs or {})
+
+    if "allowed_mentions" not in send_kwargs:
+        send_kwargs["allowed_mentions"] = discord.AllowedMentions.none()
+
+    async def update(text: str) -> None:
+        nonlocal message, send_available
+        if not send_available:
+            return
+        if message is None:
+            try:
+                if interaction is not None:
+                    message = await safe_followup_send(
+                        interaction,
+                        content=text,
+                        **send_kwargs,
+                    )
+                elif channel is not None:
+                    message = await channel.send(content=text, **send_kwargs)
+                else:
+                    send_available = False
+            except Exception as send_exc:  # noqa: BLE001
+                logger.debug("Failed to send status indicator: %s", send_exc, exc_info=True)
+                send_available = False
+        else:
+            target_channel: Optional[discord.abc.Messageable]
+            if interaction is not None:
+                target_channel = interaction.channel
+            else:
+                target_channel = channel
+
+            if not target_channel:
+                return
+
+            try:
+                message = await safe_message_edit(
+                    message,
+                    target_channel,
+                    content=text,
+                )
+            except Exception as edit_exc:  # noqa: BLE001
+                logger.debug("Failed to update status indicator: %s", edit_exc, exc_info=True)
+
+    await update(initial_text)
+
+    if not send_available:
+        async def noop(_: str) -> None:
+            return None
+
+        yield noop
+        return
+
+    try:
+        yield update
+    finally:
+        if message:
+            try:
+                await message.delete()
+            except discord.HTTPException:
+                pass

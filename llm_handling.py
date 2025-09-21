@@ -19,9 +19,10 @@ from utils import (
     safe_followup_send,
     safe_message_edit,
     start_post_processing_task,
+    temporary_status_message,
 )
 # Import functions for post-stream processing
-from rag_chroma_manager import ingest_conversation_to_chromadb
+from rag_chroma_manager import ingest_conversation_to_chromadb, retrieve_and_prepare_rag_context
 from audio_utils import send_tts_audio
 from logit_biases import LOGIT_BIAS_UNWANTED_TOKENS_STR
 from openai_api import create_chat_completion, extract_text
@@ -29,6 +30,40 @@ from openai import BadRequestError
 
 
 logger = logging.getLogger(__name__)
+
+
+async def retrieve_rag_context_with_progress(
+    llm_client: Any,
+    query: str,
+    *,
+    interaction: Optional[discord.Interaction] = None,
+    channel: Optional[discord.abc.Messageable] = None,
+    initial_status: str = '🔍 Searching memories for relevant context...',
+    completion_status: Optional[str] = '✅ Memory search complete.',
+    send_kwargs: Optional[Dict[str, Any]] = None,
+) -> Tuple[Optional[str], Optional[List[Tuple[str, str]]]]:
+    """Retrieve RAG context while surfacing temporary status updates."""
+
+    async with temporary_status_message(
+        interaction=interaction,
+        channel=channel,
+        initial_text=initial_status,
+        send_kwargs=send_kwargs,
+    ) as update_status:
+        try:
+            synthesized_context, raw_snippets = await retrieve_and_prepare_rag_context(
+                llm_client,
+                query,
+                progress_callback=update_status,
+            )
+        except Exception:
+            if completion_status:
+                await update_status('⚠️ Memory search failed.')
+            raise
+        else:
+            if completion_status:
+                await update_status(completion_status)
+            return synthesized_context, raw_snippets
 
 
 def get_system_prompt() -> MsgNode:

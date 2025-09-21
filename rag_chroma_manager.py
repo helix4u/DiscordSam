@@ -1,8 +1,8 @@
 import logging
 import asyncio
 from uuid import uuid4
-from datetime import datetime, timedelta
-from typing import List, Optional, Any, Dict, Union, Tuple
+from datetime import datetime, timedelta, timezone
+from typing import List, Optional, Any, Dict, Union, Tuple, Callable, Awaitable
 import json
 import re
 import random
@@ -535,11 +535,17 @@ async def retrieve_and_prepare_rag_context(
     llm_client: Any,
     query: str,
     n_results_sentences: int = config.RAG_NUM_DISTILLED_SENTENCES_TO_FETCH,
+    progress_callback: Optional[Callable[[str], Awaitable[None]]] = None,
 ) -> Tuple[Optional[str], Optional[List[Tuple[str, str]]]]:
     query = append_absolute_dates(query)
     if not chroma_client:
+        if progress_callback:
+            await progress_callback("ℹ️ Memory database unavailable.")
         logger.warning("ChromaDB collections not available, skipping RAG context retrieval.")
         return None, None
+
+    if progress_callback:
+        await progress_callback("🔍 Searching memories for relevant context...")
 
     date_range = _parse_relative_date_range(query) if isinstance(query, str) else None
     if date_range:
@@ -548,6 +554,8 @@ async def retrieve_and_prepare_rag_context(
             date_range[0].isoformat(),
             date_range[1].isoformat(),
         )
+        if progress_callback:
+            await progress_callback("🗓️ Filtering memories to the requested timeframe...")
         start_dt, end_dt = date_range
         start_iso, end_iso = start_dt.isoformat(), end_dt.isoformat()
         collections_to_search = [
@@ -565,6 +573,8 @@ async def retrieve_and_prepare_rag_context(
                 logger.debug(f"RAG: Collection '{name}' is not available for date-range search.")
                 continue
             try:
+                if progress_callback:
+                    await progress_callback(f"📥 Gathering {name} entries in the requested range...")
                 res = await asyncio.to_thread(coll.get, include=["documents", "metadatas"])
                 docs_with_ts: List[Tuple[str, datetime]] = []
                 if res and res.get("documents") and res.get("metadatas"):
@@ -613,16 +623,22 @@ async def retrieve_and_prepare_rag_context(
                     exc_info=True,
                 )
         if not retrieved_contexts_raw:
+            if progress_callback:
+                await progress_callback("ℹ️ No relevant memories found for that timeframe.")
             logger.info(
                 f"RAG: No documents found for date range {start_iso} to {end_iso} across any collection."
             )
             return None, None
+        if progress_callback:
+            await progress_callback("🧠 Synthesizing retrieved context...")
         synthesized_context = await synthesize_retrieved_contexts_llm(
             llm_client, retrieved_contexts_raw, query
         )
         return synthesized_context, retrieved_contexts_raw
 
     if not distilled_chat_summary_collection or not chat_history_collection:
+        if progress_callback:
+            await progress_callback("ℹ️ Memory collections unavailable.")
         logger.warning("ChromaDB collections not available, skipping RAG context retrieval.")
         return None, None
 
@@ -710,6 +726,8 @@ async def retrieve_and_prepare_rag_context(
                 logger.debug(f"RAG: Collection '{name}' is not available, skipping.")
                 continue
             try:
+                if progress_callback:
+                    await progress_callback(f"📥 Gathering {name} entries...")
                 logger.debug(
                     f"RAG: Querying {name} collection for query: '{str(query)[:50]}...' (n_results={n_results_collections})"
                 )
@@ -759,10 +777,14 @@ async def retrieve_and_prepare_rag_context(
                 )
 
         if not retrieved_contexts_raw:
+            if progress_callback:
+                await progress_callback("ℹ️ No relevant memories found.")
             logger.info("RAG: No context texts retrieved from any source for synthesis.")
             return None, None # Return None for both synthesized summary and raw snippets
 
         # Pass the list of tuples to the synthesis function
+        if progress_callback:
+            await progress_callback("🧠 Synthesizing retrieved context...")
         synthesized_context = await synthesize_retrieved_contexts_llm(llm_client, retrieved_contexts_raw, query)
 
         # If synthesis fails but we have raw contexts, we should still return them.
@@ -799,7 +821,7 @@ async def ingest_conversation_to_chromadb(
         logger.warning("One or more ChromaDB collections are not available. Skipping full ingestion pipeline.")
         return
 
-    timestamp_now = datetime.now() # Define earlier
+    timestamp_now = datetime.now(timezone.utc) # Define earlier with timezone awareness
     str_user_id = str(user_id) # Define earlier
 
     can_do_focused_distillation = False
@@ -838,7 +860,7 @@ async def ingest_conversation_to_chromadb(
         logger.info(f"Skipping ingestion of conversation with no actual messages. Channel: {channel_id}, User: {user_id}")
         return
 
-    timestamp_now = datetime.now()
+    timestamp_now = datetime.now(timezone.utc)
     str_user_id = str(user_id)
     full_convo_doc_id = f"full_channel_{channel_id}_user_{str_user_id}_{int(timestamp_now.timestamp())}_{uuid4().hex}"
 
@@ -1332,14 +1354,19 @@ async def fetch_recent_channel_memories(
         if not isinstance(doc_text, str) or not isinstance(metadata, dict):
             continue
         timestamp_val = metadata.get("timestamp")
-        timestamp_dt: Optional[datetime]
+        timestamp_dt: Optional[datetime] = None
         if isinstance(timestamp_val, str):
+            ts_str = timestamp_val.strip()
+            if ts_str.endswith("Z"):
+                ts_str = ts_str[:-1] + "+00:00"
             try:
-                timestamp_dt = datetime.fromisoformat(timestamp_val)
+                parsed_dt = datetime.fromisoformat(ts_str)
             except ValueError:
                 timestamp_dt = None
-        else:
-            timestamp_dt = None
+            else:
+                if parsed_dt.tzinfo is None:
+                    parsed_dt = parsed_dt.replace(tzinfo=timezone.utc)
+                timestamp_dt = parsed_dt.astimezone()
 
         records.append(
             {
@@ -1351,6 +1378,15 @@ async def fetch_recent_channel_memories(
         )
 
     records.sort(key=lambda item: item["timestamp"] or datetime.min, reverse=True)
+
+    today = datetime.now().date()
+    today_records = [
+        record for record in records if record["timestamp"] and record["timestamp"].date() == today
+    ]
+
+    if today_records:
+        return today_records[:limit]
+
     return records[:limit]
 
 async def remove_full_conversation_references(pruned_doc_ids: List[str], batch_size: int = 100):
