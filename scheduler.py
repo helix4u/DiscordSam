@@ -1,7 +1,8 @@
 import asyncio
 import logging
 from typing import Any, Dict, List, Optional, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 
 import discord
 
@@ -83,110 +84,181 @@ async def run_allrss_digest(
             if not entries:
                 continue
 
-            # Sort by pubDate_dt desc and limit
+            seen_record = load_seen_entries()
+            seen_ids = set(seen_record.get(feed_url, []))
             entries_sorted = sorted(
                 [e for e in entries if e.get("pubDate_dt")],
                 key=lambda e: e["pubDate_dt"],
                 reverse=True,
             )
-            to_process = entries_sorted[:limit]
+            new_entries: List[Dict[str, Any]] = []
+            for ent in entries_sorted:
+                guid_candidate = ent.get("guid") or ent.get("link") or ""
+                if guid_candidate and guid_candidate in seen_ids:
+                    continue
+                new_entries.append(ent)
 
-            feed_summaries: List[str] = []
+            if not new_entries:
+                continue
 
-            seen_record = load_seen_entries()
-            seen_ids = set(seen_record.get(feed_url, []))
+            chunk_size = max(limit, 1)
+            total_entries = len(new_entries)
+            total_batches = (total_entries + chunk_size - 1) // chunk_size
+            posted_count = 0
 
-            for idx, ent in enumerate(to_process, 1):
-                title = ent.get("title") or "Untitled"
-                link = ent.get("link") or ""
-                guid = ent.get("guid") or link
+            for chunk_start in range(0, total_entries, chunk_size):
+                chunk_entries = new_entries[chunk_start : chunk_start + chunk_size]
+                chunk_summaries: List[str] = []
 
-                status_text = f"[{name}] {idx}/{len(to_process)}: Scraping {title}…"
-                if header:
-                    try:
-                        await header.delete()
-                    except Exception:
-                        pass
-                    header = None
+                for idx_within_chunk, ent in enumerate(chunk_entries, 1):
+                    idx_global = chunk_start + idx_within_chunk
+                    title = ent.get("title") or "Untitled"
+                    link = ent.get("link") or ""
+                    guid = ent.get("guid") or link
+                    pub_date_dt = ent.get("pubDate_dt")
+                    if not pub_date_dt:
+                        pub_date_str = ent.get("pubDate")
+                        if pub_date_str:
+                            try:
+                                pub_date_dt = parsedate_to_datetime(pub_date_str)
+                                if pub_date_dt and pub_date_dt.tzinfo is None:
+                                    pub_date_dt = pub_date_dt.replace(tzinfo=timezone.utc)
+                            except Exception:
+                                pub_date_dt = None
+                    pub_date = (
+                        pub_date_dt.astimezone().strftime("%Y-%m-%d %H:%M %Z")
+                        if pub_date_dt
+                        else (ent.get("pubDate") or "")
+                    )
 
-                if status_interaction:
-                    try:
-                        header = await status_interaction.followup.send(
-                            content=status_text,
-                            ephemeral=True,
-                            wait=True,
-                        )
-                    except Exception:
+                    status_text = f"[{name}] {idx_global}/{total_entries}: Scraping {title}…"
+                    if header:
+                        try:
+                            await header.delete()
+                        except Exception:
+                            pass
                         header = None
-                if header is None:
-                    header = await ch.send(status_text)
 
-                scraped_text, _ = await scrape_website(link)
-                if (
-                    not scraped_text
-                    or "Failed to scrape" in scraped_text
-                    or "Scraping timed out" in scraped_text
-                    or "Blocked from fetching URL" in scraped_text
-                ):
-                    summary_entry = f"[{name}] **{title}**\n{link}\nCould not scrape article\n"
-                    feed_summaries.append(summary_entry)
+                    if status_interaction:
+                        try:
+                            header = await status_interaction.followup.send(
+                                content=status_text,
+                                ephemeral=True,
+                                wait=True,
+                            )
+                        except Exception:
+                            header = None
+                    if header is None:
+                        header = await ch.send(status_text)
+
+                    scraped_text, _ = await scrape_website(link)
+                    if (
+                        not scraped_text
+                        or "Failed to scrape" in scraped_text
+                        or "Scraping timed out" in scraped_text
+                        or "Blocked from fetching URL" in scraped_text
+                    ):
+                        summary_entry = (
+                            f"[{name}] **{title}**\n{pub_date}\n{link}\nCould not scrape article\n"
+                        )
+                        chunk_summaries.append(summary_entry)
+                        seen_ids.add(guid)
+                        continue
+
+                    prompt = (
+                        "You are an expert news summarizer. Summarize the following article in 3-5 sentences. "
+                        "Focus on key facts and avoid fluff.\n\n"
+                        f"Title: {title}\nURL: {link}\n\n{scraped_text[:config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT]}"
+                    )
+                    try:
+                        response = await create_chat_completion(
+                            llm_client,
+                            [
+                                {"role": "system", "content": "You are an expert news summarizer."},
+                                {"role": "user", "content": prompt},
+                            ],
+                            model=config.FAST_LLM_MODEL,
+                            max_tokens=3072,
+                            temperature=1,
+                            logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
+                            use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
+                        )
+                        summary = (
+                            extract_text(response, config.FAST_LLM_USE_RESPONSES_API)
+                            or "[LLM summarization failed]"
+                        )
+                        await store_rss_summary(
+                            feed_url=feed_url,
+                            article_url=link,
+                            title=title,
+                            summary_text=summary,
+                            timestamp=datetime.now(),
+                        )
+                    except Exception as e_summ:
+                        logger.error("Scheduled allrss: summarize failed for %s: %s", link, e_summ)
+                        summary = "[LLM summarization failed]"
+
+                    summary_entry = f"[{name}] **{title}**\n{pub_date}\n{link}\n{summary}\n"
+                    chunk_summaries.append(summary_entry)
                     seen_ids.add(guid)
+                    await asyncio.sleep(0.2)
+
+                if not chunk_summaries:
                     continue
 
-                prompt = (
-                    "You are an expert news summarizer. Summarize the following article in 3-5 sentences. "
-                    "Focus on key facts and avoid fluff.\n\n"
-                    f"Title: {title}\nURL: {link}\n\n{scraped_text[:config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT]}"
-                )
-                try:
-                    response = await create_chat_completion(
-                        llm_client,
-                        [
-                            {"role": "system", "content": "You are an expert news summarizer."},
-                            {"role": "user", "content": prompt},
-                        ],
-                        model=config.FAST_LLM_MODEL,
-                        max_tokens=3072,
-                        temperature=1,
-                        logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
-                        use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
-                    )
-                    summary = extract_text(response, config.FAST_LLM_USE_RESPONSES_API) or "[LLM summarization failed]"
-                    await store_rss_summary(
-                        feed_url=feed_url,
-                        article_url=link,
-                        title=title,
-                        summary_text=summary,
-                        timestamp=datetime.now(),
-                    )
-                except Exception as e_summ:
-                    logger.error("Scheduled allrss: summarize failed for %s: %s", link, e_summ)
-                    summary = "[LLM summarization failed]"
+                posted_count += len(chunk_summaries)
+                total_summaries.extend(chunk_summaries)
+                combined_chunk = "\n\n".join(chunk_summaries)
+                embed_base_title = f"Scheduled RSS Digest ({name})"
+                if total_batches > 1:
+                    embed_base_title += f" Batch {chunk_start // chunk_size + 1}/{total_batches}"
 
-                summary_entry = f"[{name}] **{title}**\n{link}\n{summary}\n"
-                feed_summaries.append(summary_entry)
-                seen_ids.add(guid)
-                await asyncio.sleep(0.2)
-
-            if feed_summaries:
-                total_summaries.extend(feed_summaries)
-                combined_feed = "\n\n".join(feed_summaries)
-                chunks = chunk_text(combined_feed, config.EMBED_MAX_LENGTH)
+                chunks = chunk_text(combined_chunk, config.EMBED_MAX_LENGTH)
                 for i, chunk in enumerate(chunks):
+                    embed_title = embed_base_title + ("" if i == 0 else f" (cont. {i+1})")
                     embed = discord.Embed(
-                        title=f"Scheduled RSS Digest ({name})" + ("" if i == 0 else f" (cont. {i+1})"),
+                        title=embed_title,
                         description=chunk,
                         color=config.EMBED_COLOR.get("complete"),
                     )
                     await ch.send(embed=embed)
                 try:
                     from audio_utils import send_tts_audio
-                    await send_tts_audio(ch, combined_feed, base_filename=f"scheduled_rss_{channel_id}_{name}")
+
+                    await send_tts_audio(
+                        ch,
+                        combined_chunk,
+                        base_filename=f"scheduled_rss_{channel_id}_{name}_batch{chunk_start // chunk_size + 1}",
+                    )
                 except Exception as tts_exc:
                     logger.error("Scheduled allrss: TTS failed for %s: %s", name, tts_exc)
 
+                if bot_state:
+                    try:
+                        user_node = MsgNode(
+                            "user",
+                            f"Scheduled digest chunk for {name} batch {chunk_start // chunk_size + 1}",
+                            name=str(channel_id),
+                        )
+                        assistant_node = MsgNode(
+                            "assistant",
+                            combined_chunk,
+                            name=str(bot.user.id) if bot.user else None,
+                        )
+                        ingest_task = ingest_conversation_to_chromadb(
+                            llm_client,
+                            channel_id,
+                            channel_id,
+                            [user_node, assistant_node],
+                            None,
+                        )
+                        await ingest_task
+                    except Exception as ingest_exc:
+                        logger.error("Scheduled allrss: Failed to ingest chunk into RAG: %s", ingest_exc, exc_info=True)
+
+            if posted_count:
                 completion_text = (
-                    f"✅ Finished processing **{name}**. Posted {len(feed_summaries)} summary(ies)."
+                    f"✅ Finished processing **{name}**. Posted {posted_count} summary(ies)."
                 )
                 if header:
                     try:
@@ -205,25 +277,6 @@ async def run_allrss_digest(
                         header = None
                 if header is None:
                     header = await ch.send(completion_text)
-
-                if bot_state:
-                    try:
-                        user_node = MsgNode("user", f"Scheduled digest chunk for {name}", name=str(channel_id))
-                        assistant_node = MsgNode(
-                            "assistant",
-                            combined_feed,
-                            name=str(bot.user.id) if bot.user else None,
-                        )
-                        ingest_task = ingest_conversation_to_chromadb(
-                            llm_client,
-                            channel_id,
-                            channel_id,
-                            [user_node, assistant_node],
-                            None,
-                        )
-                        await ingest_task
-                    except Exception as ingest_exc:
-                        logger.error("Scheduled allrss: Failed to ingest chunk into RAG: %s", ingest_exc, exc_info=True)
 
             seen_record[feed_url] = list(seen_ids)
             save_seen_entries(seen_record)
