@@ -234,6 +234,7 @@ Below is a comprehensive list of environment variables used by DiscordSam, along
 *   `MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT` (Default: `8000`): Maximum number of characters from a single scraped webpage or YouTube transcript to include in the LLM prompt.
 *   `MAX_IMAGE_BYTES_FOR_PROMPT` (Default: `4194304` (4MB)): Maximum size in bytes for an image to be processed and sent to the vision LLM.
 *   `NEWS_MAX_LINKS_TO_PROCESS` (Default: `15`): The maximum number of news links or search results the bot will attempt to scrape and process for commands like `/news` or `/search`.
+*   `RSS_FETCH_HOURS` (Default: `24`): How many hours back to fetch RSS entries from feeds. Only entries published within this timeframe will be processed by the `/rss` command.
 *   `HEADLESS_PLAYWRIGHT` (Default: `true`): Set to `false` to run Playwright browser instances in non-headless mode (visible window), useful for debugging scraping.
 *   `PLAYWRIGHT_MAX_CONCURRENCY` (Default: `1`): Maximum number of concurrent Playwright browser instances/contexts allowed.
 *   `SCRAPE_SCROLL_ATTEMPTS` (Default: `5`): How many times the bot will attempt to scroll down a webpage when scraping to load dynamically loaded content.

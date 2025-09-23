@@ -190,6 +190,8 @@ class Config:
 
         self.NEWS_MAX_LINKS_TO_PROCESS = _get_int("NEWS_MAX_LINKS_TO_PROCESS", 15)
 
+        self.RSS_FETCH_HOURS = _get_int("RSS_FETCH_HOURS", 24)
+
         self.TIMELINE_PRUNE_DAYS = _get_int("TIMELINE_PRUNE_DAYS", 365)
 
         self.HEADLESS_PLAYWRIGHT = _get_bool("HEADLESS_PLAYWRIGHT", True)

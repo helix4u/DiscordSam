@@ -863,7 +863,7 @@ async def fetch_rss_entries(feed_url: str) -> List[Dict[str, Any]]:
         channel = root.find("channel") or root
         items = channel.findall("item")
         entries: List[Dict[str, Any]] = []
-        one_days_ago = datetime.now(timezone.utc) - timedelta(days=1)
+        rss_hours_ago = datetime.now(timezone.utc) - timedelta(hours=config.RSS_FETCH_HOURS)
         for it in items:
             pub_date_str = it.findtext("pubDate") or ""
             pub_date_dt = None
@@ -875,7 +875,7 @@ async def fetch_rss_entries(feed_url: str) -> List[Dict[str, Any]]:
                 except Exception:
                     pub_date_dt = None
 
-            if pub_date_dt is None or pub_date_dt < one_days_ago:
+            if pub_date_dt is None or pub_date_dt < rss_hours_ago:
                 continue
 
             link_url = it.findtext("link") or ""
