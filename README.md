@@ -657,3 +657,7 @@ We welcome contributions to improve and expand DiscordSam!
     *   **Purpose:** Cancel the current long-running task (e.g., `/allrss`, scheduled digest) in the active channel.
     *   **Access Control:** Admin-only (`ADMIN_USER_IDS`).
     *   **Behavior:** Requests cancellation of the tracked task; the task posts a short confirmation as it exits.
+
+## Support
+
+If the tool is helpful, consider supporting it on [Ko-fi](https://ko-fi.com/gille).
