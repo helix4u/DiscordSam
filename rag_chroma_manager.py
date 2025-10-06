@@ -13,6 +13,7 @@ import chromadb
 from chromadb.errors import InternalError
 
 from config import config
+from llm_clients import get_llm_runtime
 from common_models import MsgNode
 from logit_biases import LOGIT_BIAS_UNWANTED_TOKENS_STR
 from utils import append_absolute_dates
@@ -248,30 +249,38 @@ Do not include any explanations or conversational text outside the JSON object.
 
     user_prompt = user_prompt_template.format(text_to_analyze=truncated_text)
 
-    try:
-        logger.debug(f"Requesting structured data extraction from model {config.FAST_LLM_MODEL} for source_doc_id: {source_doc_id}.")
+    fast_runtime = get_llm_runtime("fast")
+    fast_client = fast_runtime.client
+    fast_provider = fast_runtime.provider
+    fast_logit_bias = (
+        LOGIT_BIAS_UNWANTED_TOKENS_STR if fast_provider.supports_logit_bias else None
+    )
 
-        response_format_arg = {}
-        # Assuming LLM_SUPPORTS_JSON_MODE is a boolean attribute in your config
-        if getattr(config, "LLM_SUPPORTS_JSON_MODE", False):
-             response_format_arg = {"response_format": {"type": "json_object"}}
+    try:
+        logger.debug(
+            f"Requesting structured data extraction from model {fast_provider.model} for source_doc_id: {source_doc_id}."
+        )
+
+        response_format_arg: Dict[str, Any] = {}
+        if fast_provider.supports_json_mode:
+            response_format_arg = {"response_format": {"type": "json_object"}}
 
         response = await create_chat_completion(
-            llm_client,
+            fast_client,
             [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            model=config.FAST_LLM_MODEL,
+            model=fast_provider.model,
             max_tokens=16384,
-            temperature=1,
-            logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
-            use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
+            temperature=fast_provider.temperature,
+            logit_bias=fast_logit_bias,
+            use_responses_api=fast_provider.use_responses_api,
             **response_format_arg,
         )
 
         raw_content = extract_text(
-            response, config.FAST_LLM_USE_RESPONSES_API
+            response, fast_provider.use_responses_api
         )
         if raw_content:
 
@@ -305,19 +314,19 @@ Do not include any explanations or conversational text outside the JSON object.
             )
             try:
                 response = await create_chat_completion(
-                    llm_client,
+                    fast_client,
                     [
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt}
                     ],
-                    model=config.FAST_LLM_MODEL,
+                    model=fast_provider.model,
                     max_tokens=8192,
-                    temperature=1,
-                    logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
-                    use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
+                    temperature=fast_provider.temperature,
+                    logit_bias=fast_logit_bias,
+                    use_responses_api=fast_provider.use_responses_api,
                 )
                 raw_content = extract_text(
-                    response, config.FAST_LLM_USE_RESPONSES_API
+                    response, fast_provider.use_responses_api
                 )
                 if raw_content:
                     if raw_content.startswith("```json"):
@@ -360,6 +369,13 @@ async def distill_conversation_to_sentence_llm(llm_client: Any, text_to_distill:
 
     truncated_text = sanitized_text[:30000]
 
+    fast_runtime = get_llm_runtime("fast")
+    fast_client = fast_runtime.client
+    fast_provider = fast_runtime.provider
+    fast_logit_bias = (
+        LOGIT_BIAS_UNWANTED_TOKENS_STR if fast_provider.supports_logit_bias else None
+    )
+
     prompt = (
         "You are a text distillation expert. Read the following conversational exchange (User query and Assistant response) "
         "and summarize its absolute core essence into a few keyword-rich, data-dense sentences. These sentences "
@@ -371,21 +387,23 @@ async def distill_conversation_to_sentence_llm(llm_client: Any, text_to_distill:
         "DISTILLED SENTENCE(S) (focus on the exchange):"
     )
     try:
-        logger.debug(f"Requesting distillation from model {config.FAST_LLM_MODEL} for focused exchange.")
+        logger.debug(
+            f"Requesting distillation from model {fast_provider.model} for focused exchange."
+        )
         response = await create_chat_completion(
-            llm_client,
+            fast_client,
             [
                 {"role": "system", "content": "You are an expert contextual knowledge distiller focusing on user-assistant turn pairs."},
                 {"role": "user", "content": prompt}
             ],
-            model=config.FAST_LLM_MODEL,
+            model=fast_provider.model,
             max_tokens=3072,
-            temperature=1,
-            logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
-            use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
+            temperature=fast_provider.temperature,
+            logit_bias=fast_logit_bias,
+            use_responses_api=fast_provider.use_responses_api,
         )
         distilled = extract_text(
-            response, config.FAST_LLM_USE_RESPONSES_API
+            response, fast_provider.use_responses_api
         )
         if distilled:
             logger.info(f"Distilled exchange to sentence(s): '{distilled[:100]}...'")
@@ -400,6 +418,13 @@ async def synthesize_retrieved_contexts_llm(llm_client: Any, retrieved_contexts:
     if not retrieved_contexts:
         logger.debug("Context synthesis skipped: no retrieved_contexts provided.")
         return None
+
+    fast_runtime = get_llm_runtime("fast")
+    fast_client = fast_runtime.client
+    fast_provider = fast_runtime.provider
+    fast_logit_bias = (
+        LOGIT_BIAS_UNWANTED_TOKENS_STR if fast_provider.supports_logit_bias else None
+    )
 
     formatted_snippets = ""
     for i, (text, source_name) in enumerate(retrieved_contexts):
@@ -428,21 +453,21 @@ async def synthesize_retrieved_contexts_llm(llm_client: Any, retrieved_contexts:
         "SYNTHESIZED CONTEXT PARAGRAPH (3-8 sentences ideally. Do not use <think> tags or metacognition for this.):"
     )
     try:
-        logger.debug(f"Requesting context synthesis from model {config.FAST_LLM_MODEL}.")
+        logger.debug(f"Requesting context synthesis from model {fast_provider.model}.")
         response = await create_chat_completion(
-            llm_client,
+            fast_client,
             [
                 {"role": "system", "content": "You are an expert context synthesizer."},
                 {"role": "user", "content": prompt}
             ],
-            model=config.FAST_LLM_MODEL,
+            model=fast_provider.model,
             max_tokens=3072,
-            temperature=1,
-            logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
-            use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
+            temperature=fast_provider.temperature,
+            logit_bias=fast_logit_bias,
+            use_responses_api=fast_provider.use_responses_api,
         )
         synthesized_context = extract_text(
-            response, config.FAST_LLM_USE_RESPONSES_API
+            response, fast_provider.use_responses_api
         )
         if synthesized_context:
             logger.info(f"Synthesized RAG context: '{synthesized_context[:150]}...'")
@@ -478,21 +503,28 @@ async def merge_memory_snippet_with_summary_llm(
         f"OLD MEMORY:\n{old_memory}\n\nNEW CONVERSATION SUMMARY:\n{new_summary}\n\nUPDATED MEMORY:"
     )
 
+    fast_runtime = get_llm_runtime("fast")
+    fast_client = fast_runtime.client
+    fast_provider = fast_runtime.provider
+    fast_logit_bias = (
+        LOGIT_BIAS_UNWANTED_TOKENS_STR if fast_provider.supports_logit_bias else None
+    )
+
     try:
         response = await create_chat_completion(
-            llm_client,
+            fast_client,
             [
                 {"role": "system", "content": "You are a memory consolidation assistant."},
                 {"role": "user", "content": user_text},
             ],
-            model=config.FAST_LLM_MODEL,
+            model=fast_provider.model,
             max_tokens=3072,
-            temperature=1,
-            logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
-            use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
+            temperature=fast_provider.temperature,
+            logit_bias=fast_logit_bias,
+            use_responses_api=fast_provider.use_responses_api,
         )
         merged = extract_text(
-            response, config.FAST_LLM_USE_RESPONSES_API
+            response, fast_provider.use_responses_api
         )
         if merged:
             return merged

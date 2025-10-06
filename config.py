@@ -1,9 +1,26 @@
 import os
 import logging
+from dataclasses import dataclass
+from typing import Dict
 import discord
 from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
+
+@dataclass(frozen=True)
+class LLMApiConfig:
+    """Provider configuration for an LLM role."""
+
+    role: str
+    model: str
+    api_base_url: str
+    api_key: str | None
+    temperature: float
+    use_responses_api: bool
+    supports_logit_bias: bool
+    supports_json_mode: bool
+    is_google_model: bool
+
 
 class Config:
     """Configuration class for the bot."""
@@ -74,8 +91,35 @@ class Config:
         self.VISION_LLM_MODEL = os.getenv("VISION_LLM_MODEL", "llava")
         self.FAST_LLM_MODEL = os.getenv("FAST_LLM_MODEL", self.LLM_MODEL)
         self.LLM_API_KEY = os.getenv("LLM_API_KEY", "")
-        self.LLM_SUPPORTS_JSON_MODE = _get_bool("LLM_SUPPORTS_JSON_MODE", False) # New Flag
+        self.FAST_LLM_API_KEY = os.getenv("FAST_LLM_API_KEY", self.LLM_API_KEY)
+        self.VISION_LLM_API_KEY = os.getenv("VISION_LLM_API_KEY", self.LLM_API_KEY)
+        self.LLM_COMPLETIONS_URL = os.getenv("LLM_COMPLETIONS_URL", self.LOCAL_SERVER_URL)
+        self.FAST_LLM_COMPLETIONS_URL = os.getenv("FAST_LLM_COMPLETIONS_URL", self.LLM_COMPLETIONS_URL)
+        self.VISION_LLM_COMPLETIONS_URL = os.getenv("VISION_LLM_COMPLETIONS_URL", self.LLM_COMPLETIONS_URL)
+        self.LLM_TEMPERATURE = _get_float("LLM_TEMPERATURE", 0.7)
+        self.FAST_LLM_TEMPERATURE = _get_float("FAST_LLM_TEMPERATURE", self.LLM_TEMPERATURE)
+        self.VISION_LLM_TEMPERATURE = _get_float("VISION_LLM_TEMPERATURE", self.LLM_TEMPERATURE)
+        self.LLM_SUPPORTS_JSON_MODE = _get_bool("LLM_SUPPORTS_JSON_MODE", False)
+        self.FAST_LLM_SUPPORTS_JSON_MODE = _get_bool(
+            "FAST_LLM_SUPPORTS_JSON_MODE", self.LLM_SUPPORTS_JSON_MODE
+        )
+        self.VISION_LLM_SUPPORTS_JSON_MODE = _get_bool(
+            "VISION_LLM_SUPPORTS_JSON_MODE", self.LLM_SUPPORTS_JSON_MODE
+        )
         self.IS_GOOGLE_MODEL = _get_bool("IS_GOOGLE_MODEL", False)
+        self.FAST_IS_GOOGLE_MODEL = _get_bool("FAST_IS_GOOGLE_MODEL", self.IS_GOOGLE_MODEL)
+        self.VISION_IS_GOOGLE_MODEL = _get_bool(
+            "VISION_IS_GOOGLE_MODEL", self.IS_GOOGLE_MODEL
+        )
+        self.LLM_SUPPORTS_LOGIT_BIAS = _get_bool(
+            "LLM_SUPPORTS_LOGIT_BIAS", not self.IS_GOOGLE_MODEL
+        )
+        self.FAST_LLM_SUPPORTS_LOGIT_BIAS = _get_bool(
+            "FAST_LLM_SUPPORTS_LOGIT_BIAS", self.LLM_SUPPORTS_LOGIT_BIAS
+        )
+        self.VISION_LLM_SUPPORTS_LOGIT_BIAS = _get_bool(
+            "VISION_LLM_SUPPORTS_LOGIT_BIAS", self.LLM_SUPPORTS_LOGIT_BIAS
+        )
         self.USE_RESPONSES_API = _get_bool("USE_RESPONSES_API", False)
         self.LLM_USE_RESPONSES_API = _get_bool(
             "LLM_USE_RESPONSES_API", self.USE_RESPONSES_API
@@ -96,6 +140,42 @@ class Config:
         # - Remove logit_bias
         # - Map system role to developer
         self.GPT5_MODE = _get_bool("GPT5_MODE", False)
+
+        self.LLM_PROVIDERS: Dict[str, LLMApiConfig] = {
+            "main": self._build_llm_provider(
+                role="main",
+                model=self.LLM_MODEL,
+                api_base_url=self.LLM_COMPLETIONS_URL,
+                api_key=self.LLM_API_KEY,
+                temperature=self.LLM_TEMPERATURE,
+                use_responses_api=self.LLM_USE_RESPONSES_API,
+                supports_logit_bias=self.LLM_SUPPORTS_LOGIT_BIAS,
+                supports_json_mode=self.LLM_SUPPORTS_JSON_MODE,
+                is_google_model=self.IS_GOOGLE_MODEL,
+            ),
+            "fast": self._build_llm_provider(
+                role="fast",
+                model=self.FAST_LLM_MODEL,
+                api_base_url=self.FAST_LLM_COMPLETIONS_URL,
+                api_key=self.FAST_LLM_API_KEY,
+                temperature=self.FAST_LLM_TEMPERATURE,
+                use_responses_api=self.FAST_LLM_USE_RESPONSES_API,
+                supports_logit_bias=self.FAST_LLM_SUPPORTS_LOGIT_BIAS,
+                supports_json_mode=self.FAST_LLM_SUPPORTS_JSON_MODE,
+                is_google_model=self.FAST_IS_GOOGLE_MODEL,
+            ),
+            "vision": self._build_llm_provider(
+                role="vision",
+                model=self.VISION_LLM_MODEL,
+                api_base_url=self.VISION_LLM_COMPLETIONS_URL,
+                api_key=self.VISION_LLM_API_KEY,
+                temperature=self.VISION_LLM_TEMPERATURE,
+                use_responses_api=self.VISION_LLM_USE_RESPONSES_API,
+                supports_logit_bias=self.VISION_LLM_SUPPORTS_LOGIT_BIAS,
+                supports_json_mode=self.VISION_LLM_SUPPORTS_JSON_MODE,
+                is_google_model=self.VISION_IS_GOOGLE_MODEL,
+            ),
+        }
 
         # Whisper ASR model settings
         self.WHISPER_DEVICE = os.getenv("WHISPER_DEVICE") # e.g. "cuda", "cpu". None for auto-detect
@@ -210,6 +290,35 @@ class Config:
         self.PLAYWRIGHT_IDLE_CLEANUP_THRESHOLD_MINUTES = _get_int("PLAYWRIGHT_IDLE_CLEANUP_THRESHOLD_MINUTES", 10) # How long Playwright must be idle before cleanup
 
         self.SCRAPE_LOCK_TIMEOUT_SECONDS = _get_int("SCRAPE_LOCK_TIMEOUT_SECONDS", 60) # Timeout for acquiring scrape lock
+
+    def _build_llm_provider(
+        self,
+        *,
+        role: str,
+        model: str,
+        api_base_url: str,
+        api_key: str | None,
+        temperature: float,
+        use_responses_api: bool,
+        supports_logit_bias: bool,
+        supports_json_mode: bool,
+        is_google_model: bool,
+    ) -> LLMApiConfig:
+        """Construct a provider record for a specific LLM role."""
+
+        base_url = api_base_url.strip() if api_base_url else self.LLM_COMPLETIONS_URL
+        key = api_key.strip() if api_key else None
+        return LLMApiConfig(
+            role=role,
+            model=model,
+            api_base_url=base_url,
+            api_key=key,
+            temperature=temperature,
+            use_responses_api=use_responses_api,
+            supports_logit_bias=supports_logit_bias,
+            supports_json_mode=supports_json_mode,
+            is_google_model=is_google_model,
+        )
 
 
 # Global config instance

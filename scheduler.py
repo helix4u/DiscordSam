@@ -14,6 +14,7 @@ from utils import chunk_text
 from web_utils import fetch_rss_entries, scrape_website
 from openai_api import create_chat_completion, extract_text
 from logit_biases import LOGIT_BIAS_UNWANTED_TOKENS_STR
+from llm_clients import get_llm_runtime
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +110,14 @@ async def run_allrss_digest(
             for chunk_start in range(0, total_entries, chunk_size):
                 chunk_entries = new_entries[chunk_start : chunk_start + chunk_size]
                 chunk_summaries: List[str] = []
+                fast_runtime = get_llm_runtime("fast")
+                fast_client = fast_runtime.client
+                fast_provider = fast_runtime.provider
+                fast_logit_bias = (
+                    LOGIT_BIAS_UNWANTED_TOKENS_STR
+                    if fast_provider.supports_logit_bias
+                    else None
+                )
 
                 for idx_within_chunk, ent in enumerate(chunk_entries, 1):
                     idx_global = chunk_start + idx_within_chunk
@@ -172,19 +181,19 @@ async def run_allrss_digest(
                     )
                     try:
                         response = await create_chat_completion(
-                            llm_client,
+                            fast_client,
                             [
                                 {"role": "system", "content": "You are an expert news summarizer."},
                                 {"role": "user", "content": prompt},
                             ],
-                            model=config.FAST_LLM_MODEL,
+                            model=fast_provider.model,
                             max_tokens=3072,
-                            temperature=1,
-                            logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
-                            use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
+                            temperature=fast_provider.temperature,
+                            logit_bias=fast_logit_bias,
+                            use_responses_api=fast_provider.use_responses_api,
                         )
                         summary = (
-                            extract_text(response, config.FAST_LLM_USE_RESPONSES_API)
+                            extract_text(response, fast_provider.use_responses_api)
                             or "[LLM summarization failed]"
                         )
                         await store_rss_summary(
