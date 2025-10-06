@@ -20,7 +20,6 @@ import base64 # For ap_command
 import random # For ap_command
 import os # For ingest_command
 from logit_biases import LOGIT_BIAS_UNWANTED_TOKENS_STR
-from llm_clients import get_llm_runtime
 from openai_api import create_chat_completion, extract_text
 
 # Need to import the inline Pydantic models from discord_commands if they are not moved to common_models
@@ -157,29 +156,20 @@ async def llm_request_processor_task(bot_state: BotState, llm_client: Any, bot_i
                                     f"Article Title: {article_title}\n"
                                     f"Article Content:\n{scraped_content[:config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT*2]}"
                                 )
-                                fast_runtime = get_llm_runtime("fast")
-                                fast_client = fast_runtime.client
-                                fast_provider = fast_runtime.provider
-                                fast_logit_bias = (
-                                    LOGIT_BIAS_UNWANTED_TOKENS_STR
-                                    if fast_provider.supports_logit_bias
-                                    else None
-                                )
-
                                 summary_response = await create_chat_completion(
-                                    fast_client,
+                                    llm_client,
                                     [
                                         {"role": "system", "content": "You are an expert news summarizer."},
                                         {"role": "user", "content": summarization_prompt}
                                     ],
-                                    model=fast_provider.model,
+                                    model=config.FAST_LLM_MODEL,
                                     max_tokens=250,
-                                    temperature=fast_provider.temperature,
-                                    logit_bias=fast_logit_bias,
-                                    use_responses_api=fast_provider.use_responses_api,
+                                    temperature=0.3,
+                                    logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
+                                    use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
                                 )
                                 article_summary = extract_text(
-                                    summary_response, fast_provider.use_responses_api
+                                    summary_response, config.FAST_LLM_USE_RESPONSES_API
                                 )
                                 if article_summary:
                                     article_summaries_for_briefing.append(f"Source: {article_title} ({article_url})\nSummary: {article_summary}\n\n")

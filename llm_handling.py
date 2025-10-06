@@ -9,7 +9,6 @@ from datetime import datetime
 
 # Assuming config is imported from config.py
 from config import config
-from llm_clients import get_llm_client, get_llm_provider, supports_logit_bias
 from state import BotState
 # Import MsgNode from the new common_models.py
 from common_models import MsgNode
@@ -199,31 +198,29 @@ async def _build_initial_prompt_messages(
 async def get_simplified_llm_stream(
     llm_client: Any,
     prompt_messages: List[MsgNode],
-    role: str,
+    is_vision_request: bool,
+    use_responses_api: bool,
 ) -> Tuple[Optional[Any], List[MsgNode]]:
     if not prompt_messages:
         raise ValueError("Prompt messages cannot be empty for get_simplified_llm_stream.")
 
-    logger.info(f"Requesting final response for role '{role}'.")
-    provider = get_llm_provider(role)
-    client = get_llm_client(role)
-    final_stream_model = provider.model
+    logger.info(f"Requesting final response. Vision request: {is_vision_request}")
+
+    final_stream_model = (
+        config.VISION_LLM_MODEL if is_vision_request else config.LLM_MODEL
+    )
     logger.info(f"Using model for final response: {final_stream_model}")
     api_messages = [msg_node.to_dict() for msg_node in prompt_messages]
-    logit_bias_param = (
-        LOGIT_BIAS_UNWANTED_TOKENS_STR if supports_logit_bias(role) else None
-    )
-    streaming_enabled = config.LLM_STREAMING and not provider.use_responses_api
     try:
         final_llm_stream = await create_chat_completion(
-            client,
+            llm_client,
             api_messages,
             model=final_stream_model,
             max_tokens=config.MAX_COMPLETION_TOKENS,
-            temperature=provider.temperature,
-            logit_bias=logit_bias_param,
-            stream=streaming_enabled,
-            use_responses_api=provider.use_responses_api,
+            temperature=0.7,
+            logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
+            stream=config.LLM_STREAMING,
+            use_responses_api=use_responses_api,
         )
         return final_llm_stream, prompt_messages
     except BadRequestError as e:
@@ -238,14 +235,14 @@ async def get_simplified_llm_stream(
             )
             try:
                 final_response = await create_chat_completion(
-                    client,
+                    llm_client,
                     api_messages,
                     model=final_stream_model,
                     max_tokens=config.MAX_COMPLETION_TOKENS,
-                    temperature=provider.temperature,
-                    logit_bias=logit_bias_param,
+                    temperature=0.7,
+                    logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
                     stream=False,
-                    use_responses_api=provider.use_responses_api,
+                    use_responses_api=use_responses_api,
                 )
                 return final_response, prompt_messages
             except Exception as inner_e:
@@ -350,12 +347,16 @@ async def _stream_llm_handler(
                 break
         logger.info(f"Determined is_vision_request for '{title}': {is_vision_request}")
 
-        role = "vision" if is_vision_request else "main"
-        provider = get_llm_provider(role)
+        use_responses_api = (
+            config.VISION_LLM_USE_RESPONSES_API
+            if is_vision_request
+            else config.LLM_USE_RESPONSES_API
+        )
         stream, final_prompt_used_by_llm = await get_simplified_llm_stream(
             llm_client,
             final_prompt_for_llm_call,
-            role,
+            is_vision_request,
+            use_responses_api,
         )
         final_prompt_for_rag = final_prompt_used_by_llm
 
@@ -381,8 +382,6 @@ async def _stream_llm_handler(
 
         last_edit_time = asyncio.get_event_loop().time()
         accumulated_delta_for_update = ""
-
-        use_responses_api = provider.use_responses_api
 
         if config.LLM_STREAMING and hasattr(stream, "__aiter__"):
             if current_initial_message:
@@ -804,9 +803,7 @@ async def get_description_for_image(llm_client: Any, image_path: str) -> str:
         with open(image_path, "rb") as image_file:
             image_bytes = image_file.read()
         b64_image = base64.b64encode(image_bytes).decode("utf-8")
-        provider = get_llm_provider("vision")
-        client = get_llm_client("vision")
-        if not provider.model:
+        if not config.VISION_LLM_MODEL:
             logger.error("VISION_LLM_MODEL is not configured. Cannot describe image.")
             return "[Error: Vision model not configured for image description.]"
         prompt_messages = [
@@ -829,26 +826,23 @@ async def get_description_for_image(llm_client: Any, image_path: str) -> str:
             },
         ]
         logger.debug(
-            f"Sending image description request to model: {provider.model}"
-        )
-        logit_bias_param = (
-            LOGIT_BIAS_UNWANTED_TOKENS_STR if supports_logit_bias("vision") else None
+            f"Sending image description request to model: {config.VISION_LLM_MODEL}"
         )
         response = await create_chat_completion(
-            client,
+            llm_client,
             prompt_messages,
-            model=provider.model,
+            model=config.VISION_LLM_MODEL,
             max_tokens=(
                 config.MAX_COMPLETION_TOKENS_IMAGE_DESCRIPTION
                 if hasattr(config, "MAX_COMPLETION_TOKENS_IMAGE_DESCRIPTION")
                 else 300
             ),
-            temperature=provider.temperature,
-            logit_bias=logit_bias_param,
-            use_responses_api=provider.use_responses_api,
+            temperature=0.3,
+            logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
+            use_responses_api=config.VISION_LLM_USE_RESPONSES_API,
         )
         description = extract_text(
-            response, provider.use_responses_api
+            response, config.VISION_LLM_USE_RESPONSES_API
         )
         if description:
             logger.info(

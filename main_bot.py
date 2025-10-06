@@ -2,11 +2,11 @@ import logging
 
 import discord
 from discord.ext import commands
+from openai import AsyncOpenAI # Using the direct import
 
 # Import configurations and state
 from config import config, require_bot_token  # ``require_bot_token`` enforces that the bot token is set
 from state import BotState # Assuming state.py is in the same directory
-from llm_clients import initialize_llm_clients, get_llm_client
 
 # Import utility and manager modules
 from rag_chroma_manager import initialize_chromadb  # For initializing ChromaDB
@@ -46,10 +46,13 @@ intents.guilds = True        # Often needed for various guild-related events/inf
 bot = commands.Bot(command_prefix=commands.when_mentioned_or("!"), intents=intents)
 
 # --- Client Initializations ---
-# Create and share LLM clients via the central registry so each role can
-# target its own completions endpoint and API key.
-initialize_llm_clients()
-llm_client = get_llm_client("main")
+# LLM Client (OpenAI compatible)
+# This client will be passed to or imported by modules that need it.
+llm_client = AsyncOpenAI(
+    base_url=config.LOCAL_SERVER_URL,
+    api_key=config.LLM_API_KEY or "lm-studio",
+    timeout=config.LLM_REQUEST_TIMEOUT_SECONDS,
+)  # api_key can be anything for local LLMs usually
 
 # Bot State Manager
 bot_state = BotState()

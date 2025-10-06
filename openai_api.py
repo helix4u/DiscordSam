@@ -72,18 +72,6 @@ async def create_chat_completion(
             converted_parts.append(new_part)
         return converted_parts
 
-    def _logit_bias_unsupported(exc: BadRequestError) -> bool:
-        body = getattr(exc, "body", {}) or {}
-        if isinstance(body, list) and body:
-            body = body[0]
-        err = body.get("error", body) if isinstance(body, dict) else {}
-        if isinstance(err, dict):
-            param = err.get("param")
-            message = str(err.get("message", ""))
-            if (param and "logit_bias" in str(param)) or "logit bias" in message.lower():
-                return True
-        return False
-
     if not use_responses_api:
         converted: List[Dict[str, Any]] = []
         for msg in messages:
@@ -133,10 +121,6 @@ async def create_chat_completion(
                 )
                 await asyncio.sleep(wait_time)
             except BadRequestError as e:
-                if params.get("logit_bias") is not None and _logit_bias_unsupported(e):
-                    params.pop("logit_bias", None)
-                    logger.debug("Removed logit_bias after provider rejection; retrying request.")
-                    continue
                 # If mapping system->developer causes a role validation error in some clients,
                 # retry once with roles normalized back to 'system'.
                 if attempt == 0 and config.GPT5_MODE:
