@@ -2,31 +2,512 @@ import asyncio
 import io
 import os
 import logging
-from typing import Optional, Union, Any
+import random
+import tempfile
+import textwrap
+from pathlib import Path
+from typing import Optional, Union, Any, TYPE_CHECKING
 import re  # Ensures 're' is available
 import threading
-
 import discord
 import aiohttp
 from pydub import AudioSegment
 import torch
 import whisper
 import gc
-
 from config import config
 from utils import clean_text_for_tts
-
+if TYPE_CHECKING:
+    from state import BotState
 logger = logging.getLogger(__name__)
-
 # Global lock to ensure TTS requests are processed sequentially.
 TTS_LOCK = asyncio.Lock()
-
+_MISSING_FONT_WARNING_EMITTED = False
+def _create_rolling_subtitles(text: str, duration_seconds: float, width: int = 1280, height: int = 720, font_size: int = 42) -> str:
+    """Create rolling subtitle SRT content that displays text progressively.
+    
+    Args:
+        text: The full text to display
+        duration_seconds: Total duration of the audio/video
+        width: Video width in pixels
+        height: Video height in pixels
+        font_size: Font size being used
+        
+    Returns:
+        SRT content with time-synced rolling subtitles
+    """
+    normalized = text.replace("\r\n", " ").replace("\r", " ").replace("\n", " ").strip()
+    
+    # Calculate approximate characters per line based on video width
+    usable_width = width - 96  # Account for margins
+    chars_per_line = int(usable_width / (font_size * 0.6))
+    chars_per_line = max(30, min(chars_per_line, 80))
+    
+    # Max lines visible at once for rolling effect
+    max_visible_lines = 3
+    
+    # Split text into chunks that fit on one line
+    words = normalized.split()
+    line_chunks = []
+    current_line = []
+    current_length = 0
+    
+    for word in words:
+        word_length = len(word) + 1  # +1 for space
+        if current_length + word_length > chars_per_line and current_line:
+            line_chunks.append(" ".join(current_line))
+            current_line = [word]
+            current_length = word_length
+        else:
+            current_line.append(word)
+            current_length += word_length
+    
+    if current_line:
+        line_chunks.append(" ".join(current_line))
+    
+    if not line_chunks:
+        return "1\n00:00:00,000 --> 00:00:01,000\n \n"
+    
+    # Calculate timing for each chunk
+    time_per_chunk = duration_seconds / len(line_chunks)
+    # Ensure each chunk shows for at least 1 second
+    time_per_chunk = max(1.0, time_per_chunk)
+    
+    srt_entries = []
+    for i, chunk in enumerate(line_chunks):
+        start_time = i * time_per_chunk
+        end_time = min((i + 1) * time_per_chunk, duration_seconds)
+        
+        # Build the subtitle entry with rolling context
+        # Show current line and previous lines for context
+        visible_chunks = []
+        start_idx = max(0, i - (max_visible_lines - 1))
+        for j in range(start_idx, i + 1):
+            visible_chunks.append(line_chunks[j])
+        
+        subtitle_text = "\n".join(visible_chunks)
+        
+        # Format timestamps
+        start_h = int(start_time // 3600)
+        start_m = int((start_time % 3600) // 60)
+        start_s = int(start_time % 60)
+        start_ms = int((start_time % 1) * 1000)
+        
+        end_h = int(end_time // 3600)
+        end_m = int((end_time % 3600) // 60)
+        end_s = int(end_time % 60)
+        end_ms = int((end_time % 1) * 1000)
+        
+        srt_entry = (
+            f"{i + 1}\n"
+            f"{start_h:02d}:{start_m:02d}:{start_s:02d},{start_ms:03d} --> "
+            f"{end_h:02d}:{end_m:02d}:{end_s:02d},{end_ms:03d}\n"
+            f"{subtitle_text}\n"
+        )
+        srt_entries.append(srt_entry)
+    
+    return "\n".join(srt_entries)
+def _escape_subtitles_path(value: str) -> str:
+    """Escape a filesystem path for use inside ffmpeg subtitle filters."""
+    escaped = value.replace("\\", "\\\\")
+    escaped = escaped.replace(":", "\\\\:")
+    return escaped.replace("'", "\\'")
+def _escape_force_style(value: str) -> str:
+    """Escape force_style values for ffmpeg subtitles filter."""
+    return value.replace("'", "\\'")
+def _css_hex_to_ass_color(hex_color: str | None, default_ass: str) -> str:
+    """Convert a CSS-style hex color (optionally with alpha) to ASS colour format."""
+    if not hex_color:
+        return default_ass
+    value = hex_color.strip().lstrip("#")
+    if len(value) not in {6, 8}:
+        return default_ass
+    try:
+        r = int(value[0:2], 16)
+        g = int(value[2:4], 16)
+        b = int(value[4:6], 16)
+        css_alpha = 255
+        if len(value) == 8:
+            css_alpha = int(value[6:8], 16)
+        css_alpha = max(0, min(255, css_alpha))
+        ass_alpha = 255 - css_alpha  # ASS uses inverse alpha
+        ass_alpha = max(0, min(255, ass_alpha))
+        return f"&H{ass_alpha:02X}{b:02X}{g:02X}{r:02X}&"
+    except ValueError:
+        return default_ass
+def _format_srt_timestamp(duration_ms: int) -> str:
+    """Return an SRT timestamp given a duration in milliseconds."""
+    if duration_ms <= 0:
+        return "00:00:01,000"
+    hours = duration_ms // 3_600_000
+    remainder = duration_ms % 3_600_000
+    minutes = remainder // 60_000
+    remainder %= 60_000
+    seconds = remainder // 1000
+    millis = remainder % 1000
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d},{millis:03d}"
+async def _generate_tts_video(
+    audio_bytes: bytes,
+    audio_segment: AudioSegment,
+    display_text: str,
+    output_base: str,
+) -> Optional[bytes]:
+    """Render an MP4 with a solid background and burned-in subtitles."""
+    if not audio_bytes:
+        return None
+    
+    # Get video dimensions first
+    # Calculate duration first (needed for rolling subtitles)
+    duration_ms = int(len(audio_segment))
+    duration_seconds = duration_ms / 1000.0
+    
+    width = max(320, int(getattr(config, "TTS_VIDEO_WIDTH", 1280)))
+    height = max(320, int(getattr(config, "TTS_VIDEO_HEIGHT", 720)))
+    fps = max(1, int(getattr(config, "TTS_VIDEO_FPS", 30)))
+    font_size = max(12, int(getattr(config, "TTS_VIDEO_FONT_SIZE", 42)))
+    
+    # Create rolling subtitles based on audio duration
+    logger.info("Creating rolling subtitles for %.2f second video (%dx%d, font size %d)", 
+               duration_seconds, width, height, font_size)
+    background_color = getattr(config, "TTS_VIDEO_BACKGROUND_COLOR", "#111827")
+    text_color_hex = getattr(config, "TTS_VIDEO_TEXT_COLOR", "#F8FAFC")
+    box_color_hex = getattr(config, "TTS_VIDEO_TEXT_BOX_COLOR", "#000000AA")
+    margin_v = max(20, int(getattr(config, "TTS_VIDEO_MARGIN", 96)))
+    margin_lr = max(20, int(getattr(config, "TTS_VIDEO_TEXT_BOX_PADDING", 48)))
+    font_path = getattr(config, "TTS_VIDEO_FONT_PATH", "")
+    font_name = Path(font_path).stem if font_path else "Arial"
+    if not font_name:
+        font_name = "Arial"
+    font_name = font_name.replace("'", "")
+    text_color_ass = _css_hex_to_ass_color(text_color_hex, "&H00FFFFFF&")
+    box_color_ass = _css_hex_to_ass_color(box_color_hex, "&H80202020&")
+    try:
+        with tempfile.TemporaryDirectory() as tmp_dir_str:
+            tmp_dir = Path(tmp_dir_str)
+            audio_path = tmp_dir / "input.mp3"
+            video_path = tmp_dir / f"{output_base}.mp4"
+            subtitle_path = tmp_dir / "captions.srt"
+            audio_path.write_bytes(audio_bytes)
+            logger.debug("Wrote audio file: %s (%d bytes)", audio_path, len(audio_bytes))
+            logger.info("Audio file created for video generation: %d bytes, duration: %.2f seconds", 
+                       len(audio_bytes), duration_seconds)
+            
+            # First, transcode the audio to a clean AAC format that works with x264/Discord
+            transcoded_audio_path = tmp_dir / "audio_transcoded.aac"
+            logger.info("Transcoding audio to AAC for compatibility...")
+            transcode_cmd = [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-i",
+                str(audio_path),
+                "-c:a",
+                "aac",
+                "-b:a",
+                "128k",
+                "-ar",
+                "44100",
+                "-ac",
+                "2",
+                str(transcoded_audio_path),
+            ]
+            transcode_process = await asyncio.create_subprocess_exec(
+                *transcode_cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            transcode_stdout, transcode_stderr = await transcode_process.communicate()
+            
+            if transcode_process.returncode != 0:
+                logger.error("Audio transcoding failed: %s", 
+                           transcode_stderr.decode("utf-8", errors="ignore") if transcode_stderr else "No error output")
+                return None
+            
+            if not transcoded_audio_path.exists():
+                logger.error("Transcoded audio file was not created")
+                return None
+            
+            logger.info("Audio transcoded successfully: %d bytes", transcoded_audio_path.stat().st_size)
+            
+            # Verify audio file was created and has content
+            if not audio_path.exists() or audio_path.stat().st_size == 0:
+                logger.error("Failed to create audio file or file is empty")
+                return None
+            
+            # Test if ffmpeg can read the audio file and verify it has content
+            try:
+                test_cmd = ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_streams", str(audio_path)]
+                test_process = await asyncio.create_subprocess_exec(
+                    *test_cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                test_stdout, test_stderr = await test_process.communicate()
+                
+                if test_process.returncode == 0:
+                    import json
+                    test_data = json.loads(test_stdout.decode("utf-8"))
+                    audio_streams = [s for s in test_data.get("streams", []) if s.get("codec_type") == "audio"]
+                    logger.info("Audio file verification: %d audio streams found", len(audio_streams))
+                    if len(audio_streams) > 0:
+                        stream = audio_streams[0]
+                        logger.info("Audio stream: %s, %d Hz, %d channels", 
+                                   stream.get("codec_name", "unknown"),
+                                   int(stream.get("sample_rate", 0)),
+                                   int(stream.get("channels", 0)))
+                        
+                        # Check if the audio stream has duration
+                        duration = stream.get("duration", "0")
+                        logger.info("Audio duration: %s seconds", duration)
+                        
+                        # Check if audio has actual content
+                        if duration == "0" or duration == "0.000000":
+                            logger.error("Audio file has no duration - this will cause silent video!")
+                        else:
+                            logger.info("Audio file has valid duration - should be audible in video")
+                else:
+                    logger.warning("ffprobe failed to read audio file: %s", test_stderr.decode("utf-8", errors="ignore"))
+            except Exception as test_exc:
+                logger.debug("Could not test audio file with ffprobe: %s", test_exc)
+            
+            # Generate rolling subtitles
+            srt_content = _create_rolling_subtitles(display_text, duration_seconds, width, height, font_size)
+            subtitle_path.write_text(srt_content, encoding="utf-8")
+            
+            # Count subtitle entries for logging
+            subtitle_count = srt_content.count('\n\n') + 1
+            logger.info("Created rolling SRT file with %d subtitle entries for %.2f seconds", 
+                       subtitle_count, duration_seconds)
+            
+            # Verify the file was created successfully
+            if not subtitle_path.exists():
+                logger.error("Failed to create SRT file at %s", subtitle_path)
+                return None
+            
+            # Use exact audio duration for video to ensure perfect sync
+            color_source = (
+                f"color=c={background_color}:s={width}x{height}:r={fps}:d={duration_seconds:.3f}"
+            )
+            logger.info("Creating video with duration: %.3f seconds to match audio", duration_seconds)
+            style_parts = [
+                "Alignment=10",
+                f"Fontname={font_name}",
+                f"Fontsize={font_size}",
+                "BorderStyle=3",
+                "Outline=4",
+                "Shadow=0",
+                f"PrimaryColour={text_color_ass}",
+                f"BackColour={box_color_ass}",
+                f"MarginV={margin_v}",
+                f"MarginL={margin_lr}",
+                f"MarginR={margin_lr}",
+            ]
+            style_string = ",".join(style_parts)
+            escaped_style = _escape_force_style(style_string)
+            vf_filter = f"subtitles=captions.srt:charenc=UTF-8:force_style='{escaped_style}'"
+            logger.debug("Using ffmpeg filter: %s", vf_filter)
+            logger.debug("Working directory: %s", tmp_dir)
+            logger.debug("Files in tmp_dir: %s", list(tmp_dir.iterdir()))
+            # Create video and mux with transcoded audio for perfect sync
+            # Step 1: Create video with subtitles (no audio yet)
+            video_only_path = tmp_dir / "video_only.mp4"
+            logger.info("Step 1: Creating video track with subtitles...")
+            video_cmd = [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                color_source,
+                "-vf",
+                vf_filter,
+                "-c:v",
+                "libx264",
+                "-preset",
+                "medium",
+                "-crf",
+                "23",
+                "-pix_fmt",
+                "yuv420p",
+                "-movflags",
+                "+faststart",
+                str(video_only_path),
+            ]
+            
+            logger.info("Video creation command: %s", " ".join(video_cmd))
+            video_process = await asyncio.create_subprocess_exec(
+                *video_cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=str(tmp_dir),
+            )
+            video_stdout, video_stderr = await video_process.communicate()
+            
+            if video_process.returncode != 0:
+                logger.error("Video creation failed: %s", 
+                           video_stderr.decode("utf-8", errors="ignore") if video_stderr else "No error output")
+                logger.error("Video command was: %s", " ".join(video_cmd))
+                return None
+            
+            # Log any stderr output even on success
+            if video_stderr:
+                video_stderr_text = video_stderr.decode("utf-8", errors="ignore")
+                if video_stderr_text.strip():
+                    logger.info("Video creation stderr: %s", video_stderr_text)
+            
+            if not video_only_path.exists():
+                logger.error("Video file was not created")
+                return None
+            
+            logger.info("Video track created successfully: %d bytes", video_only_path.stat().st_size)
+            
+            # Step 2: Mux video and transcoded audio together
+            logger.info("Step 2: Muxing video and audio together...")
+            cmd = [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "info",
+                "-y",
+                # Input video (already encoded)
+                "-i",
+                str(video_only_path),
+                # Input transcoded audio
+                "-i",
+                str(transcoded_audio_path),
+                # Map both streams explicitly
+                "-map",
+                "0:v:0",
+                "-map",
+                "1:a:0",
+                # Copy both streams without re-encoding
+                "-c:v",
+                "copy",
+                "-c:a",
+                "copy",
+                # Use the video duration as reference
+                "-fflags",
+                "+genpts",
+                # Output settings
+                "-movflags",
+                "+faststart",
+                str(video_path),
+            ]
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=str(tmp_dir),
+            )
+            stdout, stderr = await process.communicate()
+            logger.info("Muxing command: %s", " ".join(cmd))
+            logger.info("Video input: %s", video_only_path)
+            logger.info("Audio input: %s", transcoded_audio_path)
+            if stdout:
+                stdout_text = stdout.decode("utf-8", errors="ignore")
+                logger.info("ffmpeg stdout: %s", stdout_text)
+            else:
+                logger.debug("ffmpeg stdout: None")
+            stderr_text: Optional[str] = None
+            if stderr:
+                try:
+                    stderr_text = stderr.decode("utf-8", errors="ignore")
+                except Exception:
+                    stderr_text = None
+            if process.returncode != 0:
+                if stderr_text:
+                    logger.error("Muxing failed: %s", stderr_text.strip())
+                else:
+                    logger.error("Muxing failed (no diagnostic output).")
+                logger.error("Muxing command was: %s", " ".join(cmd))
+                return None
+            else:
+                logger.info("Muxing completed successfully - video and audio combined")
+                # Log any stderr output even on success
+                if stderr_text and stderr_text.strip():
+                    logger.info("Muxing stderr: %s", stderr_text)
+            if not video_path.exists():
+                logger.error("ffmpeg reported success but produced no MP4 for '%s'", output_base)
+                return None
+            
+            # Verify the video file was created and has reasonable size
+            video_size = video_path.stat().st_size
+            logger.debug("Generated video file: %s (%d bytes)", video_path, video_size)
+            
+            if video_size < 1024:  # Less than 1KB is suspicious
+                logger.warning("Generated video file is very small (%d bytes), may not contain audio", video_size)
+            
+            # Try to verify the video contains audio streams using ffprobe
+            try:
+                probe_cmd = [
+                    "ffprobe",
+                    "-v", "quiet",
+                    "-print_format", "json",
+                    "-show_streams",
+                    str(video_path)
+                ]
+                probe_process = await asyncio.create_subprocess_exec(
+                    *probe_cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                probe_stdout, _ = await probe_process.communicate()
+                
+                if probe_process.returncode == 0 and probe_stdout:
+                    import json
+                    probe_data = json.loads(probe_stdout.decode("utf-8"))
+                    audio_streams = [s for s in probe_data.get("streams", []) if s.get("codec_type") == "audio"]
+                    video_streams = [s for s in probe_data.get("streams", []) if s.get("codec_type") == "video"]
+                    
+                    logger.debug("Video contains %d audio streams and %d video streams", 
+                                len(audio_streams), len(video_streams))
+                    
+                    if len(audio_streams) == 0:
+                        logger.warning("Generated video has no audio streams!")
+                    elif len(video_streams) == 0:
+                        logger.warning("Generated video has no video streams!")
+                    else:
+                        logger.info("Video generation successful - contains %d audio streams and %d video streams", 
+                                   len(audio_streams), len(video_streams))
+                        
+                        # Log video stream details
+                        if len(video_streams) > 0:
+                            video_stream = video_streams[0]
+                            logger.info("Video stream: %s, %dx%d, %s", 
+                                       video_stream.get("codec_name", "unknown"),
+                                       video_stream.get("width", 0),
+                                       video_stream.get("height", 0),
+                                       video_stream.get("duration", "unknown"))
+                        
+                        # Log audio stream details
+                        if len(audio_streams) > 0:
+                            audio_stream = audio_streams[0]
+                            logger.info("Audio stream: %s, %d Hz, %d channels, %s duration", 
+                                       audio_stream.get("codec_name", "unknown"),
+                                       int(audio_stream.get("sample_rate", 0)),
+                                       int(audio_stream.get("channels", 0)),
+                                       audio_stream.get("duration", "unknown"))
+                        
+            except Exception as probe_exc:
+                logger.debug("Could not probe video streams: %s", probe_exc)
+            
+            return video_path.read_bytes()
+    except FileNotFoundError:
+        logger.error("ffmpeg binary not found on PATH. Cannot render TTS video.")
+        return None
+    except Exception as exc:
+        logger.error("Unexpected error while generating TTS video: %s", exc, exc_info=True)
+        return None
+    return None
 WHISPER_MODEL: Optional[Any] = None
 WHISPER_UNLOAD_TIMER: Optional[threading.Timer] = None
 WHISPER_TTL_SECONDS = 60
 WHISPER_LOCK = threading.Lock()
-
-
 def _unload_whisper_model() -> None:
     """Unload the Whisper model to free VRAM."""
     global WHISPER_MODEL, WHISPER_UNLOAD_TIMER
@@ -38,8 +519,6 @@ def _unload_whisper_model() -> None:
                 torch.cuda.empty_cache()
             logger.info("Whisper model unloaded due to inactivity.")
         WHISPER_UNLOAD_TIMER = None
-
-
 def _schedule_whisper_unload() -> None:
     """Schedule unloading of the Whisper model after the TTL."""
     global WHISPER_UNLOAD_TIMER
@@ -48,8 +527,6 @@ def _schedule_whisper_unload() -> None:
     WHISPER_UNLOAD_TIMER = threading.Timer(WHISPER_TTL_SECONDS, _unload_whisper_model)
     WHISPER_UNLOAD_TIMER.daemon = True
     WHISPER_UNLOAD_TIMER.start()
-
-
 def load_whisper_model() -> Optional[Any]:
     """Load the Whisper model on demand and schedule its unloading."""
     global WHISPER_MODEL
@@ -68,7 +545,6 @@ def load_whisper_model() -> Optional[Any]:
                 WHISPER_MODEL = None
         _schedule_whisper_unload()
         return WHISPER_MODEL
-
 async def tts_request(text: str, speed: Optional[float] = None) -> Optional[bytes]:
     if not text:
         return None
@@ -95,22 +571,20 @@ async def tts_request(text: str, speed: Optional[float] = None) -> Optional[byte
     except Exception as e:
         logger.error(f"TTS request error: {e}", exc_info=True)
         return None
-
 async def _send_audio_segment(
     destination: Union[discord.abc.Messageable, discord.Interaction, discord.Message], 
     segment_text: str, 
     filename_suffix: str, 
     is_thought: bool = False,
-    base_filename: str = "response"
+    base_filename: str = "response",
+    delivery_mode: str = "audio",
 ):
     if not segment_text:
         return
-
     cleaned_segment = clean_text_for_tts(segment_text)
     if not cleaned_segment:
         logger.info(f"Skipping TTS for empty or fully cleaned '{filename_suffix}' segment.")
         return
-
     tts_audio_data = await tts_request(cleaned_segment)
     
     actual_destination_channel: Optional[discord.abc.Messageable] = None
@@ -128,116 +602,252 @@ async def _send_audio_segment(
     if not actual_destination_channel:
         logger.warning(f"TTS destination channel could not be resolved for type {type(destination)}")
         return
-
     if tts_audio_data:
         try:
+            logger.info("Received Kokoro TTS audio: %d bytes", len(tts_audio_data))
             audio = AudioSegment.from_file(io.BytesIO(tts_audio_data), format="mp3")
+            logger.info("Loaded Kokoro TTS audio: %d ms duration, %d channels, %d Hz", 
+                       len(audio), audio.channels, audio.frame_rate)
+            
+            # Ensure audio is in the right format for video generation
+            # Convert to stereo if mono, and ensure consistent sample rate
+            if audio.channels == 1:
+                audio = audio.set_channels(2)  # Convert mono to stereo
+            if audio.frame_rate != 44100:
+                audio = audio.set_frame_rate(44100)  # Ensure 44.1kHz sample rate
+            
+            # Log original audio volume
+            logger.info("Original Kokoro TTS audio: max_dBFS=%.1f, channels=%d, frame_rate=%d", 
+                       audio.max_dBFS, audio.channels, audio.frame_rate)
+            
+            # Only apply minimal volume adjustment if needed
+            if audio.max_dBFS == float('-inf') or audio.max_dBFS < -50:
+                logger.warning("Audio appears to be very quiet (max_dBFS=%.1f), applying small boost", audio.max_dBFS)
+                audio = audio + 10  # Small boost only
+            elif audio.max_dBFS < -30:
+                logger.info("Audio is quiet but audible, applying minimal boost")
+                audio = audio + 5  # Minimal boost
+            
+            # Export directly as MP3 to preserve the original Kokoro TTS quality
             output_buffer = io.BytesIO()
-            audio.export(output_buffer, format="mp3", bitrate="128k")
+            audio.export(output_buffer, format="mp3", bitrate="192k")
             fixed_audio_data = output_buffer.getvalue()
-
-            if len(fixed_audio_data) <= config.TTS_MAX_AUDIO_BYTES:
-                file = discord.File(io.BytesIO(fixed_audio_data), filename=f"{base_filename}_{filename_suffix}.mp3")
-                content_message = None
-                if is_thought:
-                    content_message = "**Sam's thoughts (TTS):**"
-                elif filename_suffix in ["main_response", "full"]:
-                    content_message = "**Sam's response (TTS):**"
-
-                await actual_destination_channel.send(content=content_message, file=file)
-                logger.info(f"Sent TTS audio: {base_filename}_{filename_suffix}.mp3 to Channel ID {actual_destination_channel.id}")
-            else:
-                bytes_per_second = 16000  # 128 kbps
-                max_duration_ms = int((config.TTS_MAX_AUDIO_BYTES / bytes_per_second) * 1000)
-                segments = [
-                    audio[i : i + max_duration_ms]
-                    for i in range(0, len(audio), max_duration_ms)
-                ]
-                logger.info(
-                    "Audio segment '%s' exceeds size limit (%d > %d). Splitting into %d parts.",
-                    filename_suffix,
-                    len(fixed_audio_data),
-                    config.TTS_MAX_AUDIO_BYTES,
-                    len(segments),
+            
+            # Recreate the AudioSegment from the fixed data to ensure they match
+            audio = AudioSegment.from_file(io.BytesIO(fixed_audio_data), format="mp3")
+            
+            logger.info("Processed audio for video: %d channels, %d Hz, %d bytes, max_dBFS=%.1f", 
+                        audio.channels, audio.frame_rate, len(fixed_audio_data), audio.max_dBFS)
+            normalized_mode = delivery_mode.lower()
+            send_audio_files = normalized_mode in {"audio", "both"}
+            send_video_file = normalized_mode in {"video", "both"}
+            content_message: Optional[str] = None
+            if is_thought:
+                content_message = "**Sam's thoughts (TTS):**"
+            elif filename_suffix in ["main_response", "full"]:
+                content_message = "**Sam's response (TTS):**"
+            content_sent = False
+            if send_video_file:
+                logger.info("Generating video with Kokoro TTS audio: %d bytes", len(fixed_audio_data))
+                video_bytes = await _generate_tts_video(
+                    fixed_audio_data,
+                    audio,
+                    cleaned_segment,
+                    f"{base_filename}_{filename_suffix}",
                 )
-
-                for idx, segment in enumerate(segments, start=1):
-                    part_buffer = io.BytesIO()
-                    segment.export(part_buffer, format="mp3", bitrate="128k")
-                    part_data = part_buffer.getvalue()
-                    part_file = discord.File(
-                        io.BytesIO(part_data),
-                        filename=f"{base_filename}_{filename_suffix}_part{idx}.mp3",
-                    )
-                    content_message = None
-                    if idx == 1:
-                        if is_thought:
-                            content_message = "**Sam's thoughts (TTS):**"
-                        elif filename_suffix in ["main_response", "full"]:
-                            content_message = "**Sam's response (TTS):**"
-                    await actual_destination_channel.send(content=content_message, file=part_file)
-                    logger.info(
-                        "Sent TTS audio part %d/%d: %s_%s_part%d.mp3 to Channel ID %s",
-                        idx,
-                        len(segments),
+                if video_bytes is None:
+                    logger.warning(
+                        "Failed to create TTS video for %s_%s; falling back to audio.",
                         base_filename,
                         filename_suffix,
-                        idx,
+                    )
+                    if normalized_mode == "video":
+                        send_audio_files = True
+                    send_video_file = False
+                elif len(video_bytes) > config.TTS_MAX_VIDEO_BYTES:
+                    logger.warning(
+                        "Generated TTS video exceeds size limit (%d > %d) for %s_%s. Fallback to audio.",
+                        len(video_bytes),
+                        config.TTS_MAX_VIDEO_BYTES,
+                        base_filename,
+                        filename_suffix,
+                    )
+                    send_video_file = False
+                    if normalized_mode == "video":
+                        send_audio_files = True
+                else:
+                    video_file = discord.File(
+                        io.BytesIO(video_bytes),
+                        filename=f"{base_filename}_{filename_suffix}.mp4",
+                    )
+                    await actual_destination_channel.send(
+                        content=content_message if not content_sent else None,
+                        file=video_file,
+                    )
+                    content_sent = True
+                    logger.info(
+                        "Sent TTS video: %s_%s.mp4 to Channel ID %s",
+                        base_filename,
+                        filename_suffix,
                         actual_destination_channel.id,
                     )
-                    await asyncio.sleep(0.5)
+            if send_audio_files:
+                if len(fixed_audio_data) <= config.TTS_MAX_AUDIO_BYTES:
+                    file = discord.File(
+                        io.BytesIO(fixed_audio_data),
+                        filename=f"{base_filename}_{filename_suffix}.mp3",
+                    )
+                    await actual_destination_channel.send(
+                        content=content_message if not content_sent else None,
+                        file=file,
+                    )
+                    content_sent = True
+                    logger.info(
+                        "Sent TTS audio: %s_%s.mp3 to Channel ID %s",
+                        base_filename,
+                        filename_suffix,
+                        actual_destination_channel.id,
+                    )
+                else:
+                    bytes_per_second = 16000  # 128 kbps
+                    max_duration_ms = int((config.TTS_MAX_AUDIO_BYTES / bytes_per_second) * 1000)
+                    segments = [
+                        audio[i : i + max_duration_ms]
+                        for i in range(0, len(audio), max_duration_ms)
+                    ]
+                    logger.info(
+                        "Audio segment '%s' exceeds size limit (%d > %d). Splitting into %d parts.",
+                        filename_suffix,
+                        len(fixed_audio_data),
+                        config.TTS_MAX_AUDIO_BYTES,
+                        len(segments),
+                    )
+                    for idx, segment in enumerate(segments, start=1):
+                        part_buffer = io.BytesIO()
+                        segment.export(part_buffer, format="mp3", bitrate="128k")
+                        part_data = part_buffer.getvalue()
+                        part_file = discord.File(
+                            io.BytesIO(part_data),
+                            filename=f"{base_filename}_{filename_suffix}_part{idx}.mp3",
+                        )
+                        part_content = None
+                        if not content_sent:
+                            part_content = content_message
+                        await actual_destination_channel.send(
+                            content=part_content,
+                            file=part_file,
+                        )
+                        content_sent = True
+                        logger.info(
+                            "Sent TTS audio part %d/%d: %s_%s_part%d.mp3 to Channel ID %s",
+                            idx,
+                            len(segments),
+                            base_filename,
+                            filename_suffix,
+                            idx,
+                            actual_destination_channel.id,
+                        )
+                        await asyncio.sleep(0.5)
         except Exception as e:
             logger.error(f"Error processing or sending TTS audio for '{filename_suffix}': {e}", exc_info=True)
     else:
         logger.warning(f"TTS request failed for '{filename_suffix}' segment, no audio data received.")
-
 async def send_tts_audio(
     destination: Union[discord.abc.Messageable, discord.Interaction, discord.Message],
     text_to_speak: str,
-    base_filename: str = "response"
+    base_filename: str = "response",
+    *,
+    bot_state: Optional["BotState"] = None,
+    delivery_mode: Optional[str] = None,
 ) -> None:
     """Generate TTS audio and send it to the given destination.
-
     The global ``TTS_LOCK`` ensures that only one TTS request is processed at a
     time so audio playback doesn't overlap when multiple commands trigger TTS
     concurrently.
     """
     if not config.TTS_ENABLED_DEFAULT or not text_to_speak:
         return
-
+    resolved_mode = delivery_mode
+    guild_id: Optional[int] = None
+    if isinstance(destination, discord.Interaction):
+        guild_id = destination.guild_id
+    elif isinstance(destination, discord.Message):
+        if destination.guild:
+            guild_id = destination.guild.id
+    elif isinstance(destination, discord.abc.Messageable):
+        guild = getattr(destination, "guild", None)
+        if guild:
+            guild_id = getattr(guild, "id", None)
+    if resolved_mode is None and bot_state and guild_id is not None:
+        try:
+            resolved_mode = await bot_state.get_tts_delivery_mode(guild_id)
+        except Exception as exc:
+            logger.error(
+                "Failed to fetch TTS delivery mode for guild %s: %s",
+                guild_id,
+                exc,
+                exc_info=True,
+            )
+            resolved_mode = None
+    if resolved_mode is None:
+        resolved_mode = getattr(config, "TTS_DELIVERY_DEFAULT", "audio")
+    normalized_mode = resolved_mode.lower()
+    if normalized_mode not in {"off", "audio", "video", "both"}:
+        normalized_mode = getattr(config, "TTS_DELIVERY_DEFAULT", "audio")
+    if normalized_mode == "off":
+        logger.info(
+            "TTS delivery mode is OFF%s; skipping TTS send.",
+            f" for guild {guild_id}" if guild_id is not None else "",
+        )
+        return
     async with TTS_LOCK:
         think_pattern = re.compile(r"<think>(.*?)</think>", re.DOTALL | re.IGNORECASE)
         match = think_pattern.search(text_to_speak)
-
         if match:
             thought_text = match.group(1).strip()
             response_text = think_pattern.sub('', text_to_speak).strip()
-
             if config.TTS_INCLUDE_THOUGHTS and thought_text:
                 logger.info("Found <think> tags. Sending thoughts and response for TTS.")
-                await _send_audio_segment(destination, thought_text, "thoughts", is_thought=True, base_filename=base_filename)
+                await _send_audio_segment(
+                    destination,
+                    thought_text,
+                    "thoughts",
+                    is_thought=True,
+                    base_filename=base_filename,
+                    delivery_mode=normalized_mode,
+                )
                 await asyncio.sleep(0.5)
             else:
                 logger.info("Found <think> tags. Skipping thoughts for TTS as per config.")
-
             if response_text:
-                await _send_audio_segment(destination, response_text, "main_response" if config.TTS_INCLUDE_THOUGHTS else "full", is_thought=False, base_filename=base_filename)
+                await _send_audio_segment(
+                    destination,
+                    response_text,
+                    "main_response" if config.TTS_INCLUDE_THOUGHTS else "full",
+                    is_thought=False,
+                    base_filename=base_filename,
+                    delivery_mode=normalized_mode,
+                )
             else:
                 logger.info("No user-facing content left for TTS after removing <think> section.")
         else:
             logger.info("No <think> tags found. Processing full text for TTS.")
-            await _send_audio_segment(destination, text_to_speak, "full", is_thought=False, base_filename=base_filename)
-
+            await _send_audio_segment(
+                destination,
+                text_to_speak,
+                "full",
+                is_thought=False,
+                base_filename=base_filename,
+                delivery_mode=normalized_mode,
+            )
 def transcribe_audio_file(file_path: str) -> Optional[str]:
     if not os.path.exists(file_path):
         logger.error(f"Audio file not found for transcription: {file_path}")
         return None
-
     model = load_whisper_model()
     if model is None:
         logger.error("Whisper model could not be loaded. Cannot transcribe audio.")
         return None
-
     try:
         logger.info(f"Transcribing audio file: {file_path}")
         use_fp16 = torch.cuda.is_available()
