@@ -3,15 +3,131 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import random
+import time
+from email.utils import parsedate_to_datetime
 from typing import Any, Dict, List, Optional, Sequence
 
-import logging
 import httpx
 from openai import RateLimitError, BadRequestError
 
 from config import config
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_header(headers: Any, name: str) -> Optional[str]:
+    if headers is None:
+        return None
+    lower_name = name.lower()
+    getter = getattr(headers, "get", None)
+    if callable(getter):
+        value = getter(name)
+        if value:
+            return value
+        # Some httpx headers are case-insensitive, so try lowercase as well.
+        value = getter(lower_name)
+        if value:
+            return value
+    if isinstance(headers, dict):
+        for key, value in headers.items():
+            if isinstance(key, str) and key.lower() == lower_name:
+                return value
+    return None
+
+
+def _parse_retry_after(raw_value: str) -> Optional[float]:
+    try:
+        return max(0.0, float(raw_value))
+    except (TypeError, ValueError):
+        pass
+    try:
+        retry_dt = parsedate_to_datetime(raw_value)
+    except Exception:
+        return None
+    return max(0.0, retry_dt.timestamp() - time.time())
+
+
+def _parse_reset_header(raw_value: str) -> Optional[float]:
+    try:
+        reset = float(raw_value)
+    except (TypeError, ValueError):
+        return None
+    if reset > 10**11:
+        reset /= 1000.0
+    return max(0.0, reset - time.time())
+
+
+def _rate_limit_wait_seconds(error: RateLimitError) -> Optional[float]:
+    response_headers = getattr(error, "response", None)
+    headers_source: Any = None
+    if response_headers is not None:
+        headers_source = getattr(response_headers, "headers", response_headers)
+    error_body = getattr(error, "body", None)
+    if headers_source is None and isinstance(error_body, dict):
+        metadata = error_body.get("metadata", {})
+        if isinstance(metadata, dict):
+            headers_source = metadata.get("headers")
+
+    for header_name in ("Retry-After", "retry-after"):
+        raw_value = _extract_header(headers_source, header_name)
+        if raw_value:
+            wait = _parse_retry_after(raw_value)
+            if wait is not None:
+                return wait
+
+    for header_name in (
+        "X-RateLimit-Reset",
+        "X-RateLimit-Reset-Requests",
+        "X-RateLimit-Reset-Tokens",
+    ):
+        raw_value = _extract_header(headers_source, header_name)
+        if raw_value:
+            wait = _parse_reset_header(raw_value)
+            if wait is not None:
+                return wait
+
+    return None
+
+
+def _retry_wait_seconds(exception: Optional[Exception], attempt: int) -> float:
+    base = config.OPENAI_BACKOFF_BASE_SECONDS
+    max_delay = config.OPENAI_BACKOFF_MAX_SECONDS
+    jitter = config.OPENAI_BACKOFF_JITTER_SECONDS
+
+    wait_seconds: Optional[float] = None
+    if isinstance(exception, RateLimitError):
+        wait_seconds = _rate_limit_wait_seconds(exception)
+
+    if wait_seconds is None:
+        wait_seconds = base * (2**attempt)
+
+    if jitter > 0.0:
+        wait_seconds += random.uniform(0.0, jitter)
+
+    return max(0.0, min(wait_seconds, max_delay))
+
+
+async def _sleep_before_retry(
+    *,
+    attempt: int,
+    max_attempts: int,
+    exception: Optional[Exception],
+    message: str,
+) -> bool:
+    if attempt >= max_attempts - 1:
+        return False
+    wait_seconds = _retry_wait_seconds(exception, attempt)
+    logger.warning(
+        "%s Retrying in %.2fs (attempt %s/%s).",
+        message,
+        wait_seconds,
+        attempt + 1,
+        max_attempts,
+    )
+    await asyncio.sleep(wait_seconds)
+    return True
 
 
 async def create_chat_completion(
@@ -121,17 +237,33 @@ async def create_chat_completion(
             params["logit_bias"] = logit_bias
         params.update(kwargs)
 
-        last_exception = None
-        for attempt in range(3):
+        last_exception: Optional[Exception] = None
+        max_attempts = config.OPENAI_RETRY_MAX_ATTEMPTS
+        for attempt in range(max_attempts):
             try:
                 return await llm_client.chat.completions.create(**params)
+            except RateLimitError as exc:
+                last_exception = exc
+                request_id = getattr(exc, "request_id", None)
+                reason = "Rate limit encountered"
+                if request_id:
+                    reason += f" (request_id={request_id})"
+                if not await _sleep_before_retry(
+                    attempt=attempt,
+                    max_attempts=max_attempts,
+                    exception=exc,
+                    message=reason,
+                ):
+                    break
             except httpx.RemoteProtocolError as e:
                 last_exception = e
-                wait_time = 2 ** attempt
-                logger.warning(
-                    f"Attempt {attempt + 1}/3 failed with RemoteProtocolError. Retrying in {wait_time}s..."
-                )
-                await asyncio.sleep(wait_time)
+                if not await _sleep_before_retry(
+                    attempt=attempt,
+                    max_attempts=max_attempts,
+                    exception=e,
+                    message="RemoteProtocolError while calling chat completions.",
+                ):
+                    break
             except BadRequestError as e:
                 if params.get("logit_bias") is not None and _logit_bias_unsupported(e):
                     params.pop("logit_bias", None)
@@ -153,11 +285,13 @@ async def create_chat_completion(
                         # Fall through to normal retry chain
                         pass
                 last_exception = e
-                wait_time = 2 ** attempt
-                logger.warning(
-                    f"Attempt {attempt + 1}/3 failed with BadRequestError. Retrying in {wait_time}s..."
-                )
-                await asyncio.sleep(wait_time)
+                if not await _sleep_before_retry(
+                    attempt=attempt,
+                    max_attempts=max_attempts,
+                    exception=e,
+                    message="BadRequestError returned by chat completions.",
+                ):
+                    break
         if last_exception:
             raise last_exception
 
@@ -193,27 +327,45 @@ async def create_chat_completion(
         params["service_tier"] = config.RESPONSES_SERVICE_TIER
     params.update(kwargs)
 
-    try:
-        return await llm_client.responses.create(**params)
-    except RateLimitError as e:
-        if params.get("service_tier") == "flex":
-            logger.warning(
-                "Flex tier request failed due to rate limit. Retrying with 'auto' tier."
-            )
-            params["service_tier"] = "auto"
+    last_exception: Optional[Exception] = None
+    max_attempts = config.OPENAI_RETRY_MAX_ATTEMPTS
+    for attempt in range(max_attempts):
+        try:
             return await llm_client.responses.create(**params)
-        raise
-    except TypeError as exc:
-        msg = str(exc)
-        unsupported = []
-        for key in ("verbosity", "service_tier", "reasoning"):
-            if key in params and key in msg:
-                params.pop(key, None)
-                unsupported.append(key)
-        if unsupported:
-            logger.debug("Retrying without unsupported params: %s", ", ".join(unsupported))
-            return await llm_client.responses.create(**params)
-        raise
+        except RateLimitError as exc:
+            if params.get("service_tier") == "flex":
+                logger.warning(
+                    "Flex tier request failed due to rate limit. Retrying with 'auto' tier."
+                )
+                params["service_tier"] = "auto"
+                continue
+            last_exception = exc
+            request_id = getattr(exc, "request_id", None)
+            reason = "Rate limit encountered during responses API call"
+            if request_id:
+                reason += f" (request_id={request_id})"
+            if not await _sleep_before_retry(
+                attempt=attempt,
+                max_attempts=max_attempts,
+                exception=exc,
+                message=reason,
+            ):
+                break
+        except TypeError as exc:
+            msg = str(exc)
+            unsupported = []
+            for key in ("verbosity", "service_tier", "reasoning"):
+                if key in params and key in msg:
+                    params.pop(key, None)
+                    unsupported.append(key)
+            if unsupported:
+                logger.debug(
+                    "Retrying without unsupported params: %s", ", ".join(unsupported)
+                )
+                continue
+            raise
+    if last_exception:
+        raise last_exception
 
 
 def extract_text(response: Any, use_responses_api: bool) -> str:

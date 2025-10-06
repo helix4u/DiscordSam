@@ -218,6 +218,10 @@ Below is a comprehensive list of environment variables used by DiscordSam, along
 *   `RESPONSES_REASONING_EFFORT` (Optional): Controls the reasoning effort for Responses models. Options are `minimal`, `low`, `medium`, or `high`.
 *   `RESPONSES_VERBOSITY` (Optional): Sets the verbosity of Responses output. Options are `low`, `medium`, or `high`.
 *   `RESPONSES_SERVICE_TIER` (Optional): Selects the service tier for Responses requests. Options are `auto`, `default`, `flex`, or `priority`.
+*   `OPENAI_RETRY_MAX_ATTEMPTS` (Default: `6`): Maximum number of times the bot will retry a failed OpenAI-compatible request before surfacing the error.
+*   `OPENAI_BACKOFF_BASE_SECONDS` (Default: `1.5`): Initial delay used for exponential backoff when retrying requests.
+*   `OPENAI_BACKOFF_MAX_SECONDS` (Default: `60`): Upper bound on the wait time between retries; also caps header-provided rate-limit delays.
+*   `OPENAI_BACKOFF_JITTER_SECONDS` (Default: `0.5`): Random jitter added to retry delays to avoid thundering herd behaviour when multiple tasks retry simultaneously.
 *   `MAX_MESSAGE_HISTORY` (Default: `10`): The maximum number of recent messages (user and assistant turns) to include in the short-term context sent to the LLM.
 *   `MAX_COMPLETION_TOKENS` (Default: `2048`): The maximum number of tokens the LLM is allowed to generate in a single response.
 

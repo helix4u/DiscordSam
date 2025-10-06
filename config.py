@@ -134,6 +134,19 @@ class Config:
         self.LLM_REQUEST_TIMEOUT_SECONDS = _get_float(
             "LLM_REQUEST_TIMEOUT_SECONDS", 900.0
         )
+        self.OPENAI_RETRY_MAX_ATTEMPTS = max(
+            1, _get_int("OPENAI_RETRY_MAX_ATTEMPTS", 6)
+        )
+        self.OPENAI_BACKOFF_BASE_SECONDS = max(
+            0.1, _get_float("OPENAI_BACKOFF_BASE_SECONDS", 1.5)
+        )
+        self.OPENAI_BACKOFF_MAX_SECONDS = max(
+            self.OPENAI_BACKOFF_BASE_SECONDS,
+            _get_float("OPENAI_BACKOFF_MAX_SECONDS", 60.0),
+        )
+        self.OPENAI_BACKOFF_JITTER_SECONDS = max(
+            0.0, _get_float("OPENAI_BACKOFF_JITTER_SECONDS", 0.5)
+        )
 
         # GPT-5 mode: adapt Chat Completions for GPT-5 models
         # - Force temperature to 1.0
