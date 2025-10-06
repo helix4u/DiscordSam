@@ -41,7 +41,7 @@ def _create_rolling_subtitles(text: str, duration_seconds: float, width: int = 1
     # Calculate approximate characters per line based on video width
     usable_width = width - 96  # Account for margins
     chars_per_line = int(usable_width / (font_size * 0.6))
-    chars_per_line = max(30, min(chars_per_line, 80))
+    chars_per_line = max(60, min(chars_per_line, 160))  # Double the words per segment
     
     # Max lines visible at once for rolling effect (more for faded context)
     max_visible_lines = 5
@@ -71,7 +71,7 @@ def _create_rolling_subtitles(text: str, duration_seconds: float, width: int = 1
     # Calculate timing for each chunk
     time_per_chunk = duration_seconds / len(line_chunks)
     # Ensure each chunk shows for at least 0.8 seconds for smooth reading
-    time_per_chunk = max(0.8, time_per_chunk)
+    time_per_chunk = max(1.6, time_per_chunk)  # Double time for double the words
     
     # Calculate margins for maximum screen usage (vision aid style)
     margin_lr = int(width * 0.03)  # Minimal 3% horizontal margin
