@@ -14,6 +14,7 @@ from email.utils import parsedate_to_datetime
 
 # Bot services and utilities
 from config import config
+from llm_clients import get_llm_runtime
 from state import BotState
 from common_models import MsgNode, TweetData, GroundNewsArticle
 
@@ -196,6 +197,13 @@ async def process_rss_feed(
         return False
 
     to_process = new_entries[:limit]
+    fast_runtime = get_llm_runtime("fast")
+    fast_client = fast_runtime.client
+    fast_provider = fast_runtime.provider
+    fast_logit_bias = (
+        LOGIT_BIAS_UNWANTED_TOKENS_STR if fast_provider.supports_logit_bias else None
+    )
+
     summaries: List[str] = []
 
     for idx, ent in enumerate(to_process, 1):
@@ -244,19 +252,19 @@ async def process_rss_feed(
 
         try:
             response = await create_chat_completion(
-                llm_client_instance,
+                fast_client,
                 [
                     {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
                     {"role": "user", "content": prompt}
                 ],
-                model=config.FAST_LLM_MODEL,
+                model=fast_provider.model,
                 max_tokens=3072,
-                temperature=1,
-                logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
-                use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
+                temperature=fast_provider.temperature,
+                logit_bias=fast_logit_bias,
+                use_responses_api=fast_provider.use_responses_api,
             )
             summary = extract_text(
-                response, config.FAST_LLM_USE_RESPONSES_API
+                response, fast_provider.use_responses_api
             )
             if summary and summary != "[LLM summarization failed]":
                 await store_rss_summary(
@@ -372,6 +380,13 @@ async def process_ground_news(
         )
         return False
 
+    fast_runtime = get_llm_runtime("fast")
+    fast_client = fast_runtime.client
+    fast_provider = fast_runtime.provider
+    fast_logit_bias = (
+        LOGIT_BIAS_UNWANTED_TOKENS_STR if fast_provider.supports_logit_bias else None
+    )
+
     summaries: List[str] = []
     progress_ephemeral: Optional[discord.Message] = None
     for idx, art in enumerate(new_articles[:limit], 1):
@@ -404,19 +419,19 @@ async def process_ground_news(
 
         try:
             response = await create_chat_completion(
-                llm_client_instance,
+                fast_client,
                 [
                     {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
                     {"role": "user", "content": prompt}
                 ],
-                model=config.FAST_LLM_MODEL,
+                model=fast_provider.model,
                 max_tokens=3072,
-                temperature=1,
-                logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
-                use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
+                temperature=fast_provider.temperature,
+                logit_bias=fast_logit_bias,
+                use_responses_api=fast_provider.use_responses_api,
             )
             summary = extract_text(
-                response, config.FAST_LLM_USE_RESPONSES_API
+                response, fast_provider.use_responses_api
             )
             if summary and summary != "[LLM summarization failed]":
                 await store_rss_summary(
@@ -569,19 +584,19 @@ async def process_ground_news_topic(
 
         try:
             response = await create_chat_completion(
-                llm_client_instance,
+                fast_client,
                 [
                     {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
                     {"role": "user", "content": prompt}
                 ],
-                model=config.FAST_LLM_MODEL,
+                model=fast_provider.model,
                 max_tokens=3072,
-                temperature=1,
-                logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
-                use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
+                temperature=fast_provider.temperature,
+                logit_bias=fast_logit_bias,
+                use_responses_api=fast_provider.use_responses_api,
             )
             summary = extract_text(
-                response, config.FAST_LLM_USE_RESPONSES_API
+                response, fast_provider.use_responses_api
             )
             if summary and summary != "[LLM summarization failed]":
                 await store_rss_summary(
@@ -714,17 +729,26 @@ async def describe_image(image_url: str) -> Optional[str]:
             },
         ]
 
+        vision_runtime = get_llm_runtime("vision")
+        vision_client = vision_runtime.client
+        vision_provider = vision_runtime.provider
+        vision_logit_bias = (
+            LOGIT_BIAS_UNWANTED_TOKENS_STR
+            if vision_provider.supports_logit_bias
+            else None
+        )
+
         response = await create_chat_completion(
-            llm_client_instance,
+            vision_client,
             prompt_messages,
-            model=config.VISION_LLM_MODEL,
+            model=vision_provider.model,
             max_tokens=3072,
-            temperature=1,
-            logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
-            use_responses_api=config.VISION_LLM_USE_RESPONSES_API,
+            temperature=vision_provider.temperature,
+            logit_bias=vision_logit_bias,
+            use_responses_api=vision_provider.use_responses_api,
         )
         description = extract_text(
-            response, config.VISION_LLM_USE_RESPONSES_API
+            response, vision_provider.use_responses_api
         )
         if description:
             return description
@@ -1133,6 +1157,13 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 return
 
             num_to_process = min(len(search_results), max_articles_to_process)
+            fast_runtime = get_llm_runtime("fast")
+            fast_client = fast_runtime.client
+            fast_provider = fast_runtime.provider
+            fast_logit_bias = (
+                LOGIT_BIAS_UNWANTED_TOKENS_STR if fast_provider.supports_logit_bias else None
+            )
+
             article_summaries_for_briefing: List[str] = []
             processed_urls = set()
 
@@ -1196,19 +1227,19 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
 
                 try:
                     summary_response = await create_chat_completion(
-                        llm_client_instance,
+                        fast_client,
                         [
                             {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
                             {"role": "user", "content": summarization_prompt}
                         ],
-                        model=config.FAST_LLM_MODEL,
+                        model=fast_provider.model,
                         max_tokens=3072,
-                        temperature=1,
-                        logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
-                        use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
+                        temperature=fast_provider.temperature,
+                        logit_bias=fast_logit_bias,
+                        use_responses_api=fast_provider.use_responses_api,
                     )
                     article_summary = extract_text(
-                        summary_response, config.FAST_LLM_USE_RESPONSES_API
+                        summary_response, fast_provider.use_responses_api
                     )
                     if article_summary:
                         logger.info(f"Summarized '{article_title}': {article_summary[:100]}...")
@@ -1865,6 +1896,13 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
 
             max_results_to_process = config.NEWS_MAX_LINKS_TO_PROCESS # Reuse similar config as /news
             num_to_process = min(len(search_results), max_results_to_process)
+            fast_runtime = get_llm_runtime("fast")
+            fast_client = fast_runtime.client
+            fast_provider = fast_runtime.provider
+            fast_logit_bias = (
+                LOGIT_BIAS_UNWANTED_TOKENS_STR if fast_provider.supports_logit_bias else None
+            )
+
             page_summaries_for_final_synthesis: List[str] = []
             processed_urls_search = set()
 
@@ -1929,19 +1967,19 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
 
                 try:
                     summary_response_search = await create_chat_completion(
-                        llm_client_instance,
+                        fast_client,
                         [
                             {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
                             {"role": "user", "content": summarization_prompt_search}
                         ],
-                        model=config.FAST_LLM_MODEL,
+                        model=fast_provider.model,
                         max_tokens=3072,
-                        temperature=1,
-                        logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR,
-                        use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
+                        temperature=fast_provider.temperature,
+                        logit_bias=fast_logit_bias,
+                        use_responses_api=fast_provider.use_responses_api,
                     )
                     page_summary = extract_text(
-                        summary_response_search, config.FAST_LLM_USE_RESPONSES_API
+                        summary_response_search, fast_provider.use_responses_api
                     )
                     if page_summary:
                         logger.info(f"Summarized '{page_title}' for search query '{query}': {page_summary[:100]}...")
@@ -2245,6 +2283,15 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                                 f"Processing a chunk of {len(entries_to_process)}..."
                             )
 
+                            fast_runtime = get_llm_runtime("fast")
+                            fast_client = fast_runtime.client
+                            fast_provider = fast_runtime.provider
+                            fast_logit_bias = (
+                                LOGIT_BIAS_UNWANTED_TOKENS_STR
+                                if fast_provider.supports_logit_bias
+                                else None
+                            )
+
                             summaries: List[str] = []
                             processed_guids_this_chunk = []
 
@@ -2298,12 +2345,15 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
 
                                 try:
                                     response = await create_chat_completion(
-                                        llm_client_instance,
+                                        fast_client,
                                         [{"role": "system", "content": SUMMARY_SYSTEM_PROMPT}, {"role": "user", "content": prompt}],
-                                        model=config.FAST_LLM_MODEL, max_tokens=3072, temperature=1,
-                                        logit_bias=LOGIT_BIAS_UNWANTED_TOKENS_STR, use_responses_api=config.FAST_LLM_USE_RESPONSES_API,
+                                        model=fast_provider.model,
+                                        max_tokens=3072,
+                                        temperature=fast_provider.temperature,
+                                        logit_bias=fast_logit_bias,
+                                        use_responses_api=fast_provider.use_responses_api,
                                     )
-                                    summary = extract_text(response, config.FAST_LLM_USE_RESPONSES_API)
+                                    summary = extract_text(response, fast_provider.use_responses_api)
                                     if summary and summary != "[LLM summarization failed]":
                                         await store_rss_summary(
                                             feed_url=feed_url, article_url=link, title=title,
