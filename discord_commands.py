@@ -143,6 +143,13 @@ MEMORY_SCOPE_CHOICES = [
     app_commands.Choice(name="Distilled summaries", value="distilled"),
     app_commands.Choice(name="Full conversation logs", value="full"),
 ]
+
+TTS_DELIVERY_CHOICES = [
+    app_commands.Choice(name="Audio only", value="audio"),
+    app_commands.Choice(name="Video (MP4)", value="video"),
+    app_commands.Choice(name="Audio + video", value="both"),
+    app_commands.Choice(name="Disabled", value="off"),
+]
 # Module-level globals to store instances passed from main_bot.py
 bot_instance: Optional[commands.Bot] = None
 llm_client_instance: Optional[Any] = None
@@ -302,7 +309,12 @@ async def process_rss_feed(
         else:
             await safe_followup_send(interaction, embed=embed)
 
-    await send_tts_audio(interaction, combined, base_filename=f"rss_{interaction.id}")
+    await send_tts_audio(
+        interaction,
+        combined,
+        base_filename=f"rss_{interaction.id}",
+        bot_state=bot_state_instance,
+    )
 
     user_msg = MsgNode("user", f"/rss {feed_url} (limit {limit})", name=str(interaction.user.id))
     assistant_msg = MsgNode("assistant", combined, name=str(bot_instance.user.id))
@@ -518,7 +530,12 @@ async def process_ground_news(
         else:
             await safe_followup_send(interaction, embed=embed)
 
-    await send_tts_audio(interaction, combined, base_filename=f"groundnews_{interaction.id}")
+    await send_tts_audio(
+        interaction,
+        combined,
+        base_filename=f"groundnews_{interaction.id}",
+        bot_state=bot_state_instance,
+    )
 
 
 
@@ -683,7 +700,12 @@ async def process_ground_news_topic(
         else:
             await safe_followup_send(interaction, embed=embed)
 
-    await send_tts_audio(interaction, combined, base_filename=f"groundtopic_{interaction.id}")
+    await send_tts_audio(
+        interaction,
+        combined,
+        base_filename=f"groundtopic_{interaction.id}",
+        bot_state=bot_state_instance,
+    )
 
     return True
 
@@ -2387,6 +2409,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                                     interaction,
                                     combined,
                                     base_filename=f"allrss_{interaction.id}_{name.replace(' ', '_')}",
+                                    bot_state=bot_state_instance,
                                 )
 
                                 # History and RAG logging
@@ -3634,6 +3657,49 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                     config.TTS_ENABLED_DEFAULT = True
                     logger.info("TTS has been enabled after /podcastthatshit command (per PODCAST_ENABLE_TTS_AFTER).")
             except Exception:
+                pass
+
+    @bot_instance.tree.command(name="tts_delivery", description="Choose how Sam sends voice responses in this server.")
+    @app_commands.describe(mode="audio, video, both, or off")
+    @app_commands.choices(mode=TTS_DELIVERY_CHOICES)
+    async def tts_delivery(interaction: discord.Interaction, mode: app_commands.Choice[str]):
+        if not bot_state_instance:
+            await interaction.response.send_message(
+                "Bot state is not ready yet; try again shortly.",
+                ephemeral=True,
+            )
+            return
+
+        if interaction.guild_id is None:
+            await interaction.response.send_message(
+                "This command can only be used inside a server.",
+                ephemeral=True,
+            )
+            return
+
+        try:
+            previous_mode = await bot_state_instance.get_tts_delivery_mode(interaction.guild_id)
+            await bot_state_instance.set_tts_delivery_mode(interaction.guild_id, mode.value)
+
+            labels = {
+                "audio": "Audio only (MP3)",
+                "video": "Video only (MP4)",
+                "both": "Audio + video",
+                "off": "Disabled",
+            }
+
+            await interaction.response.send_message(
+                f"TTS delivery is now {labels.get(mode.value, mode.value)} (was {labels.get(previous_mode, previous_mode)}).",
+                ephemeral=True,
+            )
+        except Exception as e:
+            logger.error("/tts_delivery failed: %s", e, exc_info=True)
+            try:
+                await interaction.response.send_message(
+                    f"Failed to update TTS delivery: {str(e)[:500]}",
+                    ephemeral=True,
+                )
+            except discord.HTTPException:
                 pass
 
     # Toggle inclusion of <think> thoughts in TTS audio

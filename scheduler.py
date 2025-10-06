@@ -238,6 +238,7 @@ async def run_allrss_digest(
                         ch,
                         combined_chunk,
                         base_filename=f"scheduled_rss_{channel_id}_{name}_batch{chunk_start // chunk_size + 1}",
+                        bot_state=bot_state,
                     )
                 except Exception as tts_exc:
                     logger.error("Scheduled allrss: TTS failed for %s: %s", name, tts_exc)

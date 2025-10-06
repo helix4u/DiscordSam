@@ -1,5 +1,6 @@
 import os
 import logging
+import platform
 from dataclasses import dataclass
 from typing import Dict
 import discord
@@ -81,6 +82,14 @@ class Config:
                 except ValueError:
                     logger.warning("Invalid integer '%s' in %s; skipping", part, env_var)
             return values
+        def _default_font_path() -> str:
+            system = platform.system().lower()
+            if system == "windows":
+                root = os.getenv("SYSTEMROOT", "C:/Windows")
+                return os.path.join(root, "Fonts", "arial.ttf")
+            if system == "darwin":
+                return "/Library/Fonts/Arial.ttf"
+            return "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
         self.DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
         # Token validation moved to ``require_bot_token`` so that modules which
         # don't need the bot token (e.g. ``open_chatgpt_login.py``) can import
@@ -220,6 +229,11 @@ class Config:
         self.TTS_VOICE = os.getenv("TTS_VOICE", "af_sky+af+af_nicole")
         self.TTS_ENABLED_DEFAULT = _get_bool("TTS_ENABLED_DEFAULT", True)
         self.TTS_INCLUDE_THOUGHTS = _get_bool("TTS_INCLUDE_THOUGHTS", False)
+        self.TTS_DELIVERY_DEFAULT = _get_choice(
+            "TTS_DELIVERY_DEFAULT",
+            {"off", "audio", "video", "both"},
+            "audio",
+        ) or "audio"
         # If true, re-enable TTS globally after the /podcastthatshit command completes
         self.PODCAST_ENABLE_TTS_AFTER = _get_bool("PODCAST_ENABLE_TTS_AFTER", True)
         # Discord limits attachments from bots to 8MB on most servers.
@@ -227,6 +241,39 @@ class Config:
         self.TTS_MAX_AUDIO_BYTES = _get_int("TTS_MAX_AUDIO_BYTES", 8 * 1024 * 1024)
         self.TTS_SPEED = _get_float("TTS_SPEED", 1.3)
         self.TTS_REQUEST_TIMEOUT_SECONDS = _get_int("TTS_REQUEST_TIMEOUT_SECONDS", 180)
+        self.TTS_VIDEO_WIDTH = _get_int("TTS_VIDEO_WIDTH", 1280)
+        self.TTS_VIDEO_HEIGHT = _get_int("TTS_VIDEO_HEIGHT", 720)
+        self.TTS_VIDEO_FPS = _get_int("TTS_VIDEO_FPS", 30)
+        self.TTS_VIDEO_BACKGROUND_COLOR = os.getenv(
+            "TTS_VIDEO_BACKGROUND_COLOR",
+            "#111827",
+        )
+        self.TTS_VIDEO_TEXT_COLOR = os.getenv(
+            "TTS_VIDEO_TEXT_COLOR",
+            "#F8FAFC",
+        )
+        self.TTS_VIDEO_TEXT_BOX_COLOR = os.getenv(
+            "TTS_VIDEO_TEXT_BOX_COLOR",
+            "#000000AA",
+        )
+        self.TTS_VIDEO_TEXT_BOX_PADDING = _get_int(
+            "TTS_VIDEO_TEXT_BOX_PADDING",
+            48,
+        )
+        self.TTS_VIDEO_LINE_SPACING = _get_int(
+            "TTS_VIDEO_LINE_SPACING",
+            16,
+        )
+        self.TTS_VIDEO_MARGIN = _get_int("TTS_VIDEO_MARGIN", 96)
+        self.TTS_VIDEO_WRAP_CHARS = _get_int("TTS_VIDEO_WRAP_CHARS", 60)
+        self.TTS_VIDEO_BLUR_SIGMA = _get_float("TTS_VIDEO_BLUR_SIGMA", 28.0)
+        self.TTS_VIDEO_NOISE_OPACITY = _get_float("TTS_VIDEO_NOISE_OPACITY", 0.35)
+        self.TTS_VIDEO_FONT_PATH = os.getenv(
+            "TTS_VIDEO_FONT_PATH",
+            _default_font_path(),
+        )
+        self.TTS_VIDEO_FONT_SIZE = _get_int("TTS_VIDEO_FONT_SIZE", 42)
+        self.TTS_MAX_VIDEO_BYTES = _get_int("TTS_MAX_VIDEO_BYTES", 24 * 1024 * 1024)
 
         self.SEARX_URL = os.getenv("SEARX_URL", "http://192.168.1.3:9092/search")
         # Changed default for SEARX_PREFERENCES to an empty string.

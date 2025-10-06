@@ -397,7 +397,7 @@ async def distill_conversation_to_sentence_llm(llm_client: Any, text_to_distill:
                 {"role": "user", "content": prompt}
             ],
             model=fast_provider.model,
-            max_tokens=3072,
+            max_tokens=16384,
             temperature=fast_provider.temperature,
             logit_bias=fast_logit_bias,
             use_responses_api=fast_provider.use_responses_api,

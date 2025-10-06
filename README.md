@@ -29,6 +29,7 @@ DiscordSam is an advanced, context-aware Discord bot designed to provide intelli
 *   **Text-to-Speech (TTS):**
     *   Voice responses for bot messages via an OpenAI TTS API compatible server.
     *   Separate TTS for "thoughts" (content within `<think>...</think>` tags) vs. main response if configured.
+    *   Optional hardsubbed MP4 replies when enabled via `/tts_delivery` (requires `ffmpeg` on the bot's PATH).
     *   TTS operations are queued so only one audio clip plays at a time.
 *   **Slash Commands:** A comprehensive suite of commands for various functionalities (detailed in section 8).
 *   **High Configurability:** Most settings are managed via a `.env` file, allowing for easy customization of LLM endpoints, API keys, and bot behavior.
@@ -51,6 +52,7 @@ DiscordSam is an advanced, context-aware Discord bot designed to provide intelli
 *   **Supporting LLM Servers (Examples):** LM Studio, Ollama (these run the actual language models).
 *   **SearXNG (Optional):** A local metasearch engine for the `/search` and `/news` commands.
 *   **Local TTS Server (Optional but Recommended):** An OpenAI TTS API compatible server for voice output.
+*   **FFmpeg (Required for video TTS mode):** Used to package MP3 audio into hardsubbed MP4 responses when the feature is enabled.
 
 ---
 
@@ -79,6 +81,8 @@ DiscordSam is a modular Python application designed for extensibility and mainta
         *   Timestamp of the last Playwright usage (for automated cleanup).
         *   Per-channel locks to prevent concurrent LLM streaming operations within the same channel.
         *   A global scrape lock ensures web scraping tasks (e.g., RSS fetching) run one at a time. If a command must wait for the lock, the bot now notifies the user with an ephemeral "queued" message before starting a new public response once scraping begins.
+        *   Per-channel toggle for automatically running the "podcast that shit" workflow after RSS batches.
+        *   Per-guild TTS delivery preferences (audio / video / both / off) persisted to `tts_delivery_modes.json`.
     *   Instances of `BotState` are passed to modules that need to access or modify this shared information (e.g., command handlers, event processors).
 
 4.  **Discord Event Handlers (`discord_events.py`)**:
@@ -238,6 +242,9 @@ Below is a comprehensive list of environment variables used by DiscordSam, along
 *   `TTS_SPEED` (Default: `1.3`): Playback speed multiplier for TTS audio. Use `1.0` for normal speed.
 *   `TTS_INCLUDE_THOUGHTS` (Default: `false`): If `true`, content within `<think>...</think>` tags will also be spoken using TTS. When `false`, only the user-facing portion of the response is processed.
 *   `PODCAST_ENABLE_TTS_AFTER` (Default: `true`): If `true`, automatically re-enables global TTS after the `/podcastthatshit` command completes.
+*   `TTS_DELIVERY_DEFAULT` (Default: `audio`): Sets the default delivery mode for voice replies. Options are `audio` (MP3 attachments), `video` (MP4 with burned-in captions), `both`, or `off`.
+*   `TTS_MAX_VIDEO_BYTES` (Default: `25165824` (~24MB)): Maximum size of a generated MP4 clip. If the rendered file exceeds this limit the bot falls back to MP3 delivery to stay within Discord's attachment limits.
+*   Additional MP4 styling is controlled via `TTS_VIDEO_WIDTH`, `TTS_VIDEO_HEIGHT`, `TTS_VIDEO_FPS`, `TTS_VIDEO_BACKGROUND_COLOR`, `TTS_VIDEO_TEXT_COLOR`, `TTS_VIDEO_TEXT_BOX_COLOR`, `TTS_VIDEO_TEXT_BOX_PADDING`, `TTS_VIDEO_LINE_SPACING`, `TTS_VIDEO_MARGIN`, `TTS_VIDEO_WRAP_CHARS`, `TTS_VIDEO_BLUR_SIGMA`, `TTS_VIDEO_NOISE_OPACITY`, `TTS_VIDEO_FONT_PATH`, and `TTS_VIDEO_FONT_SIZE`.
 
 **Web Features & Scraping:**
 
@@ -568,6 +575,20 @@ DiscordSam offers a variety of slash commands for diverse functionalities. Here'
     *   **Behavior:** When enabled in a channel, after posting a chunk of RSS summaries the bot immediately injects “Podcast that shit” into the recent history and generates a podcast-style narration of that chunk.
     *   **Output:** An ephemeral confirmation indicating whether auto-podcast is enabled or disabled for the channel.
 
+*   **`/tts_delivery <mode>`**
+    *   **Purpose:** Selects how Sam delivers voice replies (MP3 audio, MP4 video with subtitles, both, or disabled) for the current server.
+    *   **Arguments:**
+        *   `mode` (Required): One of `audio`, `video`, `both`, or `off`.
+    *   **Behavior:** Updates the per-guild preference stored in `tts_delivery_modes.json`. When set to `video` or `both`, the bot uses `ffmpeg` to wrap TTS output in a hardsubbed MP4 with a blurred background. If rendering fails, it automatically falls back to MP3 delivery.
+    *   **Output:** An ephemeral confirmation summarizing the new and previous delivery modes.
+
+*   **`/tts_thoughts <enabled>`**
+    *   **Purpose:** Controls whether `<think>...</think>` content is synthesized into audio/video alongside the visible response.
+    *   **Arguments:**
+        *   `enabled` (Required): `true` to include thoughts; `false` to omit them.
+    *   **Behavior:** Updates the in-memory flag (`TTS_INCLUDE_THOUGHTS`) so future responses include or skip internal thoughts when TTS runs.
+    *   **Output:** An ephemeral confirmation reflecting the new setting.
+
 ---
 
 ## 9. Running the Bot
@@ -575,6 +596,7 @@ DiscordSam offers a variety of slash commands for diverse functionalities. Here'
 1.  **Ensure your local servers are running:**
     *   Your LLM server (e.g., LM Studio, Ollama) must be active and accessible at the `LOCAL_SERVER_URL`. Ensure the correct models specified in your `.env` file (e.g., `LLM`, `VISION_LLM_MODEL`) are loaded and available on this server.
     *   If `TTS_ENABLED_DEFAULT` is `true`, your TTS server must be running and accessible at `TTS_API_URL`.
+    *   If you enable MP4 TTS delivery (via `/tts_delivery video` or `both`), verify that `ffmpeg` is installed and available on the system PATH.
     *   If you plan to use the `/search` or `/news` commands, your SearXNG instance must be running and accessible at `SEARX_URL`.
 
 2.  **Verify your `.env` file:** Double-check that it's correctly configured, especially the `DISCORD_BOT_TOKEN` and all server URLs and model names.

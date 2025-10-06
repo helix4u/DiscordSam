@@ -71,7 +71,12 @@ def setup_events_and_tasks(bot: commands.Bot, llm_client_in: Any, bot_state_in: 
                     embed.set_footer(text=f"This reminder was for {user.display_name}")
                     await channel.send(content=user.mention, embed=embed)
                     tts_reminder_text = f"Hey {user.display_name}, here's your reminder: {message_content}"
-                    await send_tts_audio(channel, tts_reminder_text, base_filename=f"reminder_{user_id}_{channel_id}")
+                    await send_tts_audio(
+                        channel,
+                        tts_reminder_text,
+                        base_filename=f"reminder_{user_id}_{channel_id}",
+                        bot_state=bot_state_instance,
+                    )
                 else:
                     logger.warning(f"Could not fetch channel/user or channel not messageable for reminder: Channel ID {channel_id}, User ID {user_id}")
             except discord.errors.NotFound:

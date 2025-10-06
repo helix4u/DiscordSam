@@ -630,7 +630,10 @@ async def stream_llm_response_to_interaction(
                 tts_base_id = str(initial_msg_for_handler.id)
 
             await send_tts_audio(
-                interaction, full_response_content, f"interaction_{tts_base_id}"
+                interaction,
+                full_response_content,
+                f"interaction_{tts_base_id}",
+                bot_state=bot_state,
             )
 
             # Only store the actual user question and final response for RAG
@@ -670,7 +673,12 @@ async def stream_llm_response_to_interaction(
         if initial_msg_for_handler:
             tts_base_id = str(initial_msg_for_handler.id)
 
-        await send_tts_audio(interaction, full_response_content, f"interaction_{tts_base_id}")
+        await send_tts_audio(
+            interaction,
+            full_response_content,
+            f"interaction_{tts_base_id}",
+            bot_state=bot_state,
+        )
 
         # Only store the visible exchange (user question + assistant response)
         chroma_ingest_history_with_response = [
@@ -764,6 +772,7 @@ async def stream_llm_response_to_message(
             target_message.channel,
             full_response_content,
             base_filename=f"message_{target_message.id}",
+            bot_state=bot_state,
         )
 
         # Persist only the final visible exchange

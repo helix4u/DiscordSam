@@ -6,6 +6,8 @@ from typing import Dict
 import json
 import os
 
+from config import config
+
 class BotState:
     """An async-safe container for the bot's shared, mutable state."""
     def __init__(self):
@@ -27,11 +29,18 @@ class BotState:
         self._schedules: List[Dict[str, Any]] = []
         # Track long-running per-channel tasks
         self._active_tasks: Dict[int, asyncio.Task[Any]] = {}
+        # TTS delivery preferences per guild
+        self.tts_delivery_file = os.path.join(os.path.dirname(__file__), "tts_delivery_modes.json")
+        self._tts_delivery_by_guild: Dict[int, str] = {}
         try:
             self._load_schedules()
         except Exception:
             # Start with empty if load fails; errors are not fatal
             self._schedules = []
+        try:
+            self._load_tts_delivery_modes()
+        except Exception:
+            self._tts_delivery_by_guild = {}
 
     async def update_last_playwright_usage_time(self):
         """Updates the timestamp for the last Playwright usage."""
@@ -170,3 +179,42 @@ class BotState:
                 return False
             task.cancel()
             return True
+
+    # --- TTS delivery mode persistence ---
+    def _load_tts_delivery_modes(self) -> None:
+        if os.path.exists(self.tts_delivery_file):
+            with open(self.tts_delivery_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    loaded: Dict[int, str] = {}
+                    for key, value in data.items():
+                        try:
+                            loaded[int(key)] = str(value)
+                        except (ValueError, TypeError):
+                            continue
+                    self._tts_delivery_by_guild = loaded
+
+    def _save_tts_delivery_modes(self) -> None:
+        tmp_path = self.tts_delivery_file + ".tmp"
+        serializable = {str(gid): mode for gid, mode in self._tts_delivery_by_guild.items()}
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(serializable, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, self.tts_delivery_file)
+
+    async def set_tts_delivery_mode(self, guild_id: int, mode: str) -> None:
+        normalized = mode.lower()
+        if normalized not in {"off", "audio", "video", "both"}:
+            normalized = config.TTS_DELIVERY_DEFAULT
+        async with self._lock:
+            self._tts_delivery_by_guild[guild_id] = normalized
+            self._save_tts_delivery_modes()
+
+    async def get_tts_delivery_mode(self, guild_id: int) -> str:
+        async with self._lock:
+            return self._tts_delivery_by_guild.get(guild_id, config.TTS_DELIVERY_DEFAULT)
+
+    async def clear_tts_delivery_mode(self, guild_id: int) -> None:
+        async with self._lock:
+            if guild_id in self._tts_delivery_by_guild:
+                self._tts_delivery_by_guild.pop(guild_id, None)
+                self._save_tts_delivery_modes()
