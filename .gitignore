@@ -149,3 +149,14 @@ tests/
 chroma_data/
 chroma_data1/
 temp/
+
+# Test files
+test_*.py
+simple_*.py
+create_dataset.py
+
+# Scheduler data
+schedules.json
+
+# Playwright profile (symlink)
+.pw-profile
