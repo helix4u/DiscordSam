@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 TTS_LOCK = asyncio.Lock()
 _MISSING_FONT_WARNING_EMITTED = False
 def _create_rolling_subtitles(text: str, duration_seconds: float, width: int = 1280, height: int = 720, font_size: int = 42) -> str:
-    """Create rolling subtitle SRT content that displays text progressively.
+    """Create rolling subtitle SRT content with centered, faded effect.
     
     Args:
         text: The full text to display
@@ -34,7 +34,7 @@ def _create_rolling_subtitles(text: str, duration_seconds: float, width: int = 1
         font_size: Font size being used
         
     Returns:
-        SRT content with time-synced rolling subtitles
+        SRT content with time-synced rolling subtitles with ASS styling
     """
     normalized = text.replace("\r\n", " ").replace("\r", " ").replace("\n", " ").strip()
     
@@ -43,8 +43,8 @@ def _create_rolling_subtitles(text: str, duration_seconds: float, width: int = 1
     chars_per_line = int(usable_width / (font_size * 0.6))
     chars_per_line = max(30, min(chars_per_line, 80))
     
-    # Max lines visible at once for rolling effect
-    max_visible_lines = 3
+    # Max lines visible at once for rolling effect (more for faded context)
+    max_visible_lines = 5
     
     # Split text into chunks that fit on one line
     words = normalized.split()
@@ -70,22 +70,33 @@ def _create_rolling_subtitles(text: str, duration_seconds: float, width: int = 1
     
     # Calculate timing for each chunk
     time_per_chunk = duration_seconds / len(line_chunks)
-    # Ensure each chunk shows for at least 1 second
-    time_per_chunk = max(1.0, time_per_chunk)
+    # Ensure each chunk shows for at least 0.8 seconds for smooth reading
+    time_per_chunk = max(0.8, time_per_chunk)
     
     srt_entries = []
     for i, chunk in enumerate(line_chunks):
         start_time = i * time_per_chunk
         end_time = min((i + 1) * time_per_chunk, duration_seconds)
         
-        # Build the subtitle entry with rolling context
-        # Show current line and previous lines for context
-        visible_chunks = []
-        start_idx = max(0, i - (max_visible_lines - 1))
-        for j in range(start_idx, i + 1):
-            visible_chunks.append(line_chunks[j])
+        # Build the subtitle entry with faded previous/next lines
+        # Use HTML-style tags for styling (ASS format)
+        visible_lines = []
         
-        subtitle_text = "\n".join(visible_chunks)
+        # Show previous 2 lines (faded)
+        for j in range(max(0, i - 2), i):
+            if j < len(line_chunks):
+                # Faded previous lines (40% opacity)
+                visible_lines.append(f'{{\\alpha&H99&}}{line_chunks[j]}')
+        
+        # Current line (full brightness, centered)
+        visible_lines.append(f'{{\\alpha&H00&}}{{\\b1}}{chunk}{{\\b0}}')
+        
+        # Show next 2 lines (very faded)
+        for j in range(i + 1, min(i + 3, len(line_chunks))):
+            # Very faded next lines (70% opacity)
+            visible_lines.append(f'{{\\alpha&HB3&}}{line_chunks[j]}')
+        
+        subtitle_text = "\\N".join(visible_lines)  # \\N is line break in ASS
         
         # Format timestamps
         start_h = int(start_time // 3600)
@@ -169,9 +180,11 @@ async def _generate_tts_video(
     # Create rolling subtitles based on audio duration
     logger.info("Creating rolling subtitles for %.2f second video (%dx%d, font size %d)", 
                duration_seconds, width, height, font_size)
-    background_color = getattr(config, "TTS_VIDEO_BACKGROUND_COLOR", "#111827")
-    text_color_hex = getattr(config, "TTS_VIDEO_TEXT_COLOR", "#F8FAFC")
-    box_color_hex = getattr(config, "TTS_VIDEO_TEXT_BOX_COLOR", "#000000AA")
+    # Force black background for centered, faded text effect
+    background_color = "#000000"  # Pure black background
+    text_color_hex = getattr(config, "TTS_VIDEO_TEXT_COLOR", "#FFFFFF")
+    # Grey shadow color (semi-transparent grey)
+    shadow_color_hex = "#808080CC"
     margin_v = max(20, int(getattr(config, "TTS_VIDEO_MARGIN", 96)))
     margin_lr = max(20, int(getattr(config, "TTS_VIDEO_TEXT_BOX_PADDING", 48)))
     font_path = getattr(config, "TTS_VIDEO_FONT_PATH", "")
@@ -180,7 +193,7 @@ async def _generate_tts_video(
         font_name = "Arial"
     font_name = font_name.replace("'", "")
     text_color_ass = _css_hex_to_ass_color(text_color_hex, "&H00FFFFFF&")
-    box_color_ass = _css_hex_to_ass_color(box_color_hex, "&H80202020&")
+    shadow_color_ass = _css_hex_to_ass_color(shadow_color_hex, "&HCC808080&")
     try:
         with tempfile.TemporaryDirectory() as tmp_dir_str:
             tmp_dir = Path(tmp_dir_str)
@@ -292,14 +305,15 @@ async def _generate_tts_video(
             )
             logger.info("Creating video with duration: %.3f seconds to match audio", duration_seconds)
             style_parts = [
-                "Alignment=10",
+                "Alignment=8",  # Center text horizontally, bottom vertically
                 f"Fontname={font_name}",
                 f"Fontsize={font_size}",
-                "BorderStyle=3",
-                "Outline=4",
-                "Shadow=0",
-                f"PrimaryColour={text_color_ass}",
-                f"BackColour={box_color_ass}",
+                "BorderStyle=1",  # Outline with shadow
+                "Outline=2",  # Thin outline
+                "Shadow=3",  # Grey shadow offset
+                f"PrimaryColour={text_color_ass}",  # White text
+                "OutlineColour=&H00000000&",  # Black outline
+                f"BackColour={shadow_color_ass}",  # Grey shadow
                 f"MarginV={margin_v}",
                 f"MarginL={margin_lr}",
                 f"MarginR={margin_lr}",
