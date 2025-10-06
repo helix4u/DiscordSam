@@ -273,7 +273,7 @@ class Config:
             _default_font_path(),
         )
         self.TTS_VIDEO_FONT_SIZE = _get_int("TTS_VIDEO_FONT_SIZE", 42)
-        self.TTS_MAX_VIDEO_BYTES = _get_int("TTS_MAX_VIDEO_BYTES", 24 * 1024 * 1024)
+        self.TTS_MAX_VIDEO_BYTES = _get_int("TTS_MAX_VIDEO_BYTES", 8 * 1024 * 1024)  # Match Discord 8MB limit
 
         self.SEARX_URL = os.getenv("SEARX_URL", "http://192.168.1.3:9092/search")
         # Changed default for SEARX_PREFERENCES to an empty string.
