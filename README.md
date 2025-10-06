@@ -195,10 +195,18 @@ Below is a comprehensive list of environment variables used by DiscordSam, along
 **LLM Configuration:**
 
 *   `LOCAL_SERVER_URL` (Default: `http://localhost:1234/v1`): The base URL of your OpenAI-compatible LLM server (e.g., LM Studio, Ollama with OpenAI endpoint).
+*   `LLM_COMPLETIONS_URL` (Default: `LOCAL_SERVER_URL`): Base URL used for the primary conversational model. Override this if the main model lives on a different OpenAI-compatible endpoint.
+*   `FAST_LLM_COMPLETIONS_URL` (Default: `LLM_COMPLETIONS_URL`): Base URL for the fast/summarisation role.
+*   `VISION_LLM_COMPLETIONS_URL` (Default: `LLM_COMPLETIONS_URL`): Base URL for the vision role.
 *   `LLM_API_KEY` (Optional, Default: `""` or `lm-studio`): The API key for your LLM server. Often not strictly required for local servers but can be set if needed.
 *   `LLM` (Default: `local-model`): The name/identifier of the default language model to be used for most text generation tasks.
 *   `FAST_LLM_MODEL` (Default: Same as `LLM`): The model used for tasks where speed is preferred over maximum quality, such as intermediate summarizations or quick classifications.
 *   `VISION_LLM_MODEL` (Default: `llava`): The model used for tasks involving image understanding (e.g., the `/ap` command or describing screenshots).
+*   `FAST_LLM_API_KEY` (Optional, Default: `LLM_API_KEY`): Override API key for the fast/summarisation role.
+*   `VISION_LLM_API_KEY` (Optional, Default: `LLM_API_KEY`): Override API key for the vision role.
+*   `LLM_TEMPERATURE` (Default: `0.7`): Sampling temperature for the primary model.
+*   `FAST_LLM_TEMPERATURE` (Default: `LLM_TEMPERATURE`): Sampling temperature for the fast/summarisation model.
+*   `VISION_LLM_TEMPERATURE` (Default: `LLM_TEMPERATURE`): Sampling temperature for the vision model.
 *   `LLM_SUPPORTS_JSON_MODE` (Default: `false`): Set to `true` if your LLM server and the selected model support JSON mode for structured output (e.g., for entity extraction).
 *   `IS_GOOGLE_MODEL` (Default: `false`): Set to `true` if you are using a Google Gemini model via an OpenAI-compatible endpoint. This disables unsupported features like `logit_bias` to prevent errors.
 *   `GPT5_MODE` (Default: `false`): Adapts requests for GPT‑5 models on Chat Completions: forces `temperature=1.0`, removes `logit_bias`, and maps `system` messages to `developer` role. No effect for the Responses API on temperature (it’s ignored there; roles are already `developer`).
