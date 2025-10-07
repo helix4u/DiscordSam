@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 TTS_LOCK = asyncio.Lock()
 _MISSING_FONT_WARNING_EMITTED = False
 def _create_rolling_subtitles(text: str, duration_seconds: float, width: int = 1280, height: int = 720, font_size: int = 42) -> str:
-    """Create rolling subtitle ASS content with centered, faded effect.
+    """Create rolling subtitle SRT content with centered, faded effect.
     
     Args:
         text: The full text to display
@@ -34,14 +34,14 @@ def _create_rolling_subtitles(text: str, duration_seconds: float, width: int = 1
         font_size: Font size being used
         
     Returns:
-        ASS content with time-synced rolling subtitles with proper styling
+        SRT content with time-synced rolling subtitles with ASS styling
     """
     normalized = text.replace("\r\n", " ").replace("\r", " ").replace("\n", " ").strip()
     
     # Calculate approximate characters per line based on video width
     usable_width = width - 96  # Account for margins
     chars_per_line = int(usable_width / (font_size * 0.6))
-    chars_per_line = max(60, min(chars_per_line, 160))  # Double the words per segment
+    chars_per_line = max(30, min(chars_per_line, 80))
     
     # Max lines visible at once for rolling effect (more for faded context)
     max_visible_lines = 5
@@ -71,74 +71,53 @@ def _create_rolling_subtitles(text: str, duration_seconds: float, width: int = 1
     # Calculate timing for each chunk
     time_per_chunk = duration_seconds / len(line_chunks)
     # Ensure each chunk shows for at least 0.8 seconds for smooth reading
-    time_per_chunk = max(1.6, time_per_chunk)  # Double time for double the words
+    time_per_chunk = max(0.8, time_per_chunk)
     
-    # Calculate margins for maximum screen usage (vision aid style)
-    margin_lr = int(width * 0.03)  # Minimal 3% horizontal margin
-    margin_v = int(height * 0.05)  # Minimal 5% vertical margin
-    
-    # Create ASS header with maximum screen usage styling
-    # ASS color format: &HAABBGGRR (alpha, blue, green, red in hex)
-    # ScaleX: 110 = wider/fuller text, ScaleY: 100 = normal height, Spacing: 0 = no extra char spacing
-    # Alignment: 2 = bottom center
-    ass_header = f"""[Script Info]
-Title: Rolling Subtitles
-ScriptType: v4.00+
-WrapStyle: 0
-PlayResX: {width}
-PlayResY: {height}
-ScaledBorderAndShadow: yes
-
-[V4+ Styles]
-Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Current,Arial Black,{font_size},&H00FFFFFF,&H000000FF,&H00000000,&H00000000,1,0,0,0,110,100,0,0,1,6,0,2,{margin_lr},{margin_v},{margin_lr},1
-
-[Events]
-Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-"""
-    
-    def format_ass_time(seconds: float) -> str:
-        """Format time for ASS format (H:MM:SS.CC)"""
-        h = int(seconds // 3600)
-        m = int((seconds % 3600) // 60)
-        s = int(seconds % 60)
-        cs = int((seconds % 1) * 100)
-        return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
-    
-    ass_events = []
+    srt_entries = []
     for i, chunk in enumerate(line_chunks):
         start_time = i * time_per_chunk
         end_time = min((i + 1) * time_per_chunk, duration_seconds)
         
-        start_str = format_ass_time(start_time)
-        end_str = format_ass_time(end_time)
+        # Build the subtitle entry with faded previous/next lines
+        # Use HTML-style tags for styling (ASS format)
+        visible_lines = []
         
-        # Build the subtitle text with inline styling for faded effect
-        text_parts = []
-        
-        # Show previous 2 lines (clear and visible - 50% transparent, light gray)
+        # Show previous 2 lines (faded)
         for j in range(max(0, i - 2), i):
             if j < len(line_chunks):
-                # \\alpha&H7F& = 50% transparent, \\1c&H888888& = light gray
-                text_parts.append(f"{{\\alpha&H7F&\\1c&H888888&}}{line_chunks[j]}")
-                text_parts.append(" ")  # Add blank line for more vertical spacing
+                # Faded previous lines (40% opacity)
+                visible_lines.append(f'{{\\alpha&H99&}}{line_chunks[j]}')
         
-        # Current line (full brightness, white, bold, MASSIVE for vision aid)
-        current_line_size = int(font_size * 1.3)  # Even bigger for vision aid
-        text_parts.append(f"{{\\alpha&H00&\\1c&HFFFFFF&\\b1\\fs{current_line_size}}}{chunk}{{\\fs{font_size}\\b0}}")
-        text_parts.append(" ")  # Add blank line after current for spacing
+        # Current line (full brightness, centered)
+        visible_lines.append(f'{{\\alpha&H00&}}{{\\b1}}{chunk}{{\\b0}}')
         
-        # Show next 2 lines (clear and visible - 60% transparent, medium gray)
+        # Show next 2 lines (very faded)
         for j in range(i + 1, min(i + 3, len(line_chunks))):
-            # \\alpha&H99& = 60% transparent, \\1c&H777777& = medium gray
-            text_parts.append(f"{{\\alpha&H99&\\1c&H777777&}}{line_chunks[j]}")
-            text_parts.append(" ")  # Add blank line for more vertical spacing
+            # Very faded next lines (70% opacity)
+            visible_lines.append(f'{{\\alpha&HB3&}}{line_chunks[j]}')
         
-        # Join with \\N (line break in ASS)
-        dialogue_text = "\\N".join(text_parts)
-        ass_events.append(f"Dialogue: 0,{start_str},{end_str},Current,,0,0,0,,{dialogue_text}")
+        subtitle_text = "\\N".join(visible_lines)  # \\N is line break in ASS
+        
+        # Format timestamps
+        start_h = int(start_time // 3600)
+        start_m = int((start_time % 3600) // 60)
+        start_s = int(start_time % 60)
+        start_ms = int((start_time % 1) * 1000)
+        
+        end_h = int(end_time // 3600)
+        end_m = int((end_time % 3600) // 60)
+        end_s = int(end_time % 60)
+        end_ms = int((end_time % 1) * 1000)
+        
+        srt_entry = (
+            f"{i + 1}\n"
+            f"{start_h:02d}:{start_m:02d}:{start_s:02d},{start_ms:03d} --> "
+            f"{end_h:02d}:{end_m:02d}:{end_s:02d},{end_ms:03d}\n"
+            f"{subtitle_text}\n"
+        )
+        srt_entries.append(srt_entry)
     
-    return ass_header + "\n".join(ass_events)
+    return "\n".join(srt_entries)
 def _escape_subtitles_path(value: str) -> str:
     """Escape a filesystem path for use inside ffmpeg subtitle filters."""
     escaped = value.replace("\\", "\\\\")
@@ -147,81 +126,6 @@ def _escape_subtitles_path(value: str) -> str:
 def _escape_force_style(value: str) -> str:
     """Escape force_style values for ffmpeg subtitles filter."""
     return value.replace("'", "\\'")
-
-async def _chunk_video_with_ffmpeg(video_bytes: bytes, max_bytes: int, base_filename: str, filename_suffix: str) -> list[tuple[bytes, str]]:
-    """Chunk a video file using ffmpeg to fit size restrictions.
-    
-    Args:
-        video_bytes: The full video data
-        max_bytes: Maximum bytes per chunk
-        base_filename: Base filename for chunks
-        filename_suffix: Suffix for the file type
-        
-    Returns:
-        List of tuples (chunk_bytes, chunk_filename)
-    """
-    import tempfile
-    from pathlib import Path
-    
-    # Estimate duration from file size (rough approximation)
-    # Assume ~500kbps average bitrate for MP4
-    estimated_duration = len(video_bytes) / (500 * 1024)  # seconds
-    bytes_per_second = len(video_bytes) / estimated_duration if estimated_duration > 0 else len(video_bytes)
-    
-    # Calculate how many chunks we need
-    num_chunks = max(1, int(len(video_bytes) / max_bytes) + 1)
-    chunk_duration = estimated_duration / num_chunks
-    
-    logger.info("Chunking video: %d bytes, estimated %.1f seconds, %d chunks of %.1f seconds each", 
-               len(video_bytes), estimated_duration, num_chunks, chunk_duration)
-    
-    chunks = []
-    
-    with tempfile.TemporaryDirectory() as tmp_dir_str:
-        tmp_dir = Path(tmp_dir_str)
-        input_video = tmp_dir / "input.mp4"
-        input_video.write_bytes(video_bytes)
-        
-        for i in range(num_chunks):
-            start_time = i * chunk_duration
-            end_time = min((i + 1) * chunk_duration, estimated_duration)
-            chunk_filename = f"{base_filename}_{filename_suffix}_part{i + 1}.mp4"
-            output_video = tmp_dir / f"chunk_{i + 1}.mp4"
-            
-            # Use ffmpeg to extract a time segment
-            cmd = [
-                "ffmpeg",
-                "-hide_banner",
-                "-loglevel", "error",
-                "-y",
-                "-i", str(input_video),
-                "-ss", str(start_time),
-                "-t", str(end_time - start_time),
-                "-c", "copy",  # Copy streams without re-encoding
-                "-avoid_negative_ts", "make_zero",
-                str(output_video)
-            ]
-            
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, stderr = await process.communicate()
-            
-            if process.returncode != 0:
-                logger.error("ffmpeg chunking failed for chunk %d: %s", i + 1, 
-                           stderr.decode("utf-8", errors="ignore") if stderr else "No error output")
-                continue
-                
-            if output_video.exists():
-                chunk_bytes = output_video.read_bytes()
-                chunks.append((chunk_bytes, chunk_filename))
-                logger.info("Created video chunk %d: %d bytes", i + 1, len(chunk_bytes))
-            else:
-                logger.error("Video chunk %d was not created", i + 1)
-    
-    return chunks
 def _css_hex_to_ass_color(hex_color: str | None, default_ass: str) -> str:
     """Convert a CSS-style hex color (optionally with alpha) to ASS colour format."""
     if not hex_color:
@@ -271,7 +175,7 @@ async def _generate_tts_video(
     width = max(320, int(getattr(config, "TTS_VIDEO_WIDTH", 1280)))
     height = max(320, int(getattr(config, "TTS_VIDEO_HEIGHT", 720)))
     fps = max(1, int(getattr(config, "TTS_VIDEO_FPS", 30)))
-    font_size = max(12, int(getattr(config, "TTS_VIDEO_FONT_SIZE", 120)))  # Much larger for vision aid
+    font_size = max(12, int(getattr(config, "TTS_VIDEO_FONT_SIZE", 42)))
     
     # Create rolling subtitles based on audio duration
     logger.info("Creating rolling subtitles for %.2f second video (%dx%d, font size %d)", 
@@ -280,7 +184,7 @@ async def _generate_tts_video(
     background_color = "#000000"  # Pure black background
     text_color_hex = getattr(config, "TTS_VIDEO_TEXT_COLOR", "#FFFFFF")
     # Grey shadow color (semi-transparent grey)
-    shadow_color_hex = "#808080CC"
+    shadow_color_hex = "#000000"
     margin_v = max(20, int(getattr(config, "TTS_VIDEO_MARGIN", 96)))
     margin_lr = max(20, int(getattr(config, "TTS_VIDEO_TEXT_BOX_PADDING", 48)))
     font_path = getattr(config, "TTS_VIDEO_FONT_PATH", "")
@@ -295,7 +199,7 @@ async def _generate_tts_video(
             tmp_dir = Path(tmp_dir_str)
             audio_path = tmp_dir / "input.mp3"
             video_path = tmp_dir / f"{output_base}.mp4"
-            subtitle_path = tmp_dir / "captions.ass"
+            subtitle_path = tmp_dir / "captions.srt"
             audio_path.write_bytes(audio_bytes)
             logger.debug("Wrote audio file: %s (%d bytes)", audio_path, len(audio_bytes))
             logger.info("Audio file created for video generation: %d bytes, duration: %.2f seconds", 
@@ -381,18 +285,18 @@ async def _generate_tts_video(
             except Exception as test_exc:
                 logger.debug("Could not test audio file with ffprobe: %s", test_exc)
             
-            # Generate rolling subtitles in ASS format
-            ass_content = _create_rolling_subtitles(display_text, duration_seconds, width, height, font_size)
-            subtitle_path.write_text(ass_content, encoding="utf-8")
+            # Generate rolling subtitles
+            srt_content = _create_rolling_subtitles(display_text, duration_seconds, width, height, font_size)
+            subtitle_path.write_text(srt_content, encoding="utf-8")
             
             # Count subtitle entries for logging
-            subtitle_count = ass_content.count('Dialogue:')
-            logger.info("Created rolling ASS file with %d subtitle entries for %.2f seconds", 
+            subtitle_count = srt_content.count('\n\n') + 1
+            logger.info("Created rolling SRT file with %d subtitle entries for %.2f seconds", 
                        subtitle_count, duration_seconds)
             
             # Verify the file was created successfully
             if not subtitle_path.exists():
-                logger.error("Failed to create ASS file at %s", subtitle_path)
+                logger.error("Failed to create SRT file at %s", subtitle_path)
                 return None
             
             # Use exact audio duration for video to ensure perfect sync
@@ -414,8 +318,9 @@ async def _generate_tts_video(
                 f"MarginL={margin_lr}",
                 f"MarginR={margin_lr}",
             ]
-            # For ASS files, we don't need force_style since styles are defined in the file
-            vf_filter = f"subtitles=captions.ass"
+            style_string = ",".join(style_parts)
+            escaped_style = _escape_force_style(style_string)
+            vf_filter = f"subtitles=captions.srt:charenc=UTF-8:force_style='{escaped_style}'"
             logger.debug("Using ffmpeg filter: %s", vf_filter)
             logger.debug("Working directory: %s", tmp_dir)
             logger.debug("Files in tmp_dir: %s", list(tmp_dir.iterdir()))
@@ -774,41 +679,13 @@ async def _send_audio_segment(
                         send_audio_files = True
                     send_video_file = False
                 elif len(video_bytes) > config.TTS_MAX_VIDEO_BYTES:
-                    logger.info(
-                        "Generated TTS video exceeds size limit (%d > %d) for %s_%s. Chunking video.",
+                    logger.warning(
+                        "Generated TTS video exceeds size limit (%d > %d) for %s_%s. Fallback to audio.",
                         len(video_bytes),
                         config.TTS_MAX_VIDEO_BYTES,
                         base_filename,
                         filename_suffix,
                     )
-                    
-                    # Chunk the video using ffmpeg
-                    video_chunks = await _chunk_video_with_ffmpeg(
-                        video_bytes, 
-                        config.TTS_MAX_VIDEO_BYTES, 
-                        base_filename, 
-                        filename_suffix
-                    )
-                    
-                    if video_chunks:
-                        logger.info("Sending %d video chunks", len(video_chunks))
-                        for chunk_bytes, chunk_filename in video_chunks:
-                            video_file = discord.File(
-                                io.BytesIO(chunk_bytes),
-                                filename=chunk_filename,
-                            )
-                            await actual_destination_channel.send(
-                                content=content_message if not content_sent else None,
-                                file=video_file,
-                            )
-                            content_sent = True
-                            logger.info(
-                                "Sent TTS video chunk: %s to Channel ID %s",
-                                chunk_filename,
-                                actual_destination_channel.id,
-                            )
-                    else:
-                        logger.warning("Video chunking failed, falling back to audio")
                     send_video_file = False
                     if normalized_mode == "video":
                         send_audio_files = True
