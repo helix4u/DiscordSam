@@ -226,7 +226,7 @@ class Config:
         self.MAX_COMPLETION_TOKENS = _get_int("MAX_COMPLETION_TOKENS", 2048)
 
         self.TTS_API_URL = os.getenv("TTS_API_URL", "http://localhost:8880/v1/audio/speech")
-        self.TTS_VOICE = os.getenv("TTS_VOICE", "af_sky+af+af_nicole")
+        self.TTS_VOICE = os.getenv("TTS_VOICE", "af_sky+af_v0+af_nicole")
         self.TTS_ENABLED_DEFAULT = _get_bool("TTS_ENABLED_DEFAULT", True)
         self.TTS_INCLUDE_THOUGHTS = _get_bool("TTS_INCLUDE_THOUGHTS", False)
         self.TTS_DELIVERY_DEFAULT = _get_choice(
