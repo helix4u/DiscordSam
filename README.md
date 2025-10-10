@@ -84,6 +84,7 @@ DiscordSam is a modular Python application designed for extensibility and mainta
         *   Per-channel toggle for automatically running the "podcast that shit" workflow after RSS batches.
         *   Per-guild TTS delivery preferences (audio / video / both / off) persisted to `tts_delivery_modes.json`.
     *   Instances of `BotState` are passed to modules that need to access or modify this shared information (e.g., command handlers, event processors).
+    *   It also manages active scheduled tasks and handles task cancellation requests.
 
 4.  **Discord Event Handlers (`discord_events.py`)**:
     *   Contains listeners for Discord gateway events (e.g., `on_ready`, `on_message`, `on_raw_reaction_add`).
@@ -92,7 +93,7 @@ DiscordSam is a modular Python application designed for extensibility and mainta
         *   Processes message content, including text, audio attachments (transcription via `audio_utils`), and image attachments.
         *   Detects URLs and uses `web_utils` to scrape content (webpages, YouTube transcripts) and generate descriptions for screenshots (via `llm_handling`).
         *   Interacts with `llm_handling.py` to get responses from the LLM, incorporating RAG context from `rag_chroma_manager.py`.
-    *   Manages background tasks (`@tasks.loop`) for reminders, Playwright process cleanup, and timeline pruning.
+    *   Manages background tasks (`@tasks.loop`) for reminders, scheduled jobs (like recurring `/allrss`), Playwright process cleanup, and timeline pruning.
 
 5.  **Discord Slash Commands (`discord_commands.py`)**:
     *   Defines and implements all application commands (slash commands).
@@ -120,15 +121,17 @@ DiscordSam is a modular Python application designed for extensibility and mainta
     *   Includes functions for importing data (e.g., ChatGPT exports) and storing specific data types (e.g., news summaries).
 
 8.  **Utility Modules**:
-    *   **`audio_utils.py`**: Handles Text-to-Speech (TTS) generation (via an external API) and Speech-to-Text (STT) for audio attachments (via a local Whisper model).
-    *   **`web_utils.py`**: Provides functions for web scraping (using Playwright and BeautifulSoup), querying SearXNG, fetching YouTube transcripts, and parsing RSS feeds. Manages a semaphore for Playwright concurrency.
-    *   **`utils.py`**: Contains general helper functions like text chunking, URL detection, text cleaning for TTS, time string parsing, and Playwright process cleanup.
-    *   **`common_models.py`**: Defines common data structures like `MsgNode` used throughout the application.
-    *   **`rss_cache.py`**: Manages a local cache of seen RSS feed items to avoid reprocessing.
-    *   **`timeline_pruner.py`**: Contains logic for the background task that prunes and summarizes old chat history from ChromaDB.
-    *   **`rag_cleanup.py`**: Utility script that removes distilled summary entries referencing conversation IDs that no longer exist in the main chat history collection.
-    *   **`open_chatgpt_login.py`**: Launches a persistent Playwright browser so you can log into ChatGPT (or other services) once and reuse the saved cookies.
-    *   **`llm_request_processor.py`**: Optional worker for processing queued LLM requests separately from the Discord event loop.
+    *   **`audio_utils.py`**: Handles Text-to-Speech (TTS) generation and Speech-to-Text (STT).
+    *   **`web_utils.py`**: Provides functions for web scraping, querying SearXNG, and parsing RSS feeds.
+    *   **`utils.py`**: Contains general helper functions like text chunking, URL detection, and time string parsing.
+    *   **`common_models.py`**: Defines common data structures like `MsgNode`, `TweetData`, and `GroundNewsArticle`.
+    *   **`rss_cache.py`**: Manages a cache of seen RSS feed items.
+    *   **`twitter_cache.py`**: Manages a cache of seen tweet IDs to avoid reprocessing.
+    *   **`ground_news_cache.py`**: Manages a cache of seen Ground News article links.
+    *   **`timeline_pruner.py`**: Contains logic for pruning and summarizing old chat history.
+    *   **`rag_cleanup.py`**: A utility script to remove stale distilled summaries from ChromaDB.
+    *   **`open_chatgpt_login.py`**: A helper script to launch a persistent Playwright browser for logging into services.
+    *   **`llm_request_processor.py`**: An optional worker for processing LLM requests separately.
 
 **Data Flow Example (User sends a message mentioning the bot):**
 
@@ -191,110 +194,127 @@ Below is a comprehensive list of environment variables used by DiscordSam, along
     *   Example: `123456789012345678,987654321098765432`
 *   `ALLOWED_ROLE_IDS` (Optional): A comma-separated list of Discord role IDs. If set, users must have at least one of these roles for the bot to respond to their general messages in allowed channels. Does not affect DMs or direct mentions. If empty, no role restrictions apply (beyond channel/mention checks).
     *   Example: `112233445566778899,009988776655443322`
-*   `ADMIN_USER_IDS` (Optional but recommended): Comma-separated Discord user IDs that are allowed to run privileged commands such as `/ingest_chatgpt_export`, `/analytics`, and `/memoryinspector`. These commands are disabled if this variable is not set.
+*   `ADMIN_USER_IDS` (Optional but recommended): Comma-separated Discord user IDs that are allowed to run privileged commands. These commands are disabled if this variable is not set.
 *   `CHATGPT_EXPORT_IMPORT_ROOT` (Optional, Default: current working directory): Absolute or relative path that bounds where `/ingest_chatgpt_export` is allowed to read `conversations.json` files from. Paths outside this directory are rejected for safety.
 *   `SYSTEM_PROMPT_FILE` (Default: `system_prompt.md`): Path to a text or markdown file containing the main system prompt that defines the bot's persona and core instructions.
 *   `USER_PROVIDED_CONTEXT` (Optional): Additional global context that will be prepended to the system prompt for every LLM interaction. Useful for providing persistent high-level instructions or information.
 
-**LLM Configuration:**
+**LLM Configuration (Provider Architecture):**
 
-*   `LOCAL_SERVER_URL` (Default: `http://localhost:1234/v1`): The base URL of your OpenAI-compatible LLM server (e.g., LM Studio, Ollama with OpenAI endpoint).
-*   `LLM_COMPLETIONS_URL` (Default: `LOCAL_SERVER_URL`): Base URL used for the primary conversational model. Override this if the main model lives on a different OpenAI-compatible endpoint.
-*   `FAST_LLM_COMPLETIONS_URL` (Default: `LLM_COMPLETIONS_URL`): Base URL for the fast/summarisation role.
-*   `VISION_LLM_COMPLETIONS_URL` (Default: `LLM_COMPLETIONS_URL`): Base URL for the vision role.
-*   `LLM_API_KEY` (Optional, Default: `""` or `lm-studio`): The API key for your LLM server. Often not strictly required for local servers but can be set if needed.
-*   `LLM` (Default: `local-model`): The name/identifier of the default language model to be used for most text generation tasks.
-*   `FAST_LLM_MODEL` (Default: Same as `LLM`): The model used for tasks where speed is preferred over maximum quality, such as intermediate summarizations or quick classifications.
-*   `VISION_LLM_MODEL` (Default: `llava`): The model used for tasks involving image understanding (e.g., the `/ap` command or describing screenshots).
-*   `FAST_LLM_API_KEY` (Optional, Default: `LLM_API_KEY`): Override API key for the fast/summarisation role.
-*   `VISION_LLM_API_KEY` (Optional, Default: `LLM_API_KEY`): Override API key for the vision role.
-*   `LLM_TEMPERATURE` (Default: `0.7`): Sampling temperature for the primary model.
-*   `FAST_LLM_TEMPERATURE` (Default: `LLM_TEMPERATURE`): Sampling temperature for the fast/summarisation model.
-*   `VISION_LLM_TEMPERATURE` (Default: `LLM_TEMPERATURE`): Sampling temperature for the vision model.
-*   `LLM_SUPPORTS_JSON_MODE` (Default: `false`): Set to `true` if your LLM server and the selected model support JSON mode for structured output (e.g., for entity extraction).
-*   `IS_GOOGLE_MODEL` (Default: `false`): Set to `true` if you are using a Google Gemini model via an OpenAI-compatible endpoint. This disables unsupported features like `logit_bias` to prevent errors.
-*   `GPT5_MODE` (Default: `false`): Adapts requests for GPT‑5 models on Chat Completions: forces `temperature=1.0`, removes `logit_bias`, and maps `system` messages to `developer` role. No effect for the Responses API on temperature (it’s ignored there; roles are already `developer`).
-*   `USE_RESPONSES_API` (Default: `false`): Global default for whether to use OpenAI's Responses API instead of legacy Chat Completions.
-*   `LLM_USE_RESPONSES_API` (Default: follows `USE_RESPONSES_API`): Enable Responses API for the main conversational model.
-*   `FAST_LLM_USE_RESPONSES_API` (Default: follows `USE_RESPONSES_API`): Enable Responses API for the fast/summarization model.
-*   `VISION_LLM_USE_RESPONSES_API` (Default: follows `USE_RESPONSES_API`): Enable Responses API for the vision-capable model.
-*   `LLM_STREAMING` (Default: `true`): Stream token-by-token responses when `true`. Some models require organization verification to enable streaming.
-*   `RESPONSES_REASONING_EFFORT` (Optional): Controls the reasoning effort for Responses models. Options are `minimal`, `low`, `medium`, or `high`.
-*   `RESPONSES_VERBOSITY` (Optional): Sets the verbosity of Responses output. Options are `low`, `medium`, or `high`.
-*   `RESPONSES_SERVICE_TIER` (Optional): Selects the service tier for Responses requests. Options are `auto`, `default`, `flex`, or `priority`.
-*   `OPENAI_RETRY_MAX_ATTEMPTS` (Default: `6`): Maximum number of times the bot will retry a failed OpenAI-compatible request before surfacing the error.
-*   `OPENAI_BACKOFF_BASE_SECONDS` (Default: `1.5`): Initial delay used for exponential backoff when retrying requests.
-*   `OPENAI_BACKOFF_MAX_SECONDS` (Default: `60`): Upper bound on the wait time between retries; also caps header-provided rate-limit delays.
-*   `OPENAI_BACKOFF_JITTER_SECONDS` (Default: `0.5`): Random jitter added to retry delays to avoid thundering herd behaviour when multiple tasks retry simultaneously.
-*   `MAX_MESSAGE_HISTORY` (Default: `10`): The maximum number of recent messages (user and assistant turns) to include in the short-term context sent to the LLM.
-*   `MAX_COMPLETION_TOKENS` (Default: `2048`): The maximum number of tokens the LLM is allowed to generate in a single response.
+The bot now uses a provider-based architecture to manage different LLM roles (main, fast, vision). You can configure each role independently.
+
+*   `LOCAL_SERVER_URL` (Default: `http://localhost:1234/v1`): A general-purpose base URL for your OpenAI-compatible LLM server. This is used as a fallback if a role-specific URL is not provided.
+*   `LLM_API_KEY` (Optional, Default: `""`): A general-purpose API key for your LLM server. This is used as a fallback if a role-specific key is not provided.
+
+***Main Conversational Role (`main`):***
+*   `LLM_MODEL` (Default: `local-model`): The model name for the main conversational LLM.
+*   `LLM_COMPLETIONS_URL` (Default: `LOCAL_SERVER_URL`): The specific API endpoint for the main LLM.
+*   `LLM_API_KEY` (Optional, Default: falls back to global `LLM_API_KEY`): The specific API key for the main LLM.
+*   `LLM_TEMPERATURE` (Default: `0.7`): Sampling temperature for the main LLM.
+*   `LLM_SUPPORTS_JSON_MODE` (Default: `false`): Set to `true` if the main LLM supports JSON mode.
+*   `LLM_SUPPORTS_LOGIT_BIAS` (Default: `true` unless `IS_GOOGLE_MODEL` is true): Set to `false` to disable logit bias.
+*   `LLM_USE_RESPONSES_API` (Default: `false`): Set to `true` to use the OpenAI Responses API for this role.
+
+***Fast/Summarization Role (`fast`):***
+*   `FAST_LLM_MODEL` (Default: Same as `LLM_MODEL`): The model name for the fast/summarization LLM.
+*   `FAST_LLM_COMPLETIONS_URL` (Default: `LLM_COMPLETIONS_URL`): The specific API endpoint for the fast LLM.
+*   `FAST_LLM_API_KEY` (Optional, Default: falls back to global `LLM_API_KEY`): The specific API key for the fast LLM.
+*   `FAST_LLM_TEMPERATURE` (Default: `LLM_TEMPERATURE`): Sampling temperature for the fast LLM.
+*   `FAST_LLM_SUPPORTS_JSON_MODE` (Default: `LLM_SUPPORTS_JSON_MODE`): Set to `true` if the fast LLM supports JSON mode.
+*   `FAST_LLM_SUPPORTS_LOGIT_BIAS` (Default: `LLM_SUPPORTS_LOGIT_BIAS`): Set to `false` to disable logit bias.
+*   `FAST_LLM_USE_RESPONSES_API` (Default: `false`): Set to `true` to use the OpenAI Responses API for this role.
+
+***Vision Role (`vision`):***
+*   `VISION_LLM_MODEL` (Default: `llava`): The model name for the vision-capable LLM.
+*   `VISION_LLM_COMPLETIONS_URL` (Default: `LLM_COMPLETIONS_URL`): The specific API endpoint for the vision LLM.
+*   `VISION_LLM_API_KEY` (Optional, Default: falls back to global `LLM_API_KEY`): The specific API key for the vision LLM.
+*   `VISION_LLM_TEMPERATURE` (Default: `LLM_TEMPERATURE`): Sampling temperature for the vision LLM.
+*   `VISION_LLM_SUPPORTS_JSON_MODE` (Default: `LLM_SUPPORTS_JSON_MODE`): Set to `true` if the vision LLM supports JSON mode.
+*   `VISION_LLM_SUPPORTS_LOGIT_BIAS` (Default: `LLM_SUPPORTS_LOGIT_BIAS`): Set to `false` to disable logit bias.
+*   `VISION_LLM_USE_RESPONSES_API` (Default: `false`): Set to `true` to use the OpenAI Responses API for this role.
+
+***General LLM Settings:***
+*   `IS_GOOGLE_MODEL` (Default: `false`): Set to `true` if you are using a Google Gemini model via an OpenAI-compatible endpoint. This disables unsupported features like `logit_bias` to prevent errors. You can set this per-role as well (e.g., `FAST_IS_GOOGLE_MODEL`).
+*   `GPT5_MODE` (Default: `false`): Adapts requests for GPT-5 models: forces `temperature=1.0`, removes `logit_bias`, and maps `system` messages to `developer` role.
+*   `USE_RESPONSES_API` (Default: `false`): A global default for whether to use OpenAI's Responses API. Can be overridden per-role.
+*   `LLM_STREAMING` (Default: `true`): Set to `false` to disable token-by-token streaming responses.
+*   `LLM_REQUEST_TIMEOUT_SECONDS` (Default: `900.0`): Timeout in seconds for waiting on a response from the LLM server.
+*   `RESPONSES_REASONING_EFFORT` (Optional): Controls reasoning effort for the Responses API. Options: `minimal`, `low`, `medium`, `high`.
+*   `RESPONSES_VERBOSITY` (Optional): Controls verbosity for the Responses API. Options: `low`, `medium`, `high`.
+*   `RESPONSES_SERVICE_TIER` (Optional): Selects service tier for the Responses API. Options: `auto`, `default`, `flex`, `priority`.
+*   `OPENAI_RETRY_MAX_ATTEMPTS` (Default: `6`): Maximum retry attempts for a failed API request.
+*   `OPENAI_BACKOFF_BASE_SECONDS` (Default: `1.5`): Initial delay for exponential backoff on retries.
+*   `OPENAI_BACKOFF_MAX_SECONDS` (Default: `60`): Maximum delay between retries.
+*   `OPENAI_BACKOFF_JITTER_SECONDS` (Default: `0.5`): Random jitter added to retry delays.
+*   `MAX_MESSAGE_HISTORY` (Default: `10`): The maximum number of recent messages to include in the LLM context.
+*   `MAX_COMPLETION_TOKENS` (Default: `2048`): The maximum number of tokens the LLM is allowed to generate.
 
 **Whisper (Audio Transcription) Settings:**
 
-*   `WHISPER_DEVICE` (Optional): Specify the device for Whisper to run on. Common values are `cuda` for NVIDIA GPUs or `cpu`. If not set, Whisper will attempt to auto-detect the best available device. This is useful for forcing GPU usage if auto-detection fails.
+*   `WHISPER_DEVICE` (Optional): Specify the device for Whisper to run on (e.g., `cuda`, `cpu`). If not set, it will auto-detect.
 
 **Text-to-Speech (TTS) Settings:**
 
-*   `TTS_ENABLED_DEFAULT` (Default: `true`): Whether TTS is enabled by default for bot responses.
+*   `TTS_ENABLED_DEFAULT` (Default: `true`): Whether TTS is enabled by default.
 *   `TTS_API_URL` (Default: `http://localhost:8880/v1/audio/speech`): The endpoint of your OpenAI TTS API compatible server.
-*   `TTS_VOICE` (Default: `af_sky+af+af_nicole`): The voice to be used for TTS generation. The format may depend on your TTS server.
-*   `TTS_MAX_AUDIO_BYTES` (Default: `8388608` (8MB)): Maximum size of a single generated TTS audio clip. Longer audio will be split into parts before uploading to stay under Discord's attachment limits.
-*   `TTS_SPEED` (Default: `1.3`): Playback speed multiplier for TTS audio. Use `1.0` for normal speed.
-*   `TTS_INCLUDE_THOUGHTS` (Default: `false`): If `true`, content within `<think>...</think>` tags will also be spoken using TTS. When `false`, only the user-facing portion of the response is processed.
-*   `PODCAST_ENABLE_TTS_AFTER` (Default: `true`): If `true`, automatically re-enables global TTS after the `/podcastthatshit` command completes.
-*   `TTS_DELIVERY_DEFAULT` (Default: `audio`): Sets the default delivery mode for voice replies. Options are `audio` (MP3 attachments), `video` (MP4 with burned-in captions), `both`, or `off`.
-*   `TTS_MAX_VIDEO_BYTES` (Default: `25165824` (~24MB)): Maximum size of a generated MP4 clip. If the rendered file exceeds this limit the bot falls back to MP3 delivery to stay within Discord's attachment limits.
-*   Additional MP4 styling is controlled via `TTS_VIDEO_WIDTH`, `TTS_VIDEO_HEIGHT`, `TTS_VIDEO_FPS`, `TTS_VIDEO_BACKGROUND_COLOR`, `TTS_VIDEO_TEXT_COLOR`, `TTS_VIDEO_TEXT_BOX_COLOR`, `TTS_VIDEO_TEXT_BOX_PADDING`, `TTS_VIDEO_LINE_SPACING`, `TTS_VIDEO_MARGIN`, `TTS_VIDEO_WRAP_CHARS`, `TTS_VIDEO_BLUR_SIGMA`, `TTS_VIDEO_NOISE_OPACITY`, `TTS_VIDEO_FONT_PATH`, and `TTS_VIDEO_FONT_SIZE`.
+*   `TTS_VOICE` (Default: `af_sky+af+af_nicole`): The voice to be used for TTS.
+*   `TTS_SPEED` (Default: `1.3`): Playback speed multiplier for TTS audio.
+*   `TTS_MAX_AUDIO_BYTES` (Default: `8388608` (8MB)): Maximum size of a generated audio clip to stay under Discord's limit.
+*   `TTS_REQUEST_TIMEOUT_SECONDS` (Default: `180`): Timeout in seconds for waiting on a response from the TTS server.
+*   `TTS_INCLUDE_THOUGHTS` (Default: `false`): If `true`, content within `<think>...</think>` tags will also be spoken.
+*   `PODCAST_ENABLE_TTS_AFTER` (Default: `true`): If `true`, re-enables global TTS after the `/podcastthatshit` command.
+*   `TTS_DELIVERY_DEFAULT` (Default: `audio`): Default delivery mode for voice replies. Options: `audio`, `video`, `both`, `off`.
+*   `TTS_MAX_VIDEO_BYTES` (Default: `8388608` (8MB)): Maximum size of a generated MP4 video clip.
+*   **Video Styling:** Video appearance is controlled by `TTS_VIDEO_WIDTH`, `TTS_VIDEO_HEIGHT`, `TTS_VIDEO_FPS`, `TTS_VIDEO_BACKGROUND_COLOR`, `TTS_VIDEO_TEXT_COLOR`, `TTS_VIDEO_TEXT_BOX_COLOR`, `TTS_VIDEO_TEXT_BOX_PADDING`, `TTS_VIDEO_LINE_SPACING`, `TTS_VIDEO_MARGIN`, `TTS_VIDEO_WRAP_CHARS`, `TTS_VIDEO_BLUR_SIGMA`, `TTS_VIDEO_NOISE_OPACITY`, `TTS_VIDEO_FONT_PATH`, and `TTS_VIDEO_FONT_SIZE`.
 
 **Web Features & Scraping:**
 
-*   `SEARX_URL` (Default: `http://192.168.1.3:9092/search`): The URL of your SearXNG instance, required for the `/search` and `/news` commands.
-*   `SEARX_PREFERENCES` (Optional, Default: `""`): Optional JSON string or formatted string for SearXNG engine preferences. Example: `{"engines" : ["google", "wikipedia"]}` or for dynamic query insertion: `!google %s`.
-*   `MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT` (Default: `8000`): Maximum number of characters from a single scraped webpage or YouTube transcript to include in the LLM prompt.
-*   `MAX_IMAGE_BYTES_FOR_PROMPT` (Default: `4194304` (4MB)): Maximum size in bytes for an image to be processed and sent to the vision LLM.
-*   `NEWS_MAX_LINKS_TO_PROCESS` (Default: `15`): The maximum number of news links or search results the bot will attempt to scrape and process for commands like `/news` or `/search`.
-*   `RSS_FETCH_HOURS` (Default: `24`): How many hours back to fetch RSS entries from feeds. Only entries published within this timeframe will be processed by the `/rss` command.
-*   `HEADLESS_PLAYWRIGHT` (Default: `true`): Set to `false` to run Playwright browser instances in non-headless mode (visible window), useful for debugging scraping.
-*   `PLAYWRIGHT_MAX_CONCURRENCY` (Default: `1`): Maximum number of concurrent Playwright browser instances/contexts allowed.
-*   `SCRAPE_SCROLL_ATTEMPTS` (Default: `5`): How many times the bot will attempt to scroll down a webpage when scraping to load dynamically loaded content.
-*   `GROUND_NEWS_SEE_MORE_CLICKS` (Default: `10`): How many times to click Ground News's "See more stories" button before scraping.
-*   `GROUND_NEWS_CLICK_DELAY_SECONDS` (Default: `1.0`): Seconds to wait after each "See more stories" click when scraping Ground News.
-*   `GROUND_NEWS_ARTICLE_DELAY_SECONDS` (Default: `5.0`): Seconds to wait between scraping each Ground News article.
-*   `PLAYWRIGHT_CLEANUP_INTERVAL_MINUTES` (Default: `5`): How often the background task runs to check for and clean up idle Playwright processes.
-*   `PLAYWRIGHT_IDLE_CLEANUP_THRESHOLD_MINUTES` (Default: `10`): How long Playwright must be idle (no scraping activity) before the cleanup task will terminate its processes.
+*   `SEARX_URL` (Default: `http://192.168.1.3:9092/search`): The URL of your SearXNG instance.
+*   `SEARX_PREFERENCES` (Optional, Default: `""`): Optional preferences for SearXNG engine selection. Example: `{"engines" : ["google", "wikipedia"]}`.
+*   `MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT` (Default: `8000`): Maximum characters from a scraped webpage to include in the LLM prompt.
+*   `MAX_IMAGE_BYTES_FOR_PROMPT` (Default: `4194304` (4MB)): Maximum size for an image to be sent to the vision LLM.
+*   `NEWS_MAX_LINKS_TO_PROCESS` (Default: `15`): Maximum number of links to process for commands like `/news` or `/search`.
+*   `RSS_FETCH_HOURS` (Default: `24`): How many hours back to fetch RSS entries.
+*   `HEADLESS_PLAYWRIGHT` (Default: `true`): Set to `false` to run Playwright in a visible window for debugging.
+*   `PLAYWRIGHT_MAX_CONCURRENCY` (Default: `1`): Maximum number of concurrent Playwright browser instances.
+*   `SCRAPE_SCROLL_ATTEMPTS` (Default: `5`): How many times to scroll down a page to load dynamic content.
+*   `GROUND_NEWS_SEE_MORE_CLICKS` (Default: `10`): How many times to click "See more stories" on Ground News.
+*   `GROUND_NEWS_CLICK_DELAY_SECONDS` (Default: `1.0`): Delay between "See more" clicks.
+*   `GROUND_NEWS_ARTICLE_DELAY_SECONDS` (Default: `5.0`): Delay between scraping each Ground News article.
+*   `PLAYWRIGHT_CLEANUP_INTERVAL_MINUTES` (Default: `5`): How often the background task runs to clean up idle Playwright processes.
+*   `PLAYWRIGHT_IDLE_CLEANUP_THRESHOLD_MINUTES` (Default: `10`): How long Playwright must be idle before its processes are terminated.
 *   `SCRAPE_LOCK_TIMEOUT_SECONDS` (Default: `60`): How long to wait when acquiring the scraping lock before giving up.
 
 **ChromaDB (RAG & Long-Term Memory):**
 
-*   `CHROMA_DB_PATH` (Default: `./chroma_data`): The local file system path where ChromaDB will store its data.
-*   `CHROMA_COLLECTION_NAME` (Default: `long_term_memory`): Name of the ChromaDB collection for storing recent conversation exchanges (user prompt and bot response).
-*   `CHROMA_DISTILLED_COLLECTION_NAME` (Default: `distilled_chat_summaries`): Name of the collection for storing concise, keyword-rich distilled summaries of conversations (used for primary RAG retrieval).
-*   `CHROMA_NEWS_SUMMARY_COLLECTION_NAME` (Default: `news_summaries`): Collection for storing summaries of news articles processed by the `/news` command.
-*   `CHROMA_RSS_SUMMARY_COLLECTION_NAME` (Default: `rss_summaries`): Collection for storing summaries of RSS feed items processed by the `/rss` command.
-*   `CHROMA_TIMELINE_SUMMARY_COLLECTION_NAME` (Default: `timeline_summaries`): Collection for storing summaries of pruned, older chat history.
-*   `CHROMA_TWEETS_COLLECTION_NAME` (Default: `tweets_collection`): Collection for storing tweets fetched for summarization.
-*   `CHROMA_ENTITIES_COLLECTION_NAME` (Default: `entities_collection`): Collection for storing extracted entities (persons, organizations, etc.) from conversations.
-*   `CHROMA_RELATIONS_COLLECTION_NAME` (Default: `relations_collection`): Collection for storing extracted relationships between entities.
-*   `CHROMA_OBSERVATIONS_COLLECTION_NAME` (Default: `observations_collection`): Collection for storing extracted key observations or facts.
-*   `RAG_NUM_DISTILLED_SENTENCES_TO_FETCH` (Default: `3`): How many relevant distilled sentences/summaries to fetch from `CHROMA_DISTILLED_COLLECTION_NAME` for RAG context.
-*   `RAG_NUM_COLLECTION_DOCS_TO_FETCH` (Default: `3`): How many relevant documents to fetch from other ChromaDB collections (news, timeline, entities, etc.) for RAG context.
-*   `RAG_MAX_FULL_CONVO_CHARS` (Default: `20000`): When retrieving full conversation logs for RAG context, only the last N characters of each log will be used, trimming the oldest text from the beginning.
-*   `RAG_MAX_DATE_RANGE_DOCS` (Default: `15`): Maximum number of RSS documents to include when using date-range retrieval. Other collections use `RAG_NUM_COLLECTION_DOCS_TO_FETCH` as their limit.
-*   `ENABLE_MEMORY_MERGE` (Default: `false`): Set to `true` to merge retrieved memory snippets with new conversation summaries after each response.
-*   `TIMELINE_PRUNE_DAYS` (Default: `365`): How many days of chat history to retain in the main `CHROMA_COLLECTION_NAME` before the daily `timeline_pruner_task` summarizes and moves it to `CHROMA_TIMELINE_SUMMARY_COLLECTION_NAME`.
-    *   The summarized timeline entries are stored in a separate collection so the main history stays small while older context remains searchable.
+*   `CHROMA_DB_PATH` (Default: `./chroma_data`): The path where ChromaDB will store its data.
+*   `CHROMA_COLLECTION_NAME` (Default: `long_term_memory`): Collection for raw conversation exchanges.
+*   `CHROMA_DISTILLED_COLLECTION_NAME` (Default: `distilled_chat_summaries`): Collection for distilled conversation summaries used in RAG.
+*   `CHROMA_NEWS_SUMMARY_COLLECTION_NAME` (Default: `news_summaries`): Collection for news article summaries.
+*   `CHROMA_RSS_SUMMARY_COLLECTION_NAME` (Default: `rss_summaries`): Collection for RSS feed item summaries.
+*   `CHROMA_TIMELINE_SUMMARY_COLLECTION_NAME` (Default: `timeline_summaries`): Collection for summaries of pruned, older chat history.
+*   `CHROMA_TWEETS_COLLECTION_NAME` (Default: `tweets_collection`): Collection for fetched tweets.
+*   `CHROMA_ENTITIES_COLLECTION_NAME` (Default: `entities_collection`): Collection for extracted entities.
+*   `CHROMA_RELATIONS_COLLECTION_NAME` (Default: `relations_collection`): Collection for extracted relationships.
+*   `CHROMA_OBSERVATIONS_COLLECTION_NAME` (Default: `observations_collection`): Collection for extracted observations/facts.
+*   `RAG_NUM_DISTILLED_SENTENCES_TO_FETCH` (Default: `3`): Number of distilled summaries to fetch for RAG context.
+*   `RAG_NUM_COLLECTION_DOCS_TO_FETCH` (Default: `3`): Number of documents to fetch from other collections (news, etc.) for RAG.
+*   `RAG_MAX_FULL_CONVO_CHARS` (Default: `20000`): Character limit for full conversation logs used in RAG.
+*   `RAG_MAX_DATE_RANGE_DOCS` (Default: `15`): Maximum documents to include for date-range RAG retrieval.
+*   `ENABLE_MEMORY_MERGE` (Default: `false`): Set to `true` to enable the experimental memory merging feature.
+*   `TIMELINE_PRUNE_DAYS` (Default: `365`): Age in days at which chat history is pruned and summarized.
 
 **Discord Embed & Streaming Settings:**
 
-*   `EMBED_COLOR_INCOMPLETE` (Default: `discord.Color.orange().value` e.g., `0xFFA500` or `16753920`): Hex color code (e.g., `#FFA500` or `0xFFA500`) or integer value for embeds indicating an incomplete or in-progress operation.
-*   `EMBED_COLOR_COMPLETE` (Default: `discord.Color.green().value` e.g., `0x00FF00` or `65280`): Hex color code or integer value for embeds indicating a successful or completed operation.
-*   `EMBED_COLOR_ERROR` (Default: `discord.Color.red().value` e.g., `0xFF0000` or `16711680`): Hex color code or integer value for embeds indicating an error.
-*   `EMBED_MAX_LENGTH` (Default: `4096`): Maximum character length for a single Discord embed description. Text will be chunked if it exceeds this.
-*   `STREAM_EDIT_THROTTLE_SECONDS` (Default: `0.1`): Minimum time in seconds to wait between edits when streaming LLM responses. This is related to `EDITS_PER_SECOND` (hardcoded at 1.3 in `config.py`, meaning throttle is roughly 1/1.3). This variable directly controls the sleep duration.
+*   `EMBED_COLOR_INCOMPLETE` (Default: `0xFFA500` - Orange): Hex color code for embeds indicating an in-progress operation.
+*   `EMBED_COLOR_COMPLETE` (Default: `0x00FF00` - Green): Hex color code for embeds indicating a completed operation.
+*   `EMBED_COLOR_ERROR` (Default: `0xFF0000` - Red): Hex color code for embeds indicating an error.
+*   `EMBED_MAX_LENGTH` (Default: `4096`): Maximum character length for a single Discord embed.
+*   `STREAM_EDIT_THROTTLE_SECONDS` (Default: `0.1`): Minimum time between edits when streaming LLM responses. This directly controls the `sleep` duration and is related to the hardcoded `EDITS_PER_SECOND` of 1.3.
 
 **Image Processing (Attachments & Vision):**
 
-*   `MAX_IMAGES_PER_MESSAGE` (Default: `1`): The maximum number of images attached to a single Discord message that the bot will process and send to the vision LLM.
+*   `MAX_IMAGES_PER_MESSAGE` (Default: `1`): The maximum number of images per message to be processed by the vision LLM.
 
 ---
 
@@ -333,261 +353,145 @@ Below is a comprehensive list of environment variables used by DiscordSam, along
 
 ## 8. Slash Commands
 
-DiscordSam offers a variety of slash commands for diverse functionalities. Here's a detailed breakdown:
+DiscordSam offers a variety of slash commands for diverse functionalities, grouped by category.
+
+### Content & Web Commands
 
 *   **`/news <topic>`**
     *   **Purpose:** Generates a news briefing on a specified topic.
-    *   **Arguments:**
-        *   `topic` (Required): The news topic you want a briefing on (e.g., "AI advancements", "local city council decisions").
-    *   **Behavior:**
-        1.  Performs a web search (via SearXNG, if configured) for news articles related to the `topic`.
-        2.  Scrapes the content of the top few articles (up to `NEWS_MAX_LINKS_TO_PROCESS`).
-        3.  Uses a fast LLM (`FAST_LLM_MODEL`) to summarize each scraped article individually.
-        4.  Stores these individual summaries in ChromaDB (`CHROMA_NEWS_SUMMARY_COLLECTION_NAME`).
-        5.  Sends all individual summaries to the main LLM (`LLM`) to synthesize a final, coherent news briefing.
-        6.  Streams the briefing back to the Discord channel.
-        7.  Provides TTS for the final briefing if enabled.
-    *   **Output:** An embed message containing the news briefing, updated live as the process unfolds (gathering articles, summarizing, final briefing).
-
-*   **`/ingest_chatgpt_export <file_path>`**
-    *   **Purpose:** Ingests conversations from a ChatGPT data export file (`conversations.json`) into the bot's long-term memory (ChromaDB).
-    *   **Arguments:**
-        *   `file_path` (Required): The full local path to your `conversations.json` file.
-    *   **Access Control:** Only Discord user IDs listed in the `ADMIN_USER_IDS` environment variable may run this command. The target file must reside inside the directory specified by `CHATGPT_EXPORT_IMPORT_ROOT` (defaults to the bot's working directory).
-    *   **Behavior:**
-        1.  Validates admin identity and ensures the file path is inside the allowed import directory.
-        2.  Parses the `conversations.json` file.
-        3.  For each conversation, it stores the full text in the main chat history collection (`CHROMA_COLLECTION_NAME`).
-        4.  It then distills each conversation (typically the last user/assistant turn, or full text as fallback) into keyword-rich sentences using an LLM.
-        5.  These distilled sentences are stored in `CHROMA_DISTILLED_COLLECTION_NAME` (prefixed with a `Conversation recorded at:` timestamp) and linked to the full conversation document, enabling RAG.
-    *   **Output:** An ephemeral message confirming the number of conversations successfully processed and stored.
-
-*   **`/remindme <time_duration> <reminder_message>`**
-    *   **Purpose:** Sets a reminder for yourself.
-    *   **Arguments:**
-        *   `time_duration` (Required): How long from now to set the reminder (e.g., "10m", "2h30m", "1d").
-        *   `reminder_message` (Required): The message for your reminder.
-    *   **Behavior:**
-        1.  Parses the `time_duration` string into a `timedelta`.
-        2.  Calculates the reminder time.
-        3.  Stores the reminder (time, channel ID, user ID, message, original time string) in `BotState`.
-        4.  A background task (`check_reminders_task` in `discord_events.py`) periodically checks for due reminders.
-    *   **Output:**
-        *   Immediate: A confirmation message that the reminder has been set.
-        *   Later: When due, the bot sends a message in the original channel, mentioning the user with the reminder message and providing TTS.
-
-*   **`/analytics`**
-    *   **Purpose:** Provides an admin-only snapshot of the bot's operational metrics.
-    *   **Access Control:** Limited to users in `ADMIN_USER_IDS`.
-    *   **Behavior:** Summarizes cached message counts per channel, active reminder totals, the most recent Playwright usage time, RSS auto-podcast status, and ChromaDB collection sizes, returning the data in an embed (ephemeral by default).
-    *   **Output:** A compact analytics dashboard highlighting the bot's current workload and storage footprint.
-
-*   **`/memoryinspector <scope> [limit]`**
-    *   **Purpose:** Lets admins review the most recent stored memories for the current channel.
-    *   **Arguments:**
-        *   `scope` (Required): Either "Distilled summaries" (RAG-ready snippets) or "Full conversation logs".
-        *   `limit` (Optional, Default: 5): Number of items to display (1–10).
-    *   **Access Control:** Limited to users in `ADMIN_USER_IDS`.
-    *   **Behavior:** Fetches the latest matching entries from ChromaDB, orders them by timestamp, and presents previews in an ephemeral embed so admins can audit what the bot is storing.
-    *   **Output:** An embed containing timestamped IDs and trimmed previews of the requested memories.
-
-*   **`/roast <url>`**
-    *   **Purpose:** Generates a short, witty, and biting comedy roast routine based on the content of a given webpage.
-    *   **Arguments:**
-        *   `url` (Required): The URL of the webpage to roast.
-    *   **Behavior:**
-        1.  Scrapes the content of the provided `url` using `web_utils.scrape_website`.
-        2.  Sends the scraped text to the LLM with a specific prompt instructing it to create a comedy roast.
-        3.  Streams the LLM's roast back to the Discord channel.
-        4.  Provides TTS for the roast if enabled.
-    *   **Output:** An embed message, updated live, containing the comedy roast.
+    *   **Arguments:** `topic` (Required).
+    *   **Behavior:** Searches for news articles, scrapes the top results, summarizes each, and then synthesizes a final briefing.
 
 *   **`/search <query>`**
-    *   **Purpose:** Performs a web search using a configured SearXNG instance and summarizes the findings.
-    *   **Arguments:**
-        *   `query` (Required): Your search query.
-    *   **Behavior:**
-        1.  Queries the configured SearXNG instance (`SEARX_URL`).
-        2.  Scrapes the content of the top few search results (up to `NEWS_MAX_LINKS_TO_PROCESS`).
-        3.  Uses a fast LLM (`FAST_LLM_MODEL`) to summarize each scraped page individually, focusing on relevance to the query.
-        4.  Sends these individual summaries to the main LLM (`LLM`) with a prompt to synthesize a single, integrated summary that directly addresses the user's query.
-        5.  Streams this final summary back to the Discord channel as a new message flow (using `force_new_followup_flow=True`).
-        6.  Provides TTS for the summary if enabled.
-    *   **Output:**
-        *   Initial embed updating progress (searching, processing results).
-        *   A new set of messages (embeds) containing the final synthesized search summary.
+    *   **Purpose:** Performs a web search and summarizes the findings.
+    *   **Arguments:** `query` (Required).
+    *   **Behavior:** Queries SearXNG, scrapes top results, summarizes each, and synthesizes a final summary.
 
-*   **`/pol <statement>`**
-    *   **Purpose:** Generates a sarcastic, snarky, and somewhat troll-like political commentary on a given statement.
-    *   **Arguments:**
-        *   `statement` (Required): The political statement to comment on.
-    *   **Behavior:**
-        1.  Sends the user's `statement` to the LLM with a specialized system prompt instructing it to generate sarcastic commentary, focusing on wit, irony, and highlighting logical fallacies humorously.
-        2.  Streams the LLM's response back to the Discord channel.
-        3.  Provides TTS for the commentary if enabled.
-    *   **Output:** An embed message, updated live, containing the sarcastic political commentary.
-
-*   **`/rss <feed_url> [limit]`**
-    *   **Purpose:** Fetches new entries from a specified RSS feed, scrapes the linked articles, summarizes them, and displays the summaries.
-    *   **Arguments:**
-        *   `feed_url` (Required): The URL of the RSS feed. Can be selected from a preset list or provided directly.
-        *   `limit` (Optional, Default: 20): The maximum number of new entries to fetch and process (max 50).
-    *   **Behavior:**
-        1.  Fetches the RSS feed using `web_utils.fetch_rss_entries`.
-        2.  Skips CBS News entries from `https://www.cbsnews.com/video/` as these pages lack article text.
-        3.  Compares entries against a local cache (`rss_seen.json`) to identify new ones.
-        4.  For each new entry (up to `limit`):
-            *   Scrapes the content of the article linked in the entry.
-            *   Uses a fast LLM (`FAST_LLM_MODEL`) to summarize the scraped article.
-        5.  Displays the summaries (title, publication date in your local time, link, summary) in Discord embeds. If the content is long, it's chunked into multiple embeds.
-        6.  Updates the `rss_seen.json` cache.
-        7.  Provides TTS for the combined summaries if enabled.
-        8.  The user's command and the bot's full summarized response are added to short-term history and ingested into ChromaDB. A brief ephemeral "Post-processing..." notice appears while this occurs.
-        9.  If auto-podcast is enabled for the channel (see `/rss_podcast`), the bot will immediately follow up with a podcast-style rendering of the just-posted summaries.
-        9.  If no new entries are found, the bot replies with an ephemeral message instead of posting publicly.
-    *   **Output:** One or more embed messages containing summaries of new RSS feed entries, each showing the title, local publication date, link, and summary.
+*   **`/rss [feed_url] [feed_url_manual] [limit]`**
+    *   **Purpose:** Fetches and summarizes new entries from an RSS feed.
+    *   **Arguments:** `feed_url` (Optional, from preset list), `feed_url_manual` (Optional, for any URL), `limit` (Optional, Default: 20).
+    *   **Behavior:** Fetches new entries from a feed, scrapes and summarizes the linked articles, and posts them. If the channel has auto-podcast enabled, it will follow up with a podcast-style narration.
 
 *   **`/allrss [limit]`**
-    *   **Purpose:** Fetches recent articles from all default RSS feeds in chronological order.
-    *   **Arguments:**
-        *   `limit` (Optional, Default: 20): Maximum number of entries to pull from each feed (max 50).
-    *   **Behavior:**
-        1.  Prefetches entries from every preset RSS feed (up to `limit` per feed).
-        2.  Combines and sorts all new entries by publication time using the user's local timezone.
-        3.  Processes articles in batches of `limit`, scraping and summarizing each just like `/rss`.
-        4.  After each batch, sends an embed with the summaries and optional TTS before moving to the next batch.
-        5.  Each batch's summary is immediately archived to ChromaDB so RAG stays updated throughout the run, showing a short ephemeral "Post-processing..." indicator.
-        6.  If auto-podcast is enabled for the channel (see `/rss_podcast`), the bot will immediately follow up each batch with a podcast-style rendering of that batch.
-    *   **Output:** Summaries are delivered in batches of `limit` entries until all new articles are processed.
+    *   **Purpose:** Fetches new entries from all default RSS feeds.
+    *   **Arguments:** `limit` (Optional, Default: 20).
+    *   **Behavior:** Processes all preset RSS feeds, posting summaries in batches. Can trigger auto-podcast for each batch.
 
 *   **`/gettweets [username] [preset_user] [limit]`**
-    *   **Purpose:** Fetches and summarizes recent tweets from a specified X/Twitter user.
-    *   **Arguments:**
-        *   `username` (Optional): The X/Twitter username (without the '@').
-        *   `preset_user` (Optional): Choose a username from a predefined list. If both `username` and `preset_user` are provided, `username` takes precedence. One must be provided.
-        *   `limit` (Optional, Default: 50): The maximum number of tweets to fetch (max 200).
-    *   **Behavior:**
-        1.  Uses `web_utils.scrape_latest_tweets` (Playwright with JS execution) to scrape recent tweets from the user's profile (specifically their "with_replies" timeline).
-        2.  Displays the raw fetched tweets (timestamp, author, content, link) in Discord embeds, chunked if necessary. Any images are downloaded and described via the vision LLM, and these descriptions are included with the tweet text.
-        3.  Sends the text of these tweets to the LLM with a prompt to analyze and summarize the main themes, topics, and overall sentiment.
-        4.  Streams this summary back to the Discord channel as a new message flow.
-        5.  Provides TTS for the summary if enabled.
-        6.  Stores newly fetched tweets in the `CHROMA_TWEETS_COLLECTION_NAME` collection for future retrieval and records their IDs so they aren't resummarized later. A short ephemeral "Post-processing..." message indicates when this archival happens.
-        7.  If another scraping task is running, the bot sends an ephemeral "waiting for other scraping tasks" notice while it queues your request.
-    *   **Output:**
-        *   Embed(s) containing the raw fetched tweets.
-        *   A new set of messages (embeds) containing the LLM-generated summary of the tweets. Progress updates are sent during scraping.
+    *   **Purpose:** Fetches and summarizes recent tweets from an X/Twitter user.
+    *   **Arguments:** `username` or `preset_user` (Required), `limit` (Optional, Default: 50).
+    *   **Behavior:** Scrapes tweets, displays them raw (including descriptions of any images), and then generates a summary of the user's recent activity.
 
 *   **`/homefeed [limit]`**
     *   **Purpose:** Fetches and summarizes tweets from the logged-in X/Twitter home timeline.
-    *   **Arguments:**
-        *   `limit` (Optional, Default: 30): The maximum number of tweets to fetch (max 200).
-    *   **Behavior:**
-        1.  Uses `web_utils.scrape_home_timeline` (Playwright with JS execution) to scrape tweets from `https://x.com/home`.
-        2.  Displays the raw fetched tweets (timestamp, author, content, link) in Discord embeds, chunked if necessary. Any images are downloaded and described via the vision LLM, and these descriptions are included with the tweet text.
-        3.  Sends the text of these tweets to the LLM with a prompt to analyze and summarize the main themes, topics, and overall sentiment.
-        4.  Streams this summary back to the Discord channel as a new message flow.
-        5.  Provides TTS for the summary if enabled.
-        6.  Stores newly fetched tweets in the `CHROMA_TWEETS_COLLECTION_NAME` collection for future retrieval and records their IDs so they aren't resummarized later. A short ephemeral "Post-processing..." message indicates when this archival happens.
-        7.  If another scraping task is running, the bot sends an ephemeral "waiting for other scraping tasks" notice while it queues your request.
-    *   **Output:**
-        *   Embed(s) containing the raw fetched tweets.
-        *   A new set of messages (embeds) containing the LLM-generated summary of the tweets. Progress updates are sent during scraping.
+    *   **Arguments:** `limit` (Optional, Default: 30).
+    *   **Behavior:** Scrapes the home timeline, displays raw tweets (with image descriptions), and generates a summary. Requires a logged-in Playwright profile.
 
 *   **`/alltweets [limit]`**
     *   **Purpose:** Fetches and summarizes tweets from all default X/Twitter accounts.
-    *   **Arguments:**
-        *   `limit` (Optional, Default: 50): The maximum number of tweets to fetch per account (max 100).
-    *   **Behavior:**
-        1.  Iterates through each preset Twitter account defined for the bot.
-        2.  Uses `web_utils.scrape_latest_tweets` to scrape recent tweets for each account.
-        3.  Displays the raw fetched tweets in Discord embeds, chunked if necessary. Any images are downloaded and described via the vision LLM, and these descriptions are included with the tweet text.
-        4.  Sends these tweets to the LLM to generate a brief summary, streamed back to the channel.
-        5.  Provides TTS for each summary if enabled.
-        6.  Stores newly fetched tweets in the `CHROMA_TWEETS_COLLECTION_NAME` collection for future retrieval. A short ephemeral "Post-processing..." message indicates when this archival happens.
-    *   **Output:** A series of embeds and summaries for each default account. If no new tweets are found for any account, the bot replies with an ephemeral message.
+    *   **Arguments:** `limit` (Optional, Default: 50).
+    *   **Behavior:** Iterates through all preset accounts, scraping and summarizing tweets for each.
 
 *   **`/groundnews [limit]`**
-    *   **Purpose:** Scrapes the Ground News "My Feed" page and summarizes new articles.
-    *   **Arguments:**
-        *   `limit` (Optional, Default: 50): Maximum number of articles to process (max 100).
-    *   **Behavior:**
-        1.  Uses `web_utils.scrape_ground_news_my` (Playwright) to extract "See the Story" links, scrolling the page to load more items if necessary.
-        2.  Skips any links already recorded in `ground_news_seen.json`.
-        3.  Scrapes each new article with `web_utils.scrape_website` and summarizes it using the fast LLM.
-        4.  Displays the summaries (title, link, short summary) in Discord embeds and updates the cache.
-        5.  Each article summary is ingested into ChromaDB individually as it is processed, with a brief ephemeral "Post-processing..." message shown during ingestion.
-        6.  If another scraping task is running, you will see an ephemeral "waiting for other scraping tasks" notice until the global scrape lock is free.
-    *   **Requirements:** You must already be logged in to Ground News using Playwright's persistent profile (`.pw-profile`). If not logged in, the command will likely return no articles.
-    *   **Output:** Embeds containing summaries for each newly found Ground News article.
+    *   **Purpose:** Scrapes and summarizes new articles from your Ground News "My Feed".
+    *   **Arguments:** `limit` (Optional, Default: 50).
+    *   **Behavior:** Scrapes your personal feed, summarizes new articles, and posts them. Requires a logged-in Playwright profile.
 
 *   **`/groundtopic <topic> [limit]`**
-    *   **Purpose:** Scrapes a specified Ground News topic page and summarizes new articles.
-    *   **Arguments:**
-        *   `topic` (Required): The topic to fetch, chosen from a preset list.
-        *   `limit` (Optional, Default: 50): Maximum number of articles to process (max 100).
-    *   **Behavior:**
-        1.  Uses `web_utils.scrape_ground_news_topic` to extract "See the Story" links from the selected topic page.
-        2.  Skips links already recorded in `ground_news_seen.json`.
-        3.  Scrapes and summarizes each new article via the fast LLM.
-        4.  Displays summaries in Discord embeds and updates the cache.
-        5.  Each article summary is ingested into ChromaDB individually as it is processed, accompanied by a brief ephemeral "Post-processing..." message.
-        6.  If another scraping task is running, you will see an ephemeral "waiting for other scraping tasks" notice until the global scrape lock is free.
-    *   **Requirements:** Same as `/groundnews` &mdash; you must be logged in with Playwright's persistent profile.
-    *   **Output:** Embeds containing summaries for each new topic article.
+    *   **Purpose:** Scrapes and summarizes new articles from a specified Ground News topic page.
+    *   **Arguments:** `topic` (Required, from preset list), `limit` (Optional, Default: 50).
+    *   **Behavior:** Scrapes the selected topic page for new articles and posts summaries.
+
+### Creative & Fun Commands
 
 *   **`/ap <image> [user_prompt]`**
-    *   **Purpose:** Describes an attached image in the style of an Associated Press (AP) photo caption, with a humorous twist: a randomly chosen celebrity is creatively inserted as the main subject.
-    *   **Arguments:**
-        *   `image` (Required): The image file to describe.
-        *   `user_prompt` (Optional): Additional context or a specific theme for the description.
-    *   **Behavior:**
-        1.  Reads the attached image bytes and converts it to base64.
-        2.  Constructs a prompt for a vision-capable LLM (`VISION_LLM_MODEL`). The prompt instructs the LLM to act as an AP photo writer, describe the image vividly, and seamlessly incorporate a randomly chosen celebrity (e.g., Keanu Reeves, Zendaya) as the main subject.
-        3.  If `user_prompt` is provided, it's included in the instructions to the LLM.
-        4.  Sends the image data and prompt to the LLM.
-        5.  Streams the LLM's creative description back to the Discord channel.
-        6.  Provides TTS for the description if enabled.
-    *   **Output:** An embed message, updated live, containing the AP-style photo description featuring the celebrity.
+    *   **Purpose:** Describes an image in the style of an AP photo caption, with a humorous celebrity twist.
+    *   **Arguments:** `image` (Required), `user_prompt` (Optional).
+    *   **Behavior:** Uses a vision LLM to write a creative caption, inserting a randomly chosen celebrity as the subject.
+
+*   **`/roast <url>`**
+    *   **Purpose:** Generates a comedy roast of a webpage.
+    *   **Arguments:** `url` (Required).
+    *   **Behavior:** Scrapes the URL's content and uses an LLM to generate a witty, biting roast.
+
+*   **`/pol <statement>`**
+    *   **Purpose:** Generates a sarcastic, troll-like political commentary.
+    *   **Arguments:** `statement` (Required).
+    *   **Behavior:** Uses an LLM with a specialized prompt to generate a snarky, humorous take on the provided statement.
+
+*   **`/podcastthatshit`**
+    *   **Purpose:** Generates a podcast-style monologue based on the recent conversation history.
+    *   **Arguments:** None.
+    *   **Behavior:** Injects "Podcast that shit" into the conversation history and uses the LLM to create a spoken-word style narration of the preceding context.
+
+### Utility & Admin Commands
+
+*   **`/remindme <time_duration> <reminder_message>`**
+    *   **Purpose:** Sets a personal reminder.
+    *   **Arguments:** `time_duration` (Required, e.g., "1h30m"), `reminder_message` (Required).
+    *   **Behavior:** The bot will mention you with your reminder message in the same channel after the specified duration.
 
 *   **`/clearhistory`**
-    *   **Purpose:** Clears the bot's short-term conversational memory (message history) for the current channel. This does not affect long-term memory in ChromaDB.
+    *   **Purpose:** Clears the bot's short-term memory for the current channel.
     *   **Arguments:** None.
-    *   **Permissions:** Requires 'Manage Messages' permission.
-    *   **Behavior:**
-        1.  Calls `BotState.clear_channel_history()` for the current channel ID.
-    *   **Output:** An ephemeral message confirming that the short-term history for the channel has been cleared.
+    *   **Access:** Requires 'Manage Messages' permission.
+    *   **Behavior:** Deletes the recent conversation history from the bot's state, but does not affect the long-term RAG database.
 
-*   **`/pruneitems <limit>`**
-    *   **Purpose:** Summarizes and prunes the oldest `limit` chat history entries into the timeline summary collection.
-    *   **Arguments:** `limit` (Required): Number of oldest entries to process.
-    *   **Output:** An ephemeral message indicating how many documents were pruned and displaying the generated summary text.
+*   **`/ingest_chatgpt_export <file_path>`**
+    *   **Purpose:** Ingests a `conversations.json` file from a ChatGPT data export into the bot's RAG memory.
+    *   **Arguments:** `file_path` (Required).
+    *   **Access:** Admin-only (`ADMIN_USER_IDS`).
+
+*   **`/analytics`**
+    *   **Purpose:** Displays a snapshot of the bot's operational metrics.
+    *   **Arguments:** None.
+    *   **Access:** Admin-only (`ADMIN_USER_IDS`).
+    *   **Output:** An embed showing message cache counts, active reminders, Playwright usage, and ChromaDB collection sizes.
+
+*   **`/memoryinspector <scope> [limit]`**
+    *   **Purpose:** Allows admins to review the most recent memories stored in ChromaDB for the current channel.
+    *   **Arguments:** `scope` (Required: "Distilled summaries" or "Full conversation logs"), `limit` (Optional, Default: 5).
+    *   **Access:** Admin-only (`ADMIN_USER_IDS`).
 
 *   **`/dbcounts`**
-    *   **Purpose:** Displays the number of documents stored in each ChromaDB collection.
+    *   **Purpose:** Displays the number of documents in each ChromaDB collection.
     *   **Arguments:** None.
-    *   **Output:** An ephemeral message listing each collection and its count.
+    *   **Access:** Admin-only.
 
-*   **`/rss_podcast <enabled>`**
-    *   **Purpose:** Toggles automatic “podcast that shit” after each `/rss` and `/allrss` chunk in the current channel.
-    *   **Arguments:**
-        *   `enabled` (Required): `true` to enable; `false` to disable. Default is `false`.
-    *   **Behavior:** When enabled in a channel, after posting a chunk of RSS summaries the bot immediately injects “Podcast that shit” into the recent history and generates a podcast-style narration of that chunk.
-    *   **Output:** An ephemeral confirmation indicating whether auto-podcast is enabled or disabled for the channel.
+*   **`/pruneitems <limit>`**
+    *   **Purpose:** Manually triggers the summarization and pruning of the oldest chat history entries.
+    *   **Arguments:** `limit` (Required, 1-10).
+    *   **Access:** Admin-only.
+
+### Scheduling Commands (Admin-only)
+
+*   **`/schedule_allrss <interval_minutes> [limit]`**
+    *   **Purpose:** Schedules a recurring job to run `/allrss` in the current channel.
+    *   **Arguments:** `interval_minutes` (Required, min 15), `limit` (Optional, Default: 10).
+
+*   **`/schedules`**
+    *   **Purpose:** Lists all active scheduled jobs for the current channel.
+
+*   **`/unschedule <schedule_id>`**
+    *   **Purpose:** Removes a scheduled job by its ID.
+
+*   **`/cancel`**
+    *   **Purpose:** Cancels the current long-running task (like `/allrss`) in the channel.
+
+### TTS & Voice Commands
 
 *   **`/tts_delivery <mode>`**
-    *   **Purpose:** Selects how Sam delivers voice replies (MP3 audio, MP4 video with subtitles, both, or disabled) for the current server.
-    *   **Arguments:**
-        *   `mode` (Required): One of `audio`, `video`, `both`, or `off`.
-    *   **Behavior:** Updates the per-guild preference stored in `tts_delivery_modes.json`. When set to `video` or `both`, the bot uses `ffmpeg` to wrap TTS output in a hardsubbed MP4 with a blurred background. If rendering fails, it automatically falls back to MP3 delivery.
-    *   **Output:** An ephemeral confirmation summarizing the new and previous delivery modes.
+    *   **Purpose:** Sets the TTS delivery preference for the server.
+    *   **Arguments:** `mode` (Required: `audio`, `video`, `both`, or `off`).
+    *   **Behavior:** Changes how voice replies are sent (MP3, MP4 with subtitles, etc.).
 
 *   **`/tts_thoughts <enabled>`**
-    *   **Purpose:** Controls whether `<think>...</think>` content is synthesized into audio/video alongside the visible response.
-    *   **Arguments:**
-        *   `enabled` (Required): `true` to include thoughts; `false` to omit them.
-    *   **Behavior:** Updates the in-memory flag (`TTS_INCLUDE_THOUGHTS`) so future responses include or skip internal thoughts when TTS runs.
-    *   **Output:** An ephemeral confirmation reflecting the new setting.
+    *   **Purpose:** Controls whether the bot's internal `<think>` messages are included in TTS output.
+    *   **Arguments:** `enabled` (Required: `true` or `false`).
+
+*   **`/rss_podcast <enabled>`**
+    *   **Purpose:** Toggles whether the bot automatically runs `/podcastthatshit` after RSS commands.
+    *   **Arguments:** `enabled` (Required: `true` or `false`).
 
 ---
 
@@ -630,19 +534,21 @@ If you encounter issues, the console output containing these logs is the first p
 
 Several helper scripts are provided for upkeep and optional functionality:
 
-* **`timeline_pruner.py`** – Summarizes chat logs older than `TIMELINE_PRUNE_DAYS` and stores the results in `CHROMA_TIMELINE_SUMMARY_COLLECTION_NAME`. This runs daily via a background task but can also be executed manually.
-* **`rag_cleanup.py`** – Removes distilled summaries that reference conversations which no longer exist in the main history collection.
-* **`open_chatgpt_login.py`** – Launches a persistent Playwright browser (`.pw-profile`) so you can log into ChatGPT or other sites once and reuse the saved cookies.
-* **`llm_request_processor.py`** – Experimental worker that processes queued LLM requests separately from the Discord bot. Start it with `python llm_request_processor.py` if you wish to try concurrent request handling.
+*   **`timeline_pruner.py`**: Summarizes chat logs older than `TIMELINE_PRUNE_DAYS` and stores the results in the timeline summary collection. This runs daily as a background task but can also be executed manually.
+*   **`rag_cleanup.py`**: Removes distilled summary entries that reference conversation IDs no longer present in the main history collection.
+*   **`rag_cleanup_entities.py`**: A destructive utility to completely delete the entities collection (`CHROMA_ENTITIES_COLLECTION_NAME`) from ChromaDB. Use with caution.
+*   **`open_chatgpt_login.py`**: Launches a persistent Playwright browser (`.pw-profile`) so you can log into services like ChatGPT or Ground News once and reuse the saved cookies for scraping.
+*   **`llm_request_processor.py`**: An experimental worker that processes queued LLM requests separately from the Discord bot.
 
 ---
 
 ## 12. Troubleshooting
 
-*   **Playwright Processes:** If Chromium or Playwright processes remain running after scraping, the bot has a built-in task (`cleanup_playwright_task` in `discord_events.py`) that attempts to clean them up periodically based on `PLAYWRIGHT_CLEANUP_INTERVAL_MINUTES` and `PLAYWRIGHT_IDLE_CLEANUP_THRESHOLD_MINUTES`. You can also manually kill these processes if needed.
-*   **Model Not Found Errors:** Ensure the model names specified in your `.env` file (e.g., `LLM`, `VISION_LLM_MODEL`, `FAST_LLM_MODEL`) exactly match the models loaded and available on your LLM server at `LOCAL_SERVER_URL`.
-*   **Connection Errors:** Verify that all specified server URLs (`LOCAL_SERVER_URL`, `TTS_API_URL`, `SEARX_URL`) are correct and that the respective services are running and accessible from where the bot is running.
-*   **Permissions:** If slash commands don't appear or certain commands fail, check the bot's permissions in your Discord server settings. It generally needs permissions to read messages, send messages, use embeds, attach files, and use slash commands. Commands such as `/clearhistory` still require 'Manage Messages', and admin-focused commands (`/ingest_chatgpt_export`, `/analytics`, `/memoryinspector`) additionally require the invoking user's ID to be present in `ADMIN_USER_IDS`.
+*   **Playwright Processes:** If Playwright processes remain running after scraping, the bot has a built-in task that attempts to clean them up periodically. You can also manually kill these processes.
+*   **Model Not Found Errors:** Ensure the model names in your `.env` file (`LLM_MODEL`, `VISION_LLM_MODEL`, etc.) exactly match the models available on your LLM server.
+*   **Connection Errors:** Verify that all server URLs (`LOCAL_SERVER_URL`, `TTS_API_URL`, `SEARX_URL`) are correct and the services are running and accessible.
+*   **Permissions:** If slash commands don't appear or fail, check the bot's permissions in your Discord server. It needs permissions to read/send messages, use embeds, attach files, and use slash commands. Admin commands require the user's ID to be in `ADMIN_USER_IDS`.
+*   **TTS Video Issues:** If you encounter problems with the MP4 video delivery for TTS, refer to the `TTS_VIDEO_DEBUG.md` file for a detailed guide on the generation process and common failure points.
 
 ---
 
@@ -670,27 +576,6 @@ Found a bug? Have a feature request? Want to contribute?
 *   If you'd like to contribute code, please **fork the repository** and submit a **pull request** with your changes. Ensure your code follows existing style conventions and consider adding tests for new features.
 
 We welcome contributions to improve and expand DiscordSam!
-
-*   **`/schedule_allrss <interval_minutes> [limit]`**
-    *   **Purpose:** Schedule recurring all-feeds RSS digests for the current channel.
-    *   **Access Control:** Admin-only (`ADMIN_USER_IDS`).
-    *   **Arguments:**
-        *   `interval_minutes` (Required, min 15): How frequently to run.
-        *   `limit` (Optional, Default: 10): Max entries per feed each run.
-    *   **Behavior:** Registers a background job that periodically posts combined RSS summaries into the channel.
-
-*   **`/schedules`**
-    *   **Purpose:** List scheduled jobs for the current channel.
-    *   **Access Control:** Admin-only (`ADMIN_USER_IDS`).
-
-*   **`/unschedule <schedule_id>`**
-    *   **Purpose:** Remove a scheduled job by its ID as shown in `/schedules`.
-    *   **Access Control:** Admin-only (`ADMIN_USER_IDS`).
-
-*   **`/cancel`**
-    *   **Purpose:** Cancel the current long-running task (e.g., `/allrss`, scheduled digest) in the active channel.
-    *   **Access Control:** Admin-only (`ADMIN_USER_IDS`).
-    *   **Behavior:** Requests cancellation of the tracked task; the task posts a short confirmation as it exits.
 
 ## Support
 
