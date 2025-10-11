@@ -99,7 +99,13 @@ def _retry_wait_seconds(exception: Optional[Exception], attempt: int) -> float:
     wait_seconds: Optional[float] = None
     if isinstance(exception, RateLimitError):
         wait_seconds = _rate_limit_wait_seconds(exception)
+        if wait_seconds is not None:
+            # Respect rate limit headers at face value, no cap
+            if jitter > 0.0:
+                wait_seconds += random.uniform(0.0, jitter)
+            return max(0.0, wait_seconds)
 
+    # Fallback to exponential backoff with cap for other errors
     if wait_seconds is None:
         wait_seconds = base * (2**attempt)
 

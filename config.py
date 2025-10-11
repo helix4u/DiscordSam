@@ -306,7 +306,7 @@ class Config:
         self.EMBED_MAX_LENGTH = _get_int("EMBED_MAX_LENGTH", 4096)
         self.EDITS_PER_SECOND = 1.3
         self.STREAM_EDIT_THROTTLE_SECONDS = _get_float("STREAM_EDIT_THROTTLE_SECONDS", 0.1)
-        self.MAX_CHARS_PER_EDIT = _get_int("MAX_CHARS_PER_EDIT", float('inf'))  # Infinite by default to stay current with generation speed
+        self.MAX_CHARS_PER_EDIT = _get_float("MAX_CHARS_PER_EDIT", float('inf'))  # Infinite by default to stay current with generation speed
 
         self.CHROMA_DB_PATH = os.getenv("CHROMA_DB_PATH", "./chroma_data")
         self.CHROMA_COLLECTION_NAME = os.getenv("CHROMA_COLLECTION_NAME", "long_term_memory")

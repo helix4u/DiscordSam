@@ -243,9 +243,9 @@ The bot now uses a provider-based architecture to manage different LLM roles (ma
 *   `RESPONSES_VERBOSITY` (Optional): Controls verbosity for the Responses API. Options: `low`, `medium`, `high`.
 *   `RESPONSES_SERVICE_TIER` (Optional): Selects service tier for the Responses API. Options: `auto`, `default`, `flex`, `priority`.
 *   `OPENAI_RETRY_MAX_ATTEMPTS` (Default: `6`): Maximum retry attempts for a failed API request.
-*   `OPENAI_BACKOFF_BASE_SECONDS` (Default: `1.5`): Initial delay for exponential backoff on retries.
-*   `OPENAI_BACKOFF_MAX_SECONDS` (Default: `60`): Maximum delay between retries.
-*   `OPENAI_BACKOFF_JITTER_SECONDS` (Default: `0.5`): Random jitter added to retry delays.
+*   `OPENAI_BACKOFF_BASE_SECONDS` (Default: `1.5`): Initial delay for exponential backoff on retries. Only applies when rate limit headers are not present.
+*   `OPENAI_BACKOFF_MAX_SECONDS` (Default: `60`): Maximum delay cap for exponential backoff. Rate limit headers (Retry-After, X-RateLimit-Reset) are always respected at face value without this cap.
+*   `OPENAI_BACKOFF_JITTER_SECONDS` (Default: `0.5`): Random jitter added to all retry delays.
 *   `MAX_MESSAGE_HISTORY` (Default: `10`): The maximum number of recent messages to include in the LLM context.
 *   `MAX_COMPLETION_TOKENS` (Default: `2048`): The maximum number of tokens the LLM is allowed to generate.
 
