@@ -417,7 +417,7 @@ async def _stream_llm_handler(
                 current_time = asyncio.get_event_loop().time()
                 if accumulated_delta_for_update and \
                    (current_time - last_edit_time >= (1.0 / config.EDITS_PER_SECOND) or \
-                    len(accumulated_delta_for_update) > 200):
+                    len(accumulated_delta_for_update) > config.MAX_CHARS_PER_EDIT):
 
                     display_text = response_prefix + full_response_content
                     text_chunks = chunk_text(display_text, config.EMBED_MAX_LENGTH)

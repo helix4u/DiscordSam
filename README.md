@@ -311,6 +311,7 @@ The bot now uses a provider-based architecture to manage different LLM roles (ma
 *   `EMBED_COLOR_ERROR` (Default: `0xFF0000` - Red): Hex color code for embeds indicating an error.
 *   `EMBED_MAX_LENGTH` (Default: `4096`): Maximum character length for a single Discord embed.
 *   `STREAM_EDIT_THROTTLE_SECONDS` (Default: `0.1`): Minimum time between edits when streaming LLM responses. This directly controls the `sleep` duration and is related to the hardcoded `EDITS_PER_SECOND` of 1.3.
+*   `MAX_CHARS_PER_EDIT` (Default: `infinite`): Maximum number of characters that can accumulate before triggering a message edit during streaming. Set to infinite by default to stay current with generation speed without hitting rate limits, relying solely on the time-based throttle from `EDITS_PER_SECOND`.
 
 **Image Processing (Attachments & Vision):**
 
