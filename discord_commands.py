@@ -1124,23 +1124,12 @@ async def process_twitter_user(
             )
             return
         try:
-            # Delete and recreate for scraping progress messages to keep at bottom, edit for others
-            if "Scraped" in message and "tweets" in message and progress_message:
-                try:
-                    await progress_message.delete()
-                except (discord.NotFound, discord.HTTPException):
-                    pass  # Message already deleted or webhook expired
-                progress_message = await safe_followup_send(
-                    interaction,
-                    content=message,
-                )
-            else:
-                # Just edit the existing message for non-scraping updates
-                progress_message = await safe_message_edit(
-                    progress_message,
-                    interaction.channel,
-                    content=message,
-                )
+            # Just edit the existing message to avoid flashing
+            progress_message = await safe_message_edit(
+                progress_message,
+                interaction.channel,
+                content=message,
+            )
         except Exception as exc:
             logger.error(
                 "Unexpected error in send_progress for @%s: %s",
@@ -3073,23 +3062,12 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 logger.error("Cannot send progress update for gettweets: interaction.channel is None")
                 return
             try:
-                # Delete and recreate for scraping progress messages to keep at bottom, edit for others
-                if "Scraped" in message and "tweets" in message and progress_message:
-                    try:
-                        await progress_message.delete()
-                    except (discord.NotFound, discord.HTTPException):
-                        pass  # Message already deleted or webhook expired
-                    progress_message = await safe_followup_send(
-                        interaction,
-                        content=message,
-                    )
-                else:
-                    # Just edit the existing message for non-scraping updates
-                    progress_message = await safe_message_edit(
-                        progress_message,
-                        interaction.channel,
-                        content=message,
-                    )
+                # Just edit the existing message to avoid flashing
+                progress_message = await safe_message_edit(
+                    progress_message,
+                    interaction.channel,
+                    content=message,
+                )
             except Exception as e_unexp:
                 logger.error(f"Unexpected error in send_progress for gettweets: {e_unexp}", exc_info=True)
 
@@ -3343,6 +3321,18 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 force_new_followup_flow=True,
                 bot_user_id=bot_instance.user.id,
             )
+            
+            # Delete and recreate progress message to move to bottom after results are shown
+            if progress_message:
+                try:
+                    await progress_message.delete()
+                except (discord.NotFound, discord.HTTPException):
+                    pass  # Message already deleted or webhook expired
+                # Recreate the progress message at the bottom
+                progress_message = await safe_followup_send(
+                    interaction,
+                    content="✅ Tweet processing complete!",
+                )
         except Exception as e:
             logger.error(
                 f"Error in gettweets_slash_command for @{user_to_fetch}: {e}", exc_info=True
@@ -3442,23 +3432,12 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 logger.error("Cannot send progress update for homefeed: interaction.channel is None")
                 return
             try:
-                # Delete and recreate for scraping progress messages to keep at bottom, edit for others
-                if "Scraped" in message and "tweets" in message and progress_message:
-                    try:
-                        await progress_message.delete()
-                    except (discord.NotFound, discord.HTTPException):
-                        pass  # Message already deleted or webhook expired
-                    progress_message = await safe_followup_send(
-                        interaction,
-                        content=message,
-                    )
-                else:
-                    # Just edit the existing message for non-scraping updates
-                    progress_message = await safe_message_edit(
-                        progress_message,
-                        interaction.channel,
-                        content=message,
-                    )
+                # Just edit the existing message to avoid flashing
+                progress_message = await safe_message_edit(
+                    progress_message,
+                    interaction.channel,
+                    content=message,
+                )
             except Exception as e_unexp:
                 logger.error(f"Unexpected error in send_progress for homefeed: {e_unexp}", exc_info=True)
 
@@ -3673,6 +3652,18 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 force_new_followup_flow=True,
                 bot_user_id=bot_instance.user.id,
             )
+            
+            # Delete and recreate progress message to move to bottom after results are shown
+            if progress_message:
+                try:
+                    await progress_message.delete()
+                except (discord.NotFound, discord.HTTPException):
+                    pass  # Message already deleted or webhook expired
+                # Recreate the progress message at the bottom
+                progress_message = await safe_followup_send(
+                    interaction,
+                    content="✅ Home timeline processing complete!",
+                )
         except Exception as e:
             logger.error(
                 f"Error in homefeed_slash_command: {e}", exc_info=True
