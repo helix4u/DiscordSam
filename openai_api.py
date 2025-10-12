@@ -6,6 +6,7 @@ import asyncio
 import logging
 import random
 import time
+from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -38,28 +39,70 @@ def _extract_header(headers: Any, name: str) -> Optional[str]:
 
 
 def _parse_retry_after(raw_value: str) -> Optional[float]:
+    if raw_value is None:
+        return None
+    cleaned = str(raw_value).strip()
+    if not cleaned:
+        return None
+    if cleaned.lower().endswith("ms"):
+        try:
+            return max(0.0, float(cleaned[:-2].strip()) / 1000.0)
+        except (TypeError, ValueError):
+            return None
     try:
-        return max(0.0, float(raw_value))
+        return max(0.0, float(cleaned))
     except (TypeError, ValueError):
         pass
     try:
-        retry_dt = parsedate_to_datetime(raw_value)
+        retry_dt = parsedate_to_datetime(cleaned)
+        if retry_dt.tzinfo is None:
+            retry_dt = retry_dt.replace(tzinfo=timezone.utc)
+        return max(0.0, retry_dt.timestamp() - time.time())
+    except Exception:
+        pass
+    try:
+        iso_candidate = cleaned.replace("Z", "+00:00")
+        retry_dt = datetime.fromisoformat(iso_candidate)
+        if retry_dt.tzinfo is None:
+            retry_dt = retry_dt.replace(tzinfo=timezone.utc)
+        return max(0.0, retry_dt.timestamp() - time.time())
     except Exception:
         return None
-    return max(0.0, retry_dt.timestamp() - time.time())
 
 
 def _parse_reset_header(raw_value: str) -> Optional[float]:
-    try:
-        reset = float(raw_value)
-    except (TypeError, ValueError):
+    if raw_value is None:
         return None
-    if reset > 10**11:
-        reset /= 1000.0
-    return max(0.0, reset - time.time())
+    cleaned = str(raw_value).strip()
+    if not cleaned:
+        return None
+    try:
+        reset = float(cleaned)
+        if reset > 10**7:
+            if reset > 10**12:
+                reset /= 1000.0
+            return max(0.0, reset - time.time())
+        return max(0.0, reset)
+    except (TypeError, ValueError):
+        pass
+    try:
+        reset_dt = parsedate_to_datetime(cleaned)
+        if reset_dt.tzinfo is None:
+            reset_dt = reset_dt.replace(tzinfo=timezone.utc)
+        return max(0.0, reset_dt.timestamp() - time.time())
+    except Exception:
+        pass
+    try:
+        iso_candidate = cleaned.replace("Z", "+00:00")
+        reset_dt = datetime.fromisoformat(iso_candidate)
+        if reset_dt.tzinfo is None:
+            reset_dt = reset_dt.replace(tzinfo=timezone.utc)
+        return max(0.0, reset_dt.timestamp() - time.time())
+    except Exception:
+        return None
 
 
-def _rate_limit_wait_seconds(error: RateLimitError) -> Optional[float]:
+def _rate_limit_wait_seconds(error: RateLimitError) -> tuple[Optional[float], bool]:
     response_headers = getattr(error, "response", None)
     headers_source: Any = None
     if response_headers is not None:
@@ -70,25 +113,36 @@ def _rate_limit_wait_seconds(error: RateLimitError) -> Optional[float]:
         if isinstance(metadata, dict):
             headers_source = metadata.get("headers")
 
-    for header_name in ("Retry-After", "retry-after"):
+    header_candidates = (
+        "Retry-After",
+        "retry-after",
+        "Retry-After-Ms",
+        "retry-after-ms",
+    )
+    for header_name in header_candidates:
         raw_value = _extract_header(headers_source, header_name)
         if raw_value:
             wait = _parse_retry_after(raw_value)
             if wait is not None:
-                return wait
+                logger.debug("Using rate limit header %s=%s for retry delay %.2fs", header_name, raw_value, wait)
+                return wait, True
 
     for header_name in (
         "X-RateLimit-Reset",
         "X-RateLimit-Reset-Requests",
         "X-RateLimit-Reset-Tokens",
+        "x-ratelimit-reset",
+        "x-ratelimit-reset-requests",
+        "x-ratelimit-reset-tokens",
     ):
         raw_value = _extract_header(headers_source, header_name)
         if raw_value:
             wait = _parse_reset_header(raw_value)
             if wait is not None:
-                return wait
+                logger.debug("Using rate limit reset header %s=%s for retry delay %.2fs", header_name, raw_value, wait)
+                return wait, True
 
-    return None
+    return None, False
 
 
 def _retry_wait_seconds(exception: Optional[Exception], attempt: int) -> float:
@@ -97,19 +151,18 @@ def _retry_wait_seconds(exception: Optional[Exception], attempt: int) -> float:
     jitter = config.OPENAI_BACKOFF_JITTER_SECONDS
 
     wait_seconds: Optional[float] = None
+    used_header = False
     if isinstance(exception, RateLimitError):
-        wait_seconds = _rate_limit_wait_seconds(exception)
+        wait_seconds, used_header = _rate_limit_wait_seconds(exception)
         if wait_seconds is not None:
-            # Respect rate limit headers at face value, no cap
-            if jitter > 0.0:
-                wait_seconds += random.uniform(0.0, jitter)
+            # Respect rate limit headers at face value
             return max(0.0, wait_seconds)
 
     # Fallback to exponential backoff with cap for other errors
     if wait_seconds is None:
         wait_seconds = base * (2**attempt)
 
-    if jitter > 0.0:
+    if jitter > 0.0 and not used_header:
         wait_seconds += random.uniform(0.0, jitter)
 
     return max(0.0, min(wait_seconds, max_delay))
