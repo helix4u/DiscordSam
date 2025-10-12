@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from urllib.parse import urlparse
 
 import httpx
-from openai import RateLimitError, BadRequestError
+from openai import RateLimitError, BadRequestError, InternalServerError, APIError
 
 from config import config
 from rate_limiter import get_rate_limiter
@@ -379,6 +379,21 @@ async def create_chat_completion(
                     message="BadRequestError returned by chat completions.",
                 ):
                     break
+            except (InternalServerError, APIError) as e:
+                # Handle server-side errors (500, 502, 503, 504)
+                # Record the error status for rate limiter
+                status_code = getattr(e, "status_code", None) or 500
+                if status_code in (500, 502, 503, 504):
+                    await _rate_limiter.record_response(rate_limit_key, status_code, {})
+                last_exception = e
+                error_type = type(e).__name__
+                if not await _sleep_before_retry(
+                    attempt=attempt,
+                    max_attempts=max_attempts,
+                    exception=e,
+                    message=f"{error_type} (server error) while calling chat completions.",
+                ):
+                    break
         if last_exception:
             raise last_exception
 
@@ -446,6 +461,21 @@ async def create_chat_completion(
                 max_attempts=max_attempts,
                 exception=exc,
                 message=reason,
+            ):
+                break
+        except (InternalServerError, APIError) as e:
+            # Handle server-side errors (500, 502, 503, 504)
+            # Record the error status for rate limiter
+            status_code = getattr(e, "status_code", None) or 500
+            if status_code in (500, 502, 503, 504):
+                await _rate_limiter.record_response(rate_limit_key, status_code, {})
+            last_exception = e
+            error_type = type(e).__name__
+            if not await _sleep_before_retry(
+                attempt=attempt,
+                max_attempts=max_attempts,
+                exception=e,
+                message=f"{error_type} (server error) during responses API call.",
             ):
                 break
         except TypeError as exc:
