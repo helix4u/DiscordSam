@@ -137,6 +137,7 @@ logs/
 rss_seen.json
 ground_news_seen.json
 twitter_seen_ids.json
+twitter_lists.json
 *.bak
 
 # Agent-generated temporary files

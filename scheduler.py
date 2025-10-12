@@ -323,6 +323,8 @@ async def run_alltweets_digest(
     *,
     limit: int = 100,
     list_name: str = "",
+    scope_guild_id: Optional[int] = None,
+    scope_user_id: Optional[int] = None,
     bot_state: Optional[Any] = None,
 ) -> None:
     """Post a combined tweets digest to a channel without relying on an interaction."""
@@ -345,36 +347,81 @@ async def run_alltweets_digest(
 
     handle_list = DEFAULT_TWITTER_USERS
     list_descriptor = "default accounts"
-    guild_id = getattr(getattr(ch, "guild", None), "id", None)
-    if bot_state and guild_id is not None:
+    channel_guild_id = getattr(getattr(ch, "guild", None), "id", None)
+    effective_guild_id: Optional[int]
+    effective_user_id: Optional[int]
+
+    if scope_guild_id is not None:
+        try:
+            effective_guild_id = int(scope_guild_id)
+        except (TypeError, ValueError):
+            effective_guild_id = None
+    else:
+        effective_guild_id = channel_guild_id
+
+    if effective_guild_id is not None:
+        try:
+            effective_guild_id = int(effective_guild_id)
+        except (TypeError, ValueError):
+            effective_guild_id = None
+
+    if effective_guild_id is None and scope_user_id is not None:
+        try:
+            effective_user_id = int(scope_user_id)
+        except (TypeError, ValueError):
+            effective_user_id = None
+    else:
+        effective_user_id = None
+
+    if bot_state:
         try:
             if not list_name:
-                default_handles = await bot_state.get_twitter_list_handles(guild_id, "default")
+                default_handles = await bot_state.get_twitter_list_handles(
+                    effective_guild_id,
+                    "default",
+                    user_id=effective_user_id,
+                )
                 if not default_handles:
-                    await bot_state.set_twitter_list(guild_id, "default", DEFAULT_TWITTER_USERS)
+                    await bot_state.set_twitter_list(
+                        effective_guild_id,
+                        "default",
+                        DEFAULT_TWITTER_USERS,
+                        user_id=effective_user_id,
+                    )
                     default_handles = DEFAULT_TWITTER_USERS
                 handle_list = default_handles or DEFAULT_TWITTER_USERS
             else:
-                handles = await bot_state.get_twitter_list_handles(guild_id, list_name)
+                handles = await bot_state.get_twitter_list_handles(
+                    effective_guild_id,
+                    list_name,
+                    user_id=effective_user_id,
+                )
                 if handles:
                     handle_list = handles
                     list_descriptor = f"list `{list_name}`"
                 else:
+                    scope_label = (
+                        f"guild {effective_guild_id}"
+                        if effective_guild_id is not None
+                        else f"user {effective_user_id}" if effective_user_id is not None
+                        else "unknown scope"
+                    )
                     logger.warning(
-                        "Scheduled alltweets: Saved list '%s' empty for guild %s. Falling back to defaults.",
+                        "Scheduled alltweets: Saved list '%s' empty for %s. Falling back to defaults.",
                         list_name,
-                        guild_id,
+                        scope_label,
                     )
         except Exception as exc:
             logger.error(
-                "Scheduled alltweets: Failed retrieving list '%s' for guild %s: %s",
+                "Scheduled alltweets: Failed retrieving list '%s' (guild=%s user=%s): %s",
                 list_name,
-                guild_id,
+                effective_guild_id,
+                effective_user_id,
                 exc,
             )
     elif list_name:
         logger.warning(
-            "Scheduled alltweets: Cannot resolve saved list '%s' without guild context.",
+            "Scheduled alltweets: Cannot resolve saved list '%s' without bot state.",
             list_name,
         )
 

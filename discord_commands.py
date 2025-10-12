@@ -1897,19 +1897,14 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             await interaction.response.send_message("No channel ID present for scheduling.", ephemeral=True)
             return
 
+        scope_guild_id, scope_user_id = _twitter_scope_from_interaction(interaction)
         normalized_list = list_name.strip().lower()
-        if normalized_list and interaction.guild_id is None:
-            await interaction.response.send_message(
-                "Saved Twitter lists require a guild context. Use default accounts or run this in a server channel.",
-                ephemeral=True,
-            )
-            return
-        await _ensure_default_twitter_list(interaction.guild_id, None)
+        await _ensure_default_twitter_list(scope_guild_id, scope_user_id)
         if normalized_list:
             handles = await bot_state_instance.get_twitter_list_handles(
-                interaction.guild_id,
+                scope_guild_id,
                 normalized_list,
-                user_id=None,
+                user_id=scope_user_id,
             )
             if not handles:
                 await interaction.response.send_message(
@@ -1921,16 +1916,26 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 )
                 return
 
-        await interaction.response.defer(ephemeral=True)
+        if interaction.guild_id is None:
+            await interaction.response.defer()
+        else:
+            await interaction.response.defer(ephemeral=True)
+
+        schedule_params: Dict[str, Any] = {
+            "limit": int(limit),
+            "list_name": normalized_list,
+        }
+        if scope_guild_id is not None:
+            schedule_params["scope_guild_id"] = int(scope_guild_id)
+        if scope_user_id is not None:
+            schedule_params["scope_user_id"] = int(scope_user_id)
+
         sched = {
             "id": f"alltweets_{interaction.channel_id}_{int(datetime.now().timestamp())}",
             "channel_id": interaction.channel_id,
             "type": "alltweets",
             "interval_seconds": int(interval_minutes) * 60,
-            "params": {
-                "limit": int(limit),
-                "list_name": normalized_list,
-            },
+            "params": schedule_params,
             "last_run": None,
             "created_by": str(interaction.user.id),
         }

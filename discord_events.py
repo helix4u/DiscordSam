@@ -189,6 +189,27 @@ def setup_events_and_tasks(bot: commands.Bot, llm_client_in: Any, bot_state_in: 
                             params = s.get("params", {}) or {}
                             lim = int(params.get("limit", 100))
                             list_name = str(params.get("list_name") or "")
+                            scope_guild_raw = params.get("scope_guild_id")
+                            scope_user_raw = params.get("scope_user_id")
+                            scope_guild_id = None
+                            scope_user_id = None
+                            if scope_guild_raw is not None:
+                                try:
+                                    scope_guild_id = int(scope_guild_raw)
+                                except (TypeError, ValueError):
+                                    scope_guild_id = None
+                            if scope_user_raw is not None:
+                                try:
+                                    scope_user_id = int(scope_user_raw)
+                                except (TypeError, ValueError):
+                                    scope_user_id = None
+                            if scope_user_id is None and scope_guild_id is None:
+                                created_by = s.get("created_by")
+                                if created_by is not None:
+                                    try:
+                                        scope_user_id = int(created_by)
+                                    except (TypeError, ValueError):
+                                        scope_user_id = None
                             try:
                                 await run_alltweets_digest(
                                     bot_instance,
@@ -196,6 +217,8 @@ def setup_events_and_tasks(bot: commands.Bot, llm_client_in: Any, bot_state_in: 
                                     channel_id,
                                     limit=lim,
                                     list_name=list_name,
+                                    scope_guild_id=scope_guild_id,
+                                    scope_user_id=scope_user_id,
                                     bot_state=bot_state_instance,
                                 )
                             except asyncio.CancelledError:
