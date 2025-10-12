@@ -1124,9 +1124,8 @@ async def process_twitter_user(
             )
             return
         try:
-            progress_update_count[0] += 1
-            # Delete and recreate every 3 updates to bump to bottom, otherwise just edit
-            if progress_update_count[0] % 3 == 0 and progress_message:
+            # Delete and recreate for scraping progress messages to keep at bottom, edit for others
+            if "Scraped" in message and "tweets" in message and progress_message:
                 try:
                     await progress_message.delete()
                 except (discord.NotFound, discord.HTTPException):
@@ -1136,7 +1135,7 @@ async def process_twitter_user(
                     content=message,
                 )
             else:
-                # Just edit the existing message
+                # Just edit the existing message for non-scraping updates
                 progress_message = await safe_message_edit(
                     progress_message,
                     interaction.channel,
@@ -3074,9 +3073,8 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 logger.error("Cannot send progress update for gettweets: interaction.channel is None")
                 return
             try:
-                progress_update_count[0] += 1
-                # Delete and recreate every 3 updates to bump to bottom, otherwise just edit
-                if progress_update_count[0] % 3 == 0 and progress_message:
+                # Delete and recreate for scraping progress messages to keep at bottom, edit for others
+                if "Scraped" in message and "tweets" in message and progress_message:
                     try:
                         await progress_message.delete()
                     except (discord.NotFound, discord.HTTPException):
@@ -3086,7 +3084,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                         content=message,
                     )
                 else:
-                    # Just edit the existing message
+                    # Just edit the existing message for non-scraping updates
                     progress_message = await safe_message_edit(
                         progress_message,
                         interaction.channel,
@@ -3444,9 +3442,8 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 logger.error("Cannot send progress update for homefeed: interaction.channel is None")
                 return
             try:
-                progress_update_count[0] += 1
-                # Delete and recreate every 3 updates to bump to bottom, otherwise just edit
-                if progress_update_count[0] % 3 == 0 and progress_message:
+                # Delete and recreate for scraping progress messages to keep at bottom, edit for others
+                if "Scraped" in message and "tweets" in message and progress_message:
                     try:
                         await progress_message.delete()
                     except (discord.NotFound, discord.HTTPException):
@@ -3456,7 +3453,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                         content=message,
                     )
                 else:
-                    # Just edit the existing message
+                    # Just edit the existing message for non-scraping updates
                     progress_message = await safe_message_edit(
                         progress_message,
                         interaction.channel,
