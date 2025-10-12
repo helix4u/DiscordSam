@@ -308,16 +308,18 @@ async def _collect_new_tweets(
 
         image_description_text = ""
         if t_data.image_urls:
+            total_images = len(t_data.image_urls)
             for i, image_url in enumerate(t_data.image_urls):
+                image_num = i + 1
                 alt_text = t_data.alt_texts[i] if i < len(t_data.alt_texts) else None
                 if alt_text:
-                    image_description_text += f'\n*Image Alt Text: "{alt_text}"*'
+                    image_description_text += f'\n*Image {image_num}/{total_images} Alt Text: "{alt_text}"*'
                 await _emit(
-                    f"Describing image in tweet from @{author_display}..."
+                    f"Describing image {image_num}/{total_images} in tweet from @{author_display}..."
                 )
                 description = await describe_image(image_url)
                 if description:
-                    image_description_text += f'\n*Image Description: "{description}"*'
+                    image_description_text += f'\n*Image {image_num}/{total_images} Description: "{description}"*'
 
         link_text = f" ([Link]({tweet_url_display}))" if tweet_url_display else ""
         tweet_texts_for_display.append(
@@ -837,6 +839,13 @@ async def process_ground_news_topic(
     )
 
     seen_urls = load_seen_links()
+
+    fast_runtime = get_llm_runtime("fast")
+    fast_client = fast_runtime.client
+    fast_provider = fast_runtime.provider
+    fast_logit_bias = (
+        LOGIT_BIAS_UNWANTED_TOKENS_STR if fast_provider.supports_logit_bias else None
+    )
 
     articles = await scrape_ground_news_topic(topic_url, limit)
     new_articles = [a for a in articles if a.url not in seen_urls]
@@ -3156,14 +3165,16 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
 
                 image_description_text = ""
                 if t_data.image_urls:
+                    total_images = len(t_data.image_urls)
                     for i, image_url in enumerate(t_data.image_urls):
+                        image_num = i + 1
                         alt_text = t_data.alt_texts[i] if i < len(t_data.alt_texts) else None
                         if alt_text:
-                            image_description_text += f'\n*Image Alt Text: "{alt_text}"*'
-                        await send_progress(f"Describing image in tweet from @{author_display}...")
+                            image_description_text += f'\n*Image {image_num}/{total_images} Alt Text: "{alt_text}"*'
+                        await send_progress(f"Describing image {image_num}/{total_images} in tweet from @{author_display}...")
                         description = await describe_image(image_url)
                         if description:
-                            image_description_text += f'\n*Image Description: "{description}"*'
+                            image_description_text += f'\n*Image {image_num}/{total_images} Description: "{description}"*'
 
                 link_text = f" ([Link]({tweet_url_display}))" if tweet_url_display else ""
                 tweet_texts_for_display.append(f"**{header}**: {content_display}{image_description_text}{link_text}")
@@ -3482,14 +3493,16 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
 
                 image_description_text = ""
                 if t_data.image_urls:
+                    total_images = len(t_data.image_urls)
                     for i, image_url in enumerate(t_data.image_urls):
+                        image_num = i + 1
                         alt_text = t_data.alt_texts[i] if i < len(t_data.alt_texts) else None
                         if alt_text:
-                            image_description_text += f'\n*Image Alt Text: "{alt_text}"*'
-                        await send_progress(f"Describing image in tweet from @{author_display}...")
+                            image_description_text += f'\n*Image {image_num}/{total_images} Alt Text: "{alt_text}"*'
+                        await send_progress(f"Describing image {image_num}/{total_images} in tweet from @{author_display}...")
                         description = await describe_image(image_url)
                         if description:
-                            image_description_text += f'\n*Image Description: "{description}"*'
+                            image_description_text += f'\n*Image {image_num}/{total_images} Description: "{description}"*'
 
                 link_text = f" ([Link]({tweet_url_display}))" if tweet_url_display else ""
                 tweet_texts_for_display.append(f"**{header}**: {content_display}{image_description_text}{link_text}")
@@ -3665,6 +3678,19 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             return
 
         scope_guild_id, scope_user_id = _twitter_scope_from_interaction(interaction)
+        should_ephemeral = interaction.guild_id is not None
+        if not interaction.response.is_done():
+            try:
+                await interaction.response.defer(ephemeral=should_ephemeral)
+            except discord.HTTPException as exc:
+                if getattr(exc, "status", None) == 404 and getattr(exc, "code", None) == 10062:
+                    logger.warning(
+                        "alltweets_slash_command: Interaction already invalid while deferring; continuing with fallbacks.",
+                        exc_info=False,
+                    )
+                else:
+                    raise
+
         await _ensure_default_twitter_list(scope_guild_id, scope_user_id)
 
         normalized_list_name = list_name.strip().lower()
@@ -3675,15 +3701,14 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 user_id=scope_user_id,
             )
             if not handles:
-                response_kwargs: Dict[str, Any] = {}
-                if interaction.guild_id is not None:
-                    response_kwargs["ephemeral"] = True
-                await interaction.response.send_message(
-                    (
+                await safe_followup_send(
+                    interaction,
+                    content=(
                         f"No saved list named `{normalized_list_name}` was found. "
                         "Use `/twitter_list_add` first to create it."
                     ),
-                    **response_kwargs,
+                    ephemeral=should_ephemeral,
+                    error_hint=" missing alltweets list",
                 )
                 return
             selected_accounts = handles
@@ -3701,14 +3726,11 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
         queue_notice = scrape_lock.locked()
         acquired_lock = False
 
-        if not interaction.response.is_done():
-            await interaction.response.defer(ephemeral=False)
-
         if queue_notice:
             await safe_followup_send(
                 interaction,
                 content="Waiting for other scraping tasks to finish before fetching tweets...",
-                ephemeral=interaction.guild_id is not None,
+                ephemeral=should_ephemeral,
                 error_hint=" waiting for alltweets lock",
             )
 
@@ -3735,7 +3757,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 await safe_followup_send(
                     interaction,
                     content="No new tweets found for any default account.",
-                    ephemeral=True,
+                    ephemeral=should_ephemeral,
                 )
 
             user_msg = MsgNode("user", f"/alltweets (limit {limit}) [{list_descriptor}]", name=str(interaction.user.id))
@@ -3751,7 +3773,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 progress_note = await safe_followup_send(
                     interaction,
                     content="\U0001F501 Post-processing...",
-                    ephemeral=True,
+                    ephemeral=should_ephemeral,
                     error_hint=" for alltweets post-processing",
                 )
             except discord.HTTPException:
