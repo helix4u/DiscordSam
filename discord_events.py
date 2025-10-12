@@ -29,7 +29,12 @@ from utils import (
 from web_utils import scrape_website, fetch_youtube_transcript
 from audio_utils import transcribe_audio_file, send_tts_audio
 from timeline_pruner import prune_and_summarize
-from scheduler import run_allrss_digest
+from scheduler import (
+    run_allrss_digest,
+    run_alltweets_digest,
+    run_groundrss_digest,
+    run_groundtopic_digest,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -177,6 +182,61 @@ def setup_events_and_tasks(bot: commands.Bot, llm_client_in: Any, bot_state_in: 
                                 )
                             except asyncio.CancelledError:
                                 logger.info("Scheduler: digest for channel %s cancelled.", channel_id)
+                                continue
+                            await bot_state_instance.update_schedule_last_run(sched_id, now)
+                    elif kind == "alltweets":
+                        async with bot_state_instance.get_scrape_lock():
+                            params = s.get("params", {}) or {}
+                            lim = int(params.get("limit", 100))
+                            list_name = str(params.get("list_name") or "")
+                            try:
+                                await run_alltweets_digest(
+                                    bot_instance,
+                                    llm_client_instance,
+                                    channel_id,
+                                    limit=lim,
+                                    list_name=list_name,
+                                    bot_state=bot_state_instance,
+                                )
+                            except asyncio.CancelledError:
+                                logger.info("Scheduler: alltweets for channel %s cancelled.", channel_id)
+                                continue
+                            await bot_state_instance.update_schedule_last_run(sched_id, now)
+                    elif kind == "groundrss":
+                        async with bot_state_instance.get_scrape_lock():
+                            params = s.get("params", {}) or {}
+                            lim = int(params.get("limit", 100))
+                            try:
+                                await run_groundrss_digest(
+                                    bot_instance,
+                                    llm_client_instance,
+                                    channel_id,
+                                    limit=lim,
+                                    bot_state=bot_state_instance,
+                                )
+                            except asyncio.CancelledError:
+                                logger.info("Scheduler: groundrss for channel %s cancelled.", channel_id)
+                                continue
+                            await bot_state_instance.update_schedule_last_run(sched_id, now)
+                    elif kind == "groundtopic":
+                        async with bot_state_instance.get_scrape_lock():
+                            params = s.get("params", {}) or {}
+                            lim = int(params.get("limit", 100))
+                            topic_slug = params.get("topic")
+                            if not topic_slug:
+                                logger.warning("Scheduler: groundtopic schedule %s missing topic slug.", sched_id)
+                                continue
+                            try:
+                                await run_groundtopic_digest(
+                                    bot_instance,
+                                    llm_client_instance,
+                                    channel_id,
+                                    topic_slug=topic_slug,
+                                    limit=lim,
+                                    bot_state=bot_state_instance,
+                                )
+                            except asyncio.CancelledError:
+                                logger.info("Scheduler: groundtopic for channel %s cancelled.", channel_id)
                                 continue
                             await bot_state_instance.update_schedule_last_run(sched_id, now)
                 except Exception as inner:

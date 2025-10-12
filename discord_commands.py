@@ -8,9 +8,11 @@ import base64
 import random
 import asyncio
 import textwrap
-from typing import Any, Optional, List  # Keep existing imports
+from typing import Any, Optional, List, Callable, Awaitable, Dict  # Keep existing imports
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
+from dataclasses import dataclass
+from urllib.parse import urlparse
 
 # Bot services and utilities
 from config import config
@@ -58,6 +60,7 @@ from rss_cache import load_seen_entries, save_seen_entries
 from twitter_cache import load_seen_tweet_ids, save_seen_tweet_ids # New import
 from timeline_pruner import prune_oldest_items
 from ground_news_cache import load_seen_links, save_seen_links
+from rate_limiter import get_rate_limiter
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +127,283 @@ DEFAULT_TWITTER_USERS = [
     "ICEgov",
 ]
 
+# Results from collecting tweets for a user run.
+@dataclass
+class TweetCollectionResult:
+    clean_username: str
+    new_tweets: List[TweetData]
+    raw_display_str: str
+    embed_chunks: List[str]
+    status_message: Optional[str]
+    total_fetched: int
+
+
+_shared_rate_limiter = get_rate_limiter()
+
+
+def _twitter_scope_from_interaction(
+    interaction: discord.Interaction,
+) -> tuple[Optional[int], Optional[int]]:
+    """Return the scope identifiers (guild or admin DM user) for list storage."""
+    if interaction.guild_id is not None:
+        return interaction.guild_id, None
+    return None, interaction.user.id
+
+
+async def _ensure_default_twitter_list(
+    guild_id: Optional[int],
+    user_id: Optional[int],
+) -> None:
+    """Ensure the default twitter list exists for the given scope."""
+    if not bot_state_instance:
+        return
+    existing = await bot_state_instance.get_twitter_list_handles(
+        guild_id,
+        "default",
+        user_id=user_id,
+    )
+    if existing:
+        return
+    await bot_state_instance.set_twitter_list(
+        guild_id,
+        "default",
+        DEFAULT_TWITTER_USERS,
+        user_id=user_id,
+    )
+
+
+async def _collect_new_tweets(
+    clean_username: str,
+    *,
+    limit: int,
+    progress_callback: Optional[Callable[[str], Awaitable[None]]] = None,
+    stop_after_seen_consecutive: int = 3,
+    source_command: str = "/alltweets",
+) -> TweetCollectionResult:
+    """Collect new tweets for a user and prepare formatted output."""
+
+    async def _emit(message: str) -> None:
+        if not progress_callback:
+            return
+        try:
+            await progress_callback(message)
+        except Exception as exc:
+            logger.warning(
+                "Tweet progress callback failed for @%s: %s",
+                clean_username,
+                exc,
+            )
+
+    all_seen_tweet_ids_cache = load_seen_tweet_ids()
+    user_seen_tweet_ids = all_seen_tweet_ids_cache.get(clean_username, set())
+
+    def _seen_checker(td: TweetData) -> bool:
+        return bool(td.tweet_url) and td.tweet_url in user_seen_tweet_ids
+
+    fetched_tweets_data = await scrape_latest_tweets(
+        clean_username,
+        limit=limit,
+        progress_callback=_emit,
+        seen_checker=_seen_checker,
+        stop_after_seen_consecutive=stop_after_seen_consecutive,
+    )
+
+    total_fetched = len(fetched_tweets_data)
+    if not fetched_tweets_data:
+        return TweetCollectionResult(
+            clean_username=clean_username,
+            new_tweets=[],
+            raw_display_str="",
+            embed_chunks=[],
+            status_message=(
+                f"Finished scraping for @{clean_username}. "
+                "No tweets found or profile inaccessible."
+            ),
+            total_fetched=0,
+        )
+
+    # Identify repeated content from other accounts (likely ads) to discard
+    content_repeat_counts: Dict[str, int] = {}
+    for tweet_data in fetched_tweets_data:
+        norm_content = (tweet_data.content or "").strip().lower()
+        if not norm_content:
+            continue
+        if tweet_data.username and tweet_data.username.lower() != clean_username.lower():
+            content_repeat_counts[norm_content] = content_repeat_counts.get(norm_content, 0) + 1
+
+    new_tweets_to_process: List[TweetData] = []
+    processed_tweet_ids_current_run: set[str] = set()
+    for tweet_data in fetched_tweets_data:
+        if not tweet_data.tweet_url:
+            logger.warning(
+                "Tweet from @%s missing 'tweet_url'. Skipping entry: %s",
+                clean_username,
+                tweet_data,
+            )
+            continue
+        norm_content = (tweet_data.content or "").strip().lower()
+        if (
+            tweet_data.username
+            and tweet_data.username.lower() != clean_username.lower()
+            and norm_content
+            and content_repeat_counts.get(norm_content, 0) > 1
+        ):
+            logger.info(
+                "Skipping potential ad tweet for @%s from @%s due to repeated external content.",
+                clean_username,
+                tweet_data.username,
+            )
+            continue
+        if tweet_data.tweet_url not in user_seen_tweet_ids:
+            new_tweets_to_process.append(tweet_data)
+            processed_tweet_ids_current_run.add(tweet_data.tweet_url)
+        else:
+            logger.info(
+                "Skipping already seen tweet for @%s: %s",
+                clean_username,
+                tweet_data.tweet_url,
+            )
+
+    all_seen_tweet_ids_cache[clean_username] = user_seen_tweet_ids.union(
+        processed_tweet_ids_current_run
+    )
+    save_seen_tweet_ids(all_seen_tweet_ids_cache)
+    logger.info(
+        "Updated seen tweet IDs for @%s. Total cached: %s",
+        clean_username,
+        len(all_seen_tweet_ids_cache[clean_username]),
+    )
+
+    if not new_tweets_to_process:
+        return TweetCollectionResult(
+            clean_username=clean_username,
+            new_tweets=[],
+            raw_display_str="",
+            embed_chunks=[],
+            status_message=f"No new tweets found for @{clean_username} since last check.",
+            total_fetched=total_fetched,
+        )
+
+    tweet_texts_for_display: List[str] = []
+    for t_data in new_tweets_to_process:
+        display_ts = t_data.timestamp
+        try:
+            dt_obj = (
+                datetime.fromisoformat(t_data.timestamp.replace("Z", "+00:00"))
+                if t_data.timestamp
+                else None
+            )
+            if dt_obj:
+                display_ts = dt_obj.astimezone().strftime("%Y-%m-%d %H:%M %Z")
+        except Exception:
+            pass
+
+        author_display = t_data.username or clean_username
+        content_display = discord.utils.escape_markdown(t_data.content or "N/A")
+        tweet_url_display = (t_data.tweet_url or "").replace("/analytics", "")
+
+        header = f"[{display_ts}] @{author_display}"
+        if t_data.is_repost and t_data.reposted_by:
+            header = f"[{display_ts}] @{t_data.reposted_by} reposted @{author_display}"
+
+        image_description_text = ""
+        if t_data.image_urls:
+            for i, image_url in enumerate(t_data.image_urls):
+                alt_text = t_data.alt_texts[i] if i < len(t_data.alt_texts) else None
+                if alt_text:
+                    image_description_text += f'\n*Image Alt Text: "{alt_text}"*'
+                await _emit(
+                    f"Describing image in tweet from @{author_display}..."
+                )
+                description = await describe_image(image_url)
+                if description:
+                    image_description_text += f'\n*Image Description: "{description}"*'
+
+        link_text = f" ([Link]({tweet_url_display}))" if tweet_url_display else ""
+        tweet_texts_for_display.append(
+            f"**{header}**: {content_display}{image_description_text}{link_text}"
+        )
+
+    raw_tweets_display_str = "\n\n".join(tweet_texts_for_display).strip()
+    if not raw_tweets_display_str:
+        raw_tweets_display_str = "No new tweet content could be formatted for display."
+
+    embed_chunks = chunk_text(raw_tweets_display_str, config.EMBED_MAX_LENGTH)
+
+    if new_tweets_to_process and rcm.tweets_collection:
+        tweet_docs_to_add: List[str] = []
+        tweet_metadatas_to_add: List[Dict[str, Any]] = []
+        tweet_ids_to_add: List[str] = []
+        seen_doc_ids: set[str] = set()
+
+        for t_data in new_tweets_to_process:
+            if not t_data.tweet_url:
+                continue
+            tweet_id_val = str(t_data.id or "")
+            if not tweet_id_val:
+                tweet_id_val = t_data.tweet_url.split("?")[0].split("/")[-1]
+            doc_id = f"tweet_{clean_username}_{tweet_id_val}"
+            if doc_id in seen_doc_ids:
+                continue
+
+            document_content = t_data.content or ""
+            if not document_content.strip():
+                logger.info(
+                    "Skipping empty tweet from @%s, ID: %s",
+                    clean_username,
+                    doc_id,
+                )
+                continue
+
+            metadata: Dict[str, Any] = {
+                "username": clean_username,
+                "tweet_url": t_data.tweet_url,
+                "timestamp": t_data.timestamp,
+                "is_repost": t_data.is_repost,
+                "source_command": source_command,
+                "raw_data_preview": str(t_data)[:200],
+            }
+            if t_data.reposted_by:
+                metadata["reposted_by"] = t_data.reposted_by
+
+            tweet_docs_to_add.append(document_content)
+            tweet_metadatas_to_add.append(metadata)
+            tweet_ids_to_add.append(doc_id)
+            seen_doc_ids.add(doc_id)
+
+        if tweet_ids_to_add:
+            try:
+                rcm.tweets_collection.add(
+                    documents=tweet_docs_to_add,
+                    metadatas=tweet_metadatas_to_add,
+                    ids=tweet_ids_to_add,
+                )
+                logger.info(
+                    "Stored %s new tweets from @%s in ChromaDB.",
+                    len(tweet_ids_to_add),
+                    clean_username,
+                )
+            except Exception as exc:
+                logger.error(
+                    "Failed to store tweets for @%s in ChromaDB: %s",
+                    clean_username,
+                    exc,
+                    exc_info=True,
+                )
+    elif not rcm.tweets_collection:
+        logger.warning(
+            "tweets_collection unavailable. Skipping storage for @%s.",
+            clean_username,
+        )
+
+    return TweetCollectionResult(
+        clean_username=clean_username,
+        new_tweets=new_tweets_to_process,
+        raw_display_str=raw_tweets_display_str,
+        embed_chunks=embed_chunks,
+        status_message=None,
+        total_fetched=total_fetched,
+    )
 # Available Ground News topic pages for the /groundtopic command
 GROUND_NEWS_TOPICS = {
     "us-politics": ("US Politics", "https://ground.news/interest/us-politics_3c3c3c"),
@@ -718,11 +998,23 @@ async def describe_image(image_url: str) -> Optional[str]:
 
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(image_url) as resp:
-                if resp.status != 200:
-                    logger.error(f"Failed to download image from {image_url}, status: {resp.status}")
-                    return None
-                image_bytes = await resp.read()
+            try:
+                parsed = urlparse(image_url)
+                key = parsed.netloc.lower() if parsed.netloc else "default"
+            except Exception:
+                key = "default"
+            await _shared_rate_limiter.await_slot(key)
+            try:
+                async with session.get(image_url) as resp:
+                    await _shared_rate_limiter.record_response(key, resp.status, resp.headers)
+                    if resp.status != 200:
+                        logger.error(f"Failed to download image from {image_url}, status: {resp.status}")
+                        return None
+                    image_bytes = await resp.read()
+            except aiohttp.ClientResponseError as e_resp:
+                await _shared_rate_limiter.record_response(key, e_resp.status, e_resp.headers or {})
+                logger.error(f"Failed to download image from {image_url}: {e_resp}")
+                return None
 
         base64_image = base64.b64encode(image_bytes).decode('utf-8')
         image_url_for_llm = f"data:image/jpeg;base64,{base64_image}"
@@ -783,6 +1075,8 @@ async def process_twitter_user(
     interaction: discord.Interaction,
     username: str,
     limit: int,
+    *,
+    source_command: str = "/alltweets",
 ) -> bool:
     """Fetch, summarize and display recent tweets from a single user.
 
@@ -810,18 +1104,22 @@ async def process_twitter_user(
     async def send_progress(message: str) -> None:
         nonlocal progress_message
         if not interaction.channel:
-            logger.error(f"Cannot send progress for @{clean_username}: interaction.channel is None")
+            logger.error(
+                "Cannot send progress for @%s: interaction.channel is None",
+                clean_username,
+            )
             return
         try:
-            # Reassign because safe_message_edit can return a new message object
             progress_message = await safe_message_edit(
                 progress_message,
                 interaction.channel,
-                content=message
+                content=message,
             )
-        except Exception as e_unexp:
+        except Exception as exc:
             logger.error(
-                f"Unexpected error in send_progress for @{clean_username}: {e_unexp}",
+                "Unexpected error in send_progress for @%s: %s",
+                clean_username,
+                exc,
                 exc_info=True,
             )
 
@@ -829,215 +1127,69 @@ async def process_twitter_user(
         if hasattr(bot_state_instance, "update_last_playwright_usage_time"):
             await bot_state_instance.update_last_playwright_usage_time()
 
-        all_seen_tweet_ids_cache = load_seen_tweet_ids()
-        user_seen_tweet_ids = all_seen_tweet_ids_cache.get(clean_username, set())
-
-        # Provide seen-checker so scraping can stop early after 4+ seen in a row
-        def _seen_checker(td: TweetData) -> bool:
-            return bool(td.tweet_url) and td.tweet_url in user_seen_tweet_ids
-
-        fetched_tweets_data = await scrape_latest_tweets(
+        result = await _collect_new_tweets(
             clean_username,
             limit=limit,
             progress_callback=send_progress,
-            seen_checker=_seen_checker,
             stop_after_seen_consecutive=3,
+            source_command=source_command,
         )
 
-        if not fetched_tweets_data:
+        if result.status_message and not result.new_tweets:
             if interaction.channel:
-                await safe_message_edit(
-                    progress_message,
-                    interaction.channel,
-                    content=(
-                        f"Finished scraping for @{clean_username}. "
-                        "No tweets found or profile inaccessible."
-                    ),
-                    embed=None,
-                )
-            return False
-
-        new_tweets_to_process: List[TweetData] = []
-        processed_tweet_ids_current_run: set[str] = set()
-        for tweet_data in fetched_tweets_data:
-            if not tweet_data.tweet_url:
-                logger.warning(
-                    f"Tweet from @{clean_username} missing 'tweet_url'. Skipping."
-                )
-                continue
-            if tweet_data.tweet_url not in user_seen_tweet_ids:
-                new_tweets_to_process.append(tweet_data)
-                processed_tweet_ids_current_run.add(tweet_data.tweet_url)
-            else:
-                logger.info(
-                    f"Skipping already seen tweet for @{clean_username}: {tweet_data.tweet_url}"
-                )
-
-        if not new_tweets_to_process:
-            if interaction.channel:
-                await safe_message_edit(
-                    progress_message,
-                    interaction.channel,
-                    content=f"No new tweets found for @{clean_username} since last check.",
-                    embed=None,
-                )
-            all_seen_tweet_ids_cache[clean_username] = user_seen_tweet_ids.union(
-                processed_tweet_ids_current_run
-            )
-            save_seen_tweet_ids(all_seen_tweet_ids_cache)
-            return False
-
-        tweet_texts_for_display = []
-        for t_data in new_tweets_to_process:
-            display_ts = t_data.timestamp
-            try:
-                dt_obj = (
-                    datetime.fromisoformat(t_data.timestamp.replace("Z", "+00:00"))
-                    if t_data.timestamp
-                    else None
-                )
-                if dt_obj:
-                    display_ts = dt_obj.astimezone().strftime("%Y-%m-%d %H:%M %Z")
-            except Exception:
-                pass
-    
-
-            author_display = t_data.username or clean_username
-            content_display = discord.utils.escape_markdown(t_data.content or "N/A")
-            tweet_url_display = t_data.tweet_url
-
-            header = f"[{display_ts}] @{author_display}"
-            if t_data.is_repost and t_data.reposted_by:
-                header = f"[{display_ts}] @{t_data.reposted_by} reposted @{author_display}"
-
-            image_description_text = ""
-            if t_data.image_urls:
-                for i, image_url in enumerate(t_data.image_urls):
-                    alt_text = t_data.alt_texts[i] if i < len(t_data.alt_texts) else None
-                    if alt_text:
-                        image_description_text += f'\n*Image Alt Text: "{alt_text}"*'
-                    await send_progress(f"Describing image in tweet from @{author_display}...")
-                    description = await describe_image(image_url)
-                    if description:
-                        image_description_text += f'\n*Image Description: "{description}"*'
-
-            link_text = f" ([Link]({tweet_url_display}))" if tweet_url_display else ""
-            tweet_texts_for_display.append(f"**{header}**: {content_display}{image_description_text}{link_text}")
-
-        raw_tweets_display_str = "\n\n".join(tweet_texts_for_display)
-        if not raw_tweets_display_str:
-            raw_tweets_display_str = "No new tweet content could be formatted for display."
-
-        await send_progress(f"Formatting {len(new_tweets_to_process)} new tweets for display...")
-
-        all_seen_tweet_ids_cache[clean_username] = user_seen_tweet_ids.union(
-            processed_tweet_ids_current_run
-        )
-        save_seen_tweet_ids(all_seen_tweet_ids_cache)
-        logger.info(
-            f"Updated and saved seen tweet IDs for @{clean_username}. Total seen: {len(all_seen_tweet_ids_cache[clean_username])}"
-        )
-
-        if new_tweets_to_process and rcm.tweets_collection:
-            tweet_docs_to_add = []
-            tweet_metadatas_to_add = []
-            tweet_ids_to_add = []
-            seen_doc_ids: set[str] = set()
-            for t_data in new_tweets_to_process:
-                if not t_data.tweet_url:
-                    logger.warning(
-                        f"Skipping tweet storage for @{clean_username} due to missing 'tweet_url'."
-                    )
-                    continue
-                tweet_id_val = str(t_data.id or "")
-                if not tweet_id_val:
-                    tweet_id_val = t_data.tweet_url.split("?")[0].split("/")[-1]
-                doc_id = f"tweet_{clean_username}_{tweet_id_val}"
-
-                document_content = t_data.content
-                if not document_content.strip():
-                    logger.info(
-                        f"Skipping empty tweet from @{clean_username}, ID: {doc_id}"
-                    )
-                    continue
-
-                metadata = {
-                    "username": clean_username,
-                    "tweet_url": t_data.tweet_url,
-                    "timestamp": t_data.timestamp,
-                    "is_repost": t_data.is_repost,
-                    "source_command": "/alltweets",
-                    "raw_data_preview": str(t_data)[:200],
-                }
-                if t_data.reposted_by:
-                    metadata["reposted_by"] = t_data.reposted_by
-                if doc_id in seen_doc_ids:
-                    logger.debug(
-                        f"Duplicate tweet doc_id detected in batch: {doc_id}"
-                    )
-                    continue
-
-                tweet_docs_to_add.append(document_content)
-                tweet_metadatas_to_add.append(metadata)
-                tweet_ids_to_add.append(doc_id)
-                seen_doc_ids.add(doc_id)
-
-            if tweet_ids_to_add:
                 try:
-                    rcm.tweets_collection.add(
-                        documents=tweet_docs_to_add,
-                        metadatas=tweet_metadatas_to_add,
-                        ids=tweet_ids_to_add,
-                    )
-                    logger.info(
-                        f"Successfully stored {len(tweet_ids_to_add)} new tweets from @{clean_username} in ChromaDB."
-                    )
-                except Exception as e_add_tweet:
-                    logger.error(
-                        f"Failed to store tweets for @{clean_username} in ChromaDB: {e_add_tweet}",
-                        exc_info=True,
-                    )
-        elif not rcm.tweets_collection:
-            logger.warning(
-                f"tweets_collection is not available. Skipping storage of tweets for @{clean_username}."
+                    await progress_message.delete()
+                except Exception:
+                    try:
+                        await safe_message_edit(
+                            progress_message,
+                            interaction.channel,
+                            content="",
+                            embed=None,
+                        )
+                    except Exception:
+                        pass
+            await safe_followup_send(
+                interaction,
+                content=result.status_message,
+                ephemeral=True,
+                error_hint=" while notifying no new tweets",
             )
+            return False
 
         embed_title = f"Recent Tweets from @{clean_username}"
-        raw_tweet_chunks = chunk_text(raw_tweets_display_str, config.EMBED_MAX_LENGTH)
-
-        for i, chunk_content_part in enumerate(raw_tweet_chunks):
-            chunk_title = embed_title if i == 0 else f"{embed_title} (cont.)"
+        for idx, chunk_content_part in enumerate(result.embed_chunks or ["No tweet content available."]):
+            chunk_title = embed_title if idx == 0 else f"{embed_title} (cont.)"
             embed = discord.Embed(
                 title=chunk_title,
                 description=chunk_content_part,
                 color=config.EMBED_COLOR["complete"],
             )
-            if i == 0:
+            if idx == 0:
                 if interaction.channel:
                     progress_message = await safe_message_edit(
                         progress_message,
                         interaction.channel,
                         content=None,
-                        embed=embed
+                        embed=embed,
                     )
             else:
                 await safe_followup_send(interaction, embed=embed)
 
-        # Store the raw tweet snapshot for RAG so each account's output is searchable later.
         channel_id = interaction.channel_id
         if (
-            raw_tweets_display_str.strip()
+            result.raw_display_str.strip()
             and channel_id is not None
             and bot_state_instance
         ):
             user_snapshot_msg = MsgNode(
                 "user",
-                f"/alltweets @{clean_username} snapshot (limit {limit})",
+                f"{source_command} @{clean_username} snapshot (limit {limit})",
                 name=str(interaction.user.id),
             )
             assistant_snapshot_msg = MsgNode(
                 "assistant",
-                raw_tweets_display_str,
+                result.raw_display_str,
                 name=str(bot_instance.user.id) if bot_instance and bot_instance.user else None,
             )
 
@@ -1065,18 +1217,16 @@ async def process_twitter_user(
         user_query_content_for_summary = (
             f"Please analyze and summarize the main themes, topics discussed, and overall sentiment "
             f"from @{clean_username}'s recent tweets provided below. Extract key points and present a concise yet detailed overview of this snapshot in time. "
-            f"Do not just re-list the tweets.\n\nRecent Tweets:\n{raw_tweets_display_str[:config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT]}"
+            f"Do not just re-list the tweets.\n\nRecent Tweets:\n{result.raw_display_str[:config.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT]}"
         )
         user_msg_node = MsgNode("user", user_query_content_for_summary, name=str(interaction.user.id))
 
-        # Build a minimal prompt using only the scraped tweets as context (no RAG, no prior channel history)
         prompt_nodes_summary = await _build_initial_prompt_messages(
             user_query_content=user_query_content_for_summary,
-            channel_id=None,  # exclude prior channel history to save tokens
+            channel_id=None,
             bot_state=bot_state_instance,
             user_id=str(interaction.user.id),
         )
-        # Insert temporal system context to avoid outdated references
         insert_idx_sum = 0
         for idx, node in enumerate(prompt_nodes_summary):
             if node.role != "system":
@@ -1099,21 +1249,25 @@ async def process_twitter_user(
             force_new_followup_flow=True,
             bot_user_id=bot_instance.user.id,
         )
-    except Exception as e:
+    except Exception as exc:
         logger.error(
-            f"Error processing tweets for @{clean_username}: {e}", exc_info=True
+            "Error processing tweets for @%s: %s",
+            clean_username,
+            exc,
+            exc_info=True,
         )
         if interaction.channel:
             try:
                 await safe_message_edit(
                     progress_message,
                     interaction.channel,
-                    content=f"Error processing @{clean_username}: {str(e)[:500]}",
+                    content=f"Error processing @{clean_username}: {str(exc)[:500]}",
                     embed=None,
                 )
             except discord.HTTPException:
                 logger.warning(
-                    f"Could not send final error message for @{clean_username} (HTTPException)."
+                    "Could not send final error message for @%s (HTTPException).",
+                    clean_username,
                 )
         return False
 
@@ -1592,6 +1746,273 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             content=(
                 f"Scheduled all-RSS digest every {interval_minutes} minute(s) in this channel. "
                 f"Schedule ID: `{sched['id']}`. Limit per feed: {limit}."
+            )
+        )
+
+    @bot_instance.tree.command(name="twitter_list_add", description="Add a handle to a saved Twitter account list (admin only).")
+    @app_commands.describe(
+        list_name="Name of the saved list (letters, numbers, spaces).",
+        handle="Twitter handle to add (with or without @).",
+    )
+    async def twitter_list_add_command(
+        interaction: discord.Interaction,
+        list_name: str,
+        handle: str,
+    ) -> None:
+        if not config.ADMIN_USER_IDS or not is_admin_user(interaction.user.id):
+            respond_kwargs: Dict[str, Any] = {}
+            if interaction.guild_id is not None:
+                respond_kwargs["ephemeral"] = True
+            await interaction.response.send_message("This command is restricted to bot administrators.", **respond_kwargs)
+            return
+
+        normalized_handle = handle.strip().lstrip("@").lower()
+        if not normalized_handle:
+            respond_kwargs = {"ephemeral": True} if interaction.guild_id is not None else {}
+            await interaction.response.send_message("Provide a valid Twitter handle to add.", **respond_kwargs)
+            return
+
+        normalized_list = list_name.strip().lower()
+        if not normalized_list:
+            respond_kwargs = {"ephemeral": True} if interaction.guild_id is not None else {}
+            await interaction.response.send_message("Provide a valid list name.", **respond_kwargs)
+            return
+
+        scope_guild_id, scope_user_id = _twitter_scope_from_interaction(interaction)
+        await _ensure_default_twitter_list(scope_guild_id, scope_user_id)
+
+        is_dm = interaction.guild_id is None
+        if is_dm:
+            await interaction.response.defer()
+        else:
+            await interaction.response.defer(ephemeral=True)
+
+        added = await bot_state_instance.add_twitter_list_handle(
+            scope_guild_id,
+            normalized_list,
+            normalized_handle,
+            user_id=scope_user_id,
+        )
+        message = (
+            f"Added `@{normalized_handle}` to saved list `{normalized_list}`."
+            if added
+            else f"`@{normalized_handle}` is already present in `{normalized_list}`."
+        )
+        await interaction.edit_original_response(content=message)
+
+    @bot_instance.tree.command(name="twitter_list_remove", description="Remove a handle from a saved Twitter account list (admin only).")
+    @app_commands.describe(
+        list_name="Name of the saved list.",
+        handle="Twitter handle to remove (with or without @).",
+    )
+    async def twitter_list_remove_command(
+        interaction: discord.Interaction,
+        list_name: str,
+        handle: str,
+    ) -> None:
+        if not config.ADMIN_USER_IDS or not is_admin_user(interaction.user.id):
+            respond_kwargs: Dict[str, Any] = {}
+            if interaction.guild_id is not None:
+                respond_kwargs["ephemeral"] = True
+            await interaction.response.send_message("This command is restricted to bot administrators.", **respond_kwargs)
+            return
+
+        normalized_handle = handle.strip().lstrip("@").lower()
+        normalized_list = list_name.strip().lower()
+        if not normalized_handle or not normalized_list:
+            respond_kwargs = {"ephemeral": True} if interaction.guild_id is not None else {}
+            await interaction.response.send_message("Provide both a list name and handle to remove.", **respond_kwargs)
+            return
+
+        scope_guild_id, scope_user_id = _twitter_scope_from_interaction(interaction)
+
+        is_dm = interaction.guild_id is None
+        if is_dm:
+            await interaction.response.defer()
+        else:
+            await interaction.response.defer(ephemeral=True)
+        removed = await bot_state_instance.remove_twitter_list_handle(
+            scope_guild_id,
+            normalized_list,
+            normalized_handle,
+            user_id=scope_user_id,
+        )
+        if removed:
+            await interaction.edit_original_response(
+                content=f"Removed `@{normalized_handle}` from `{normalized_list}`."
+            )
+        else:
+            await interaction.edit_original_response(
+                content=f"`@{normalized_handle}` was not found in `{normalized_list}`."
+            )
+
+    @bot_instance.tree.command(name="twitter_list_show", description="Show saved Twitter account lists for this server (admin only).")
+    async def twitter_list_show_command(interaction: discord.Interaction) -> None:
+        if not config.ADMIN_USER_IDS or not is_admin_user(interaction.user.id):
+            respond_kwargs: Dict[str, Any] = {}
+            if interaction.guild_id is not None:
+                respond_kwargs["ephemeral"] = True
+            await interaction.response.send_message("This command is restricted to bot administrators.", **respond_kwargs)
+            return
+
+        scope_guild_id, scope_user_id = _twitter_scope_from_interaction(interaction)
+        await _ensure_default_twitter_list(scope_guild_id, scope_user_id)
+
+        if interaction.guild_id is None:
+            await interaction.response.defer()
+        else:
+            await interaction.response.defer(ephemeral=True)
+        lists = await bot_state_instance.list_twitter_lists(
+            scope_guild_id,
+            user_id=scope_user_id,
+        )
+        if not lists:
+            await interaction.edit_original_response(
+                content="No saved Twitter lists configured yet. Use `/twitter_list_add` to create one."
+            )
+            return
+
+        lines: List[str] = []
+        for name, handles in sorted(lists.items()):
+            display_handles = ", ".join(f"@{h}" for h in handles) if handles else "No handles yet"
+            lines.append(f"• `{name}` → {display_handles}")
+        await interaction.edit_original_response(content="\n".join(lines))
+
+    @bot_instance.tree.command(name="schedule_alltweets", description="Schedule periodic Twitter list digests in this channel (admin only).")
+    @app_commands.describe(
+        interval_minutes="How often to run (minimum 15 minutes).",
+        limit="Max tweets per account per run (1-100).",
+        list_name="Saved list to use. Leave blank for default accounts.",
+    )
+    async def schedule_alltweets_command(
+        interaction: discord.Interaction,
+        interval_minutes: app_commands.Range[int, 15, 1440],
+        limit: app_commands.Range[int, 1, 100] = 100,
+        list_name: str = "",
+    ) -> None:
+        if not config.ADMIN_USER_IDS or not is_admin_user(interaction.user.id):
+            await interaction.response.send_message("This command is restricted to bot administrators.", ephemeral=True)
+            return
+        if interaction.channel_id is None:
+            await interaction.response.send_message("No channel ID present for scheduling.", ephemeral=True)
+            return
+
+        normalized_list = list_name.strip().lower()
+        if normalized_list and interaction.guild_id is None:
+            await interaction.response.send_message(
+                "Saved Twitter lists require a guild context. Use default accounts or run this in a server channel.",
+                ephemeral=True,
+            )
+            return
+        await _ensure_default_twitter_list(interaction.guild_id, None)
+        if normalized_list:
+            handles = await bot_state_instance.get_twitter_list_handles(
+                interaction.guild_id,
+                normalized_list,
+                user_id=None,
+            )
+            if not handles:
+                await interaction.response.send_message(
+                    (
+                        f"No saved list named `{normalized_list}` found. "
+                        "Use `/twitter_list_add` first."
+                    ),
+                    ephemeral=True,
+                )
+                return
+
+        await interaction.response.defer(ephemeral=True)
+        sched = {
+            "id": f"alltweets_{interaction.channel_id}_{int(datetime.now().timestamp())}",
+            "channel_id": interaction.channel_id,
+            "type": "alltweets",
+            "interval_seconds": int(interval_minutes) * 60,
+            "params": {
+                "limit": int(limit),
+                "list_name": normalized_list,
+            },
+            "last_run": None,
+            "created_by": str(interaction.user.id),
+        }
+        await bot_state_instance.add_schedule(sched)
+        descriptor = f"list `{normalized_list}`" if normalized_list else "default accounts"
+        await interaction.edit_original_response(
+            content=(
+                f"Scheduled all-tweets digest every {interval_minutes} minute(s) "
+                f"using {descriptor}. Schedule ID: `{sched['id']}`. Limit per account: {limit}."
+            )
+        )
+
+    @bot_instance.tree.command(name="schedule_groundrss", description="Schedule Ground News 'My Feed' digests (admin only).")
+    @app_commands.describe(
+        interval_minutes="How often to run (minimum 15 minutes).",
+        limit="Max articles per run (1-100).",
+    )
+    async def schedule_groundrss_command(
+        interaction: discord.Interaction,
+        interval_minutes: app_commands.Range[int, 15, 1440],
+        limit: app_commands.Range[int, 1, 100] = 100,
+    ) -> None:
+        if not config.ADMIN_USER_IDS or not is_admin_user(interaction.user.id):
+            await interaction.response.send_message("This command is restricted to bot administrators.", ephemeral=True)
+            return
+        if interaction.channel_id is None:
+            await interaction.response.send_message("No channel ID present for scheduling.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        sched = {
+            "id": f"groundrss_{interaction.channel_id}_{int(datetime.now().timestamp())}",
+            "channel_id": interaction.channel_id,
+            "type": "groundrss",
+            "interval_seconds": int(interval_minutes) * 60,
+            "params": {"limit": int(limit)},
+            "last_run": None,
+            "created_by": str(interaction.user.id),
+        }
+        await bot_state_instance.add_schedule(sched)
+        await interaction.edit_original_response(
+            content=(
+                f"Scheduled Ground News 'My Feed' digest every {interval_minutes} minute(s). "
+                f"Schedule ID: `{sched['id']}`. Article cap: {limit}."
+            )
+        )
+
+    @bot_instance.tree.command(name="schedule_groundtopic", description="Schedule a Ground News topic digest (admin only).")
+    @app_commands.describe(
+        interval_minutes="How often to run (minimum 15 minutes).",
+        topic="Topic page to scrape each run.",
+        limit="Max articles per run (1-100).",
+    )
+    @app_commands.choices(topic=GROUND_NEWS_TOPIC_CHOICES)
+    async def schedule_groundtopic_command(
+        interaction: discord.Interaction,
+        interval_minutes: app_commands.Range[int, 15, 1440],
+        topic: str,
+        limit: app_commands.Range[int, 1, 100] = 100,
+    ) -> None:
+        if not config.ADMIN_USER_IDS or not is_admin_user(interaction.user.id):
+            await interaction.response.send_message("This command is restricted to bot administrators.", ephemeral=True)
+            return
+        if interaction.channel_id is None:
+            await interaction.response.send_message("No channel ID present for scheduling.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        sched = {
+            "id": f"groundtopic_{interaction.channel_id}_{int(datetime.now().timestamp())}",
+            "channel_id": interaction.channel_id,
+            "type": "groundtopic",
+            "interval_seconds": int(interval_minutes) * 60,
+            "params": {"limit": int(limit), "topic": topic},
+            "last_run": None,
+            "created_by": str(interaction.user.id),
+        }
+        await bot_state_instance.add_schedule(sched)
+        await interaction.edit_original_response(
+            content=(
+                f"Scheduled Ground News topic `{topic}` digest every {interval_minutes} minute(s). "
+                f"Schedule ID: `{sched['id']}`. Article cap: {limit}."
             )
         )
 
@@ -2197,6 +2618,31 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             await interaction.response.send_message("Error: This command must be used in a channel.", ephemeral=True)
             return
 
+        normalized_list_name = list_name.strip().lower()
+        selected_accounts = DEFAULT_TWITTER_USERS
+        if normalized_list_name:
+            if interaction.guild_id is None:
+                await interaction.response.send_message(
+                    "Saved Twitter lists are only available within servers.",
+                    ephemeral=True,
+                )
+                return
+            handles = await bot_state_instance.get_twitter_list_handles(
+                interaction.guild_id,
+                normalized_list_name,
+            )
+            if not handles:
+                await interaction.response.send_message(
+                    (
+                        f"No saved list named `{normalized_list_name}` was found. "
+                        "Use `/twitter_list_add` first to create it."
+                    ),
+                    ephemeral=True,
+                )
+                return
+            selected_accounts = handles
+        list_descriptor = normalized_list_name or "default accounts"
+
         scrape_lock = bot_state_instance.get_scrape_lock()
         queue_notice = scrape_lock.locked()
         acquired_lock = False
@@ -2666,18 +3112,25 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
 
             if not new_tweets_to_process:
                 final_content_message = f"No new tweets found for @{clean_username} since last check."
-                if interaction.channel:
-                    progress_message = await safe_message_edit(
-                        progress_message,
-                        interaction.channel,
-                        content=final_content_message,
-                        embed=None,
-                    )
-                else:
-                    await progress_message.edit(content=final_content_message, embed=None)
+                try:
+                    await progress_message.delete()
+                except Exception:
+                    if interaction.channel:
+                        await safe_message_edit(
+                            progress_message,
+                            interaction.channel,
+                            content="",
+                            embed=None,
+                        )
                 # Still save, in case the cache file didn't exist for this user yet.
                 all_seen_tweet_ids_cache[clean_username] = user_seen_tweet_ids.union(processed_tweet_ids_current_run)
                 save_seen_tweet_ids(all_seen_tweet_ids_cache)
+                await safe_followup_send(
+                    interaction,
+                    content=final_content_message,
+                    ephemeral=True,
+                    error_hint=" notifying no new tweets",
+                )
                 return
 
             tweet_texts_for_display = []
@@ -2690,7 +3143,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
 
                 author_display = t_data.username or clean_username
                 content_display = discord.utils.escape_markdown(t_data.content or 'N/A')
-                tweet_url_display = t_data.tweet_url # This is our assumed ID
+                tweet_url_display = (t_data.tweet_url or '').replace('/analytics', '')
 
                 header = f"[{display_ts}] @{author_display}"
                 if t_data.is_repost and t_data.reposted_by:
@@ -2985,17 +3438,24 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
 
             if not new_tweets_to_process:
                 final_content_message = "No new tweets found in the home timeline since last check."
-                if interaction.channel:
-                    progress_message = await safe_message_edit(
-                        progress_message,
-                        interaction.channel,
-                        content=final_content_message,
-                        embed=None,
-                    )
-                else:
-                    await progress_message.edit(content=final_content_message, embed=None)
+                try:
+                    await progress_message.delete()
+                except Exception:
+                    if interaction.channel:
+                        await safe_message_edit(
+                            progress_message,
+                            interaction.channel,
+                            content="",
+                            embed=None,
+                        )
                 all_seen_tweet_ids_cache[home_key] = user_seen_tweet_ids.union(processed_tweet_ids_current_run)
                 save_seen_tweet_ids(all_seen_tweet_ids_cache)
+                await safe_followup_send(
+                    interaction,
+                    content=final_content_message,
+                    ephemeral=True,
+                    error_hint=" notifying no new home tweets",
+                )
                 return
 
             tweet_texts_for_display = []
@@ -3009,7 +3469,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
 
                 author_display = t_data.username or 'unknown'
                 content_display = discord.utils.escape_markdown(t_data.content or 'N/A')
-                tweet_url_display = t_data.tweet_url
+                tweet_url_display = (t_data.tweet_url or "").replace("/analytics", "")
 
                 header = f"[{display_ts}] @{author_display}"
                 if t_data.is_repost and t_data.reposted_by:
@@ -3179,11 +3639,13 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
 
     @bot_instance.tree.command(name="alltweets", description="Fetches tweets from all default accounts.")
     @app_commands.describe(
-        limit="Number of tweets per account to fetch (max 100)."
+        limit="Number of tweets per account to fetch (max 100).",
+        list_name="Optional saved list name to use instead of the default accounts.",
     )
     async def alltweets_slash_command(
         interaction: discord.Interaction,
         limit: app_commands.Range[int, 1, 100] = 50,
+        list_name: str = "",
     ) -> None:
         if not llm_client_instance or not bot_state_instance or not bot_instance or not bot_instance.user:
             logger.error("alltweets_slash_command: One or more bot components are None.")
@@ -3197,6 +3659,39 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             await interaction.response.send_message("Error: This command must be used in a channel.", ephemeral=True)
             return
 
+        scope_guild_id, scope_user_id = _twitter_scope_from_interaction(interaction)
+        await _ensure_default_twitter_list(scope_guild_id, scope_user_id)
+
+        normalized_list_name = list_name.strip().lower()
+        if normalized_list_name:
+            handles = await bot_state_instance.get_twitter_list_handles(
+                scope_guild_id,
+                normalized_list_name,
+                user_id=scope_user_id,
+            )
+            if not handles:
+                response_kwargs: Dict[str, Any] = {}
+                if interaction.guild_id is not None:
+                    response_kwargs["ephemeral"] = True
+                await interaction.response.send_message(
+                    (
+                        f"No saved list named `{normalized_list_name}` was found. "
+                        "Use `/twitter_list_add` first to create it."
+                    ),
+                    **response_kwargs,
+                )
+                return
+            selected_accounts = handles
+            list_descriptor = f"list `{normalized_list_name}`"
+        else:
+            stored_default = await bot_state_instance.get_twitter_list_handles(
+                scope_guild_id,
+                "default",
+                user_id=scope_user_id,
+            )
+            selected_accounts = stored_default or DEFAULT_TWITTER_USERS
+            list_descriptor = "default accounts"
+
         scrape_lock = bot_state_instance.get_scrape_lock()
         queue_notice = scrape_lock.locked()
         acquired_lock = False
@@ -3209,7 +3704,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             acquired_lock = True
             await safe_followup_send(
                 interaction,
-                content="Starting to scrape tweets from default accounts...",
+                content=f"Starting to scrape tweets from {list_descriptor}...",
                 error_hint=" starting alltweets (queued)",
             )
         else:
@@ -3218,14 +3713,19 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             await interaction.response.defer(ephemeral=False)
             await safe_followup_send(
                 interaction,
-                content="Starting to scrape tweets from default accounts...",
+                content=f"Starting to scrape tweets from {list_descriptor}...",
                 error_hint=" starting alltweets",
             )
 
         try:
             any_new = False
-            for username in DEFAULT_TWITTER_USERS:
-                processed = await process_twitter_user(interaction, username, limit)
+            for username in selected_accounts:
+                processed = await process_twitter_user(
+                    interaction,
+                    username,
+                    limit,
+                    source_command="/alltweets",
+                )
                 any_new = any_new or processed
 
             if not any_new:
@@ -3235,7 +3735,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                     ephemeral=True,
                 )
 
-            user_msg = MsgNode("user", f"/alltweets (limit {limit})", name=str(interaction.user.id))
+            user_msg = MsgNode("user", f"/alltweets (limit {limit}) [{list_descriptor}]", name=str(interaction.user.id))
             assistant_msg = MsgNode(
                 "assistant",
                 "Finished fetching tweets from default accounts.",
@@ -3572,7 +4072,17 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
 
     @bot_instance.tree.command(name="dbcounts", description="List the number of entries in each ChromaDB collection.")
     async def dbcounts_slash_command(interaction: discord.Interaction):
-        await interaction.response.defer(thinking=True, ephemeral=True)
+        try:
+            await interaction.response.defer(thinking=True, ephemeral=True)
+        except discord.NotFound:
+            logger.warning("dbcounts_slash_command: Interaction expired before defer.")
+            return
+        except discord.HTTPException as exc:
+            logger.warning(
+                "dbcounts_slash_command: Failed to defer interaction: %s",
+                exc,
+            )
+            return
         try:
             counts = rcm.get_collection_counts()
             if not counts:

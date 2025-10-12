@@ -32,6 +32,9 @@ class BotState:
         # TTS delivery preferences per guild
         self.tts_delivery_file = os.path.join(os.path.dirname(__file__), "tts_delivery_modes.json")
         self._tts_delivery_by_guild: Dict[int, str] = {}
+        # Custom Twitter lists per guild (or per-admin DM scope) for scheduled/alltweets commands
+        self.twitter_lists_file = os.path.join(os.path.dirname(__file__), "twitter_lists.json")
+        self._twitter_lists: Dict[str, Dict[str, List[str]]] = {}
         try:
             self._load_schedules()
         except Exception:
@@ -41,6 +44,10 @@ class BotState:
             self._load_tts_delivery_modes()
         except Exception:
             self._tts_delivery_by_guild = {}
+        try:
+            self._load_twitter_lists()
+        except Exception:
+            self._twitter_lists = {}
 
     async def update_last_playwright_usage_time(self):
         """Updates the timestamp for the last Playwright usage."""
@@ -200,6 +207,150 @@ class BotState:
         with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(serializable, f, ensure_ascii=False, indent=2)
         os.replace(tmp_path, self.tts_delivery_file)
+
+    # --- Twitter list persistence ---
+    def _load_twitter_lists(self) -> None:
+        if os.path.exists(self.twitter_lists_file):
+            with open(self.twitter_lists_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    parsed: Dict[str, Dict[str, List[str]]] = {}
+                    for scope_key, lists in data.items():
+                        if not isinstance(lists, dict):
+                            continue
+                        normalized_scope = str(scope_key)
+                        if ":" not in normalized_scope and normalized_scope.isdigit():
+                            normalized_scope = f"guild:{normalized_scope}"
+                        parsed_lists: Dict[str, List[str]] = {}
+                        for list_name, handles in lists.items():
+                            if isinstance(handles, list):
+                                normalized = sorted(
+                                    {str(h).lstrip("@").lower() for h in handles if h}
+                                )
+                                parsed_lists[str(list_name)] = normalized
+                        if parsed_lists:
+                            parsed[normalized_scope] = parsed_lists
+                    self._twitter_lists = parsed
+
+    def _save_twitter_lists(self) -> None:
+        tmp_path = self.twitter_lists_file + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(self._twitter_lists, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, self.twitter_lists_file)
+
+    @staticmethod
+    def _twitter_scope_key(guild_id: Optional[int], user_id: Optional[int]) -> str:
+        if guild_id is not None:
+            return f"guild:{int(guild_id)}"
+        if user_id is not None:
+            return f"dm:{int(user_id)}"
+        return "global"
+
+    async def add_twitter_list_handle(
+        self,
+        guild_id: Optional[int],
+        list_name: str,
+        handle: str,
+        *,
+        user_id: Optional[int] = None,
+    ) -> bool:
+        """Add a handle to a named Twitter list for a guild."""
+        normalized_handle = handle.lstrip("@").lower()
+        if not normalized_handle:
+            return False
+        normalized_list = list_name.strip().lower()
+        if not normalized_list:
+            return False
+        async with self._lock:
+            scope_key = self._twitter_scope_key(guild_id, user_id)
+            lists = self._twitter_lists.setdefault(scope_key, {})
+            handles = lists.setdefault(normalized_list, [])
+            if normalized_handle in handles:
+                return False
+            handles.append(normalized_handle)
+            handles.sort()
+            self._save_twitter_lists()
+            return True
+
+    async def set_twitter_list(
+        self,
+        guild_id: Optional[int],
+        list_name: str,
+        handles: List[str],
+        *,
+        user_id: Optional[int] = None,
+    ) -> None:
+        """Replace an entire twitter list with provided handles."""
+        normalized_list = list_name.strip().lower()
+        if not normalized_list:
+            return
+        cleaned_handles = sorted({h.lstrip("@").lower() for h in handles if h})
+        async with self._lock:
+            scope_key = self._twitter_scope_key(guild_id, user_id)
+            lists = self._twitter_lists.setdefault(scope_key, {})
+            lists[normalized_list] = cleaned_handles
+            if not cleaned_handles:
+                lists.pop(normalized_list, None)
+            if not lists:
+                self._twitter_lists.pop(scope_key, None)
+            self._save_twitter_lists()
+
+    async def remove_twitter_list_handle(
+        self,
+        guild_id: Optional[int],
+        list_name: str,
+        handle: str,
+        *,
+        user_id: Optional[int] = None,
+    ) -> bool:
+        """Remove a handle from a named Twitter list. Deletes the list if empty."""
+        normalized_handle = handle.lstrip("@").lower()
+        normalized_list = list_name.strip().lower()
+        if not normalized_handle or not normalized_list:
+            return False
+        async with self._lock:
+            scope_key = self._twitter_scope_key(guild_id, user_id)
+            lists = self._twitter_lists.get(scope_key)
+            if not lists:
+                return False
+            handles = lists.get(normalized_list)
+            if not handles or normalized_handle not in handles:
+                return False
+            handles = [h for h in handles if h != normalized_handle]
+            if handles:
+                lists[normalized_list] = handles
+            else:
+                lists.pop(normalized_list, None)
+            if not lists:
+                self._twitter_lists.pop(scope_key, None)
+            self._save_twitter_lists()
+            return True
+
+    async def get_twitter_list_handles(
+        self,
+        guild_id: Optional[int],
+        list_name: str,
+        *,
+        user_id: Optional[int] = None,
+    ) -> List[str]:
+        """Return handles for a specific Twitter list."""
+        normalized_list = list_name.strip().lower()
+        if not normalized_list:
+            return []
+        async with self._lock:
+            lists = self._twitter_lists.get(self._twitter_scope_key(guild_id, user_id), {})
+            return list(lists.get(normalized_list, []))
+
+    async def list_twitter_lists(
+        self,
+        guild_id: Optional[int],
+        *,
+        user_id: Optional[int] = None,
+    ) -> Dict[str, List[str]]:
+        """Return all Twitter lists for the guild."""
+        async with self._lock:
+            lists = self._twitter_lists.get(self._twitter_scope_key(guild_id, user_id), {})
+            return {name: list(handles) for name, handles in lists.items()}
 
     async def set_tts_delivery_mode(self, guild_id: int, mode: str) -> None:
         normalized = mode.lower()

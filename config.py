@@ -280,6 +280,15 @@ class Config:
         # Users should set complex preferences via the environment variable.
         self.SEARX_PREFERENCES = os.getenv("SEARX_PREFERENCES", "")
 
+        # Shared rate limiter configuration for outbound HTTP requests.
+        self.RATE_LIMIT_JITTER_SECONDS = _get_float("RATE_LIMIT_JITTER_SECONDS", 1.5)
+        self.RATE_LIMIT_FAILURE_BACKOFF_SECONDS = _get_float(
+            "RATE_LIMIT_FAILURE_BACKOFF_SECONDS", 45.0
+        )
+        self.RATE_LIMIT_FALLBACK_WINDOW_SECONDS = _get_float(
+            "RATE_LIMIT_FALLBACK_WINDOW_SECONDS", 90.0
+        )
+
         def _parse_color(env_var: str, default: int) -> int:
             value = os.getenv(env_var)
             if value:

@@ -23,6 +23,7 @@ DiscordSam is an advanced, context-aware Discord bot designed to provide intelli
     *   Fetch and summarize recent tweets from X/Twitter users.
     *   Process RSS feeds, summarizing new articles.
     *   Validate user-supplied URLs before scraping to block localhost and private-network targets for safety.
+*   **Adaptive Rate Limiting:** A shared async rate limiter reads API headers (including X/Twitter's `x-rate-limit-*`) and enforces jittered backoffs so scheduled tasks and interactive commands play nicely with platform limits.
 *   **Multimedia Interaction:**
     *   Analyze and describe attached images (with a creative "AP Photo" twist using a vision LLM).
     *   Transcribe attached audio files using a local Whisper model.
@@ -83,6 +84,7 @@ DiscordSam is a modular Python application designed for extensibility and mainta
         *   A global scrape lock ensures web scraping tasks (e.g., RSS fetching) run one at a time. If a command must wait for the lock, the bot now notifies the user with an ephemeral "queued" message before starting a new public response once scraping begins.
         *   Per-channel toggle for automatically running the "podcast that shit" workflow after RSS batches.
         *   Per-guild TTS delivery preferences (audio / video / both / off) persisted to `tts_delivery_modes.json`.
+        *   Saved per-guild Twitter lists persisted to `twitter_lists.json`, used by `/alltweets` and scheduling commands.
     *   Instances of `BotState` are passed to modules that need to access or modify this shared information (e.g., command handlers, event processors).
     *   It also manages active scheduled tasks and handles task cancellation requests.
 
@@ -128,6 +130,7 @@ DiscordSam is a modular Python application designed for extensibility and mainta
     *   **`rss_cache.py`**: Manages a cache of seen RSS feed items.
     *   **`twitter_cache.py`**: Manages a cache of seen tweet IDs to avoid reprocessing.
     *   **`ground_news_cache.py`**: Manages a cache of seen Ground News article links.
+    *   **`rate_limiter.py`**: Shared async rate limiter that interprets API backoff headers (e.g., X/Twitter) and enforces jittered cooldowns across network clients.
     *   **`timeline_pruner.py`**: Contains logic for pruning and summarizing old chat history.
     *   **`rag_cleanup.py`**: A utility script to remove stale distilled summaries from ChromaDB.
     *   **`open_chatgpt_login.py`**: A helper script to launch a persistent Playwright browser for logging into services.
@@ -271,6 +274,9 @@ The bot now uses a provider-based architecture to manage different LLM roles (ma
 
 *   `SEARX_URL` (Default: `http://192.168.1.3:9092/search`): The URL of your SearXNG instance.
 *   `SEARX_PREFERENCES` (Optional, Default: `""`): Optional preferences for SearXNG engine selection. Example: `{"engines" : ["google", "wikipedia"]}`.
+*   `RATE_LIMIT_JITTER_SECONDS` (Default: `1.5`): Random jitter applied to enforced cooldowns after rate limit responses.
+*   `RATE_LIMIT_FAILURE_BACKOFF_SECONDS` (Default: `45.0`): Base backoff window used when X/Twitter or other APIs return 429 without reset hints.
+*   `RATE_LIMIT_FALLBACK_WINDOW_SECONDS` (Default: `90.0`): Conservative cooldown applied for transient server-side failures lacking explicit rate limit headers.
 *   `MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT` (Default: `8000`): Maximum characters from a scraped webpage to include in the LLM prompt.
 *   `MAX_IMAGE_BYTES_FOR_PROMPT` (Default: `4194304` (4MB)): Maximum size for an image to be sent to the vision LLM.
 *   `NEWS_MAX_LINKS_TO_PROCESS` (Default: `15`): Maximum number of links to process for commands like `/news` or `/search`.
@@ -388,10 +394,10 @@ DiscordSam offers a variety of slash commands for diverse functionalities, group
     *   **Arguments:** `limit` (Optional, Default: 30).
     *   **Behavior:** Scrapes the home timeline, displays raw tweets (with image descriptions), and generates a summary. Requires a logged-in Playwright profile.
 
-*   **`/alltweets [limit]`**
-    *   **Purpose:** Fetches and summarizes tweets from all default X/Twitter accounts.
-    *   **Arguments:** `limit` (Optional, Default: 50).
-    *   **Behavior:** Iterates through all preset accounts, scraping and summarizing tweets for each.
+*   **`/alltweets [limit] [list_name]`**
+    *   **Purpose:** Fetches and summarizes tweets from the default X/Twitter roster or a saved custom list.
+    *   **Arguments:** `limit` (Optional, Default: 50), `list_name` (Optional, uses `/twitter_list_add` entries when supplied).
+    *   **Behavior:** Iterates through the selected accounts, scraping, describing images, storing snapshots for RAG, and generating summaries for each handle.
 
 *   **`/groundnews [limit]`**
     *   **Purpose:** Scrapes and summarizes new articles from your Ground News "My Feed".
@@ -457,6 +463,36 @@ DiscordSam offers a variety of slash commands for diverse functionalities, group
 *   **`/dbcounts`**
     *   **Purpose:** Displays the number of documents in each ChromaDB collection.
     *   **Arguments:** None.
+    *   **Access:** Admin-only.
+
+*   **`/twitter_list_add <list_name> <handle>`**
+    *   **Purpose:** Adds a Twitter handle to a server-scoped saved list used by `/alltweets` and scheduler jobs.
+    *   **Arguments:** `list_name` (Required), `handle` (Required, with or without `@`).
+    *   **Access:** Admin-only.
+
+*   **`/twitter_list_remove <list_name> <handle>`**
+    *   **Purpose:** Removes a handle from a saved Twitter list (and deletes the list if emptied).
+    *   **Arguments:** `list_name` (Required), `handle` (Required).
+    *   **Access:** Admin-only.
+
+*   **`/twitter_list_show`**
+    *   **Purpose:** Displays all saved Twitter lists and their member handles for the current guild.
+    *   **Arguments:** None.
+    *   **Access:** Admin-only.
+
+*   **`/schedule_alltweets <interval_minutes> [limit] [list_name]`**
+    *   **Purpose:** Schedules background all-tweets digests for the channel.
+    *   **Arguments:** `interval_minutes` (Required), `limit` (Optional, Default: 100), `list_name` (Optional, defaults to built-in roster).
+    *   **Access:** Admin-only.
+
+*   **`/schedule_groundrss <interval_minutes> [limit]`**
+    *   **Purpose:** Schedules periodic Ground News "My Feed" digests.
+    *   **Arguments:** `interval_minutes` (Required), `limit` (Optional, Default: 100).
+    *   **Access:** Admin-only.
+
+*   **`/schedule_groundtopic <interval_minutes> <topic> [limit]`**
+    *   **Purpose:** Schedules periodic digests for a specific Ground News topic.
+    *   **Arguments:** `interval_minutes` (Required), `topic` (Required from preset list), `limit` (Optional, Default: 100).
     *   **Access:** Admin-only.
 
 *   **`/pruneitems <limit>`**

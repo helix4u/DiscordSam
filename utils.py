@@ -217,6 +217,18 @@ async def safe_followup_send(
             logger.warning(
                 "Interaction token expired%s; falling back to channel.send", " " + error_hint if error_hint else ""
             )
+            if kwargs.get("ephemeral"):
+                logger.warning(
+                    "Skipping channel fallback for ephemeral message%s to avoid leaking response.",
+                    " " + error_hint if error_hint else "",
+                )
+                content = kwargs.get("content")
+                if content and interaction.user:
+                    try:
+                        return await interaction.user.send(content)
+                    except Exception as dm_exc:
+                        logger.warning("Failed to DM user after token expiry: %s", dm_exc)
+                raise
             if interaction.channel:
                 kwargs_fallback = dict(kwargs)
                 # Remove parameters not supported by channel.send

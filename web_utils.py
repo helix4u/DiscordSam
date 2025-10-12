@@ -3,7 +3,7 @@ import logging
 import os
 import re
 import json
-from typing import List, Optional, Dict, Any, Callable, Awaitable, Tuple, Set, Union
+from typing import List, Optional, Dict, Any, Callable, Awaitable, Tuple, Set, Union, Mapping
 from bs4 import BeautifulSoup
 import random
 from datetime import datetime, timedelta, timezone
@@ -23,6 +23,7 @@ from urllib.parse import urlparse
 from config import config
 from utils import cleanup_playwright_processes
 from common_models import TweetData, GroundNewsArticle
+from rate_limiter import get_rate_limiter
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +101,51 @@ async def ensure_safe_remote_url(url: str) -> None:
             raise UnsafeRemoteURLError(
                 f"Requests to non-public hosts are blocked (resolved {ip})."
             )
+
+
+_shared_rate_limiter = get_rate_limiter()
+
+
+async def _await_rate_limit_for_url(url: str) -> str:
+    """Await the shared rate limiter for a specific URL and return the host key."""
+    try:
+        host = urlparse(url).netloc.lower()
+    except Exception:
+        host = ""
+    key = host or "default"
+    await _shared_rate_limiter.await_slot(key)
+    return key
+
+
+async def _record_rate_limit_for_response(
+    key: str,
+    status: int,
+    headers: Mapping[str, str],
+) -> None:
+    """Record rate-limit information based on an HTTP response."""
+    await _shared_rate_limiter.record_response(key, status, headers)
+
+
+def _attach_playwright_rate_limiter(page: Any, default_key: str) -> None:
+    """Attach a Playwright response hook that reports headers to the shared limiter."""
+
+    async def _handle_response(response: Any) -> None:
+        try:
+            url = response.url
+            key = default_key
+            if url:
+                try:
+                    host = urlparse(url).netloc.lower()
+                    if host:
+                        key = host
+                except Exception:
+                    pass
+            headers = response.headers if hasattr(response, "headers") else {}
+            await _record_rate_limit_for_response(key, response.status, headers)
+        except Exception as exc:
+            logger.debug("Rate limit response hook failed: %s", exc)
+
+    page.on("response", lambda response: asyncio.create_task(_handle_response(response)))
 
 async def _graceful_close_playwright(page: Optional[Any], context: Optional[Any], browser: Optional[Any], profile_dir_usable: bool, timeout: float = 1.0) -> None:
     """Attempt to close Playwright objects; kill lingering processes if they remain."""
@@ -233,9 +279,15 @@ async def _scrape_with_bs(url: str) -> Optional[str]:
     }
     try:
         async with aiohttp.ClientSession(headers=headers) as session:
-            async with session.get(url, timeout=20) as resp:
-                resp.raise_for_status()
-                html = await resp.text()
+            key = await _await_rate_limit_for_url(url)
+            try:
+                async with session.get(url, timeout=20) as resp:
+                    await _record_rate_limit_for_response(key, resp.status, resp.headers)
+                    resp.raise_for_status()
+                    html = await resp.text()
+            except aiohttp.ClientResponseError as e_resp:
+                await _record_rate_limit_for_response(key, e_resp.status, e_resp.headers or {})
+                raise
         soup = BeautifulSoup(html, "html.parser")
         for tag in soup(["script", "style", "noscript"]):
             tag.decompose()
@@ -322,6 +374,9 @@ async def scrape_website(
                     )
                 context_manager = context
                 page = await context_manager.new_page()
+
+                rate_limit_key = await _await_rate_limit_for_url(url)
+                _attach_playwright_rate_limiter(page, rate_limit_key)
 
                 # Wait only until DOM content loads to avoid hanging on pages that never go network idle
                 logger.info(f"Navigating to {url} and waiting for DOM content to load...")
@@ -479,6 +534,8 @@ async def scrape_latest_tweets(
 
                 url = f"https://x.com/{username_queried.lstrip('@')}/with_replies"
                 logger.info(f"Navigating to Twitter profile: {url}")
+                rate_limit_key = await _await_rate_limit_for_url(url)
+                _attach_playwright_rate_limiter(page, rate_limit_key)
                 await page.goto(url, timeout=60000, wait_until="domcontentloaded")
 
                 try:
@@ -654,6 +711,8 @@ async def scrape_home_timeline(limit: int = 20, progress_callback: Optional[Call
 
                 url = "https://x.com/home"
                 logger.info(f"Navigating to Twitter home timeline: {url}")
+                rate_limit_key = await _await_rate_limit_for_url(url)
+                _attach_playwright_rate_limiter(page, rate_limit_key)
                 await page.goto(url, timeout=60000, wait_until="domcontentloaded")
 
                 try:
@@ -770,10 +829,16 @@ async def query_searx(query: str) -> List[Dict[str, Any]]:
 
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(config.SEARX_URL, params=params, timeout=10) as response:
-                response.raise_for_status()
-                results_json = await response.json()
-                return results_json.get('results', [])[:5]
+            key = await _await_rate_limit_for_url(config.SEARX_URL)
+            try:
+                async with session.get(config.SEARX_URL, params=params, timeout=10) as response:
+                    await _record_rate_limit_for_response(key, response.status, response.headers)
+                    response.raise_for_status()
+                    results_json = await response.json()
+                    return results_json.get('results', [])[:5]
+            except aiohttp.ClientResponseError as e_resp:
+                await _record_rate_limit_for_response(key, e_resp.status, e_resp.headers or {})
+                raise
     except aiohttp.ClientError as e:
         logger.error(f"Searx query failed for '{query}': {e}")
     except json.JSONDecodeError:
@@ -849,11 +914,18 @@ async def fetch_rss_entries(feed_url: str) -> List[Dict[str, Any]]:
         return []
 
     logger.info(f"Fetching RSS feed: {feed_url}")
+    text = ""
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(feed_url, timeout=15) as resp:
-                resp.raise_for_status()
-                text = await resp.text()
+            key = await _await_rate_limit_for_url(feed_url)
+            try:
+                async with session.get(feed_url, timeout=15) as resp:
+                    await _record_rate_limit_for_response(key, resp.status, resp.headers)
+                    resp.raise_for_status()
+                    text = await resp.text()
+            except aiohttp.ClientResponseError as e_resp:
+                await _record_rate_limit_for_response(key, e_resp.status, e_resp.headers or {})
+                raise
     except Exception as e:
         logger.error(f"Failed to fetch RSS feed {feed_url}: {e}")
         return []
@@ -958,6 +1030,8 @@ async def _scrape_ground_news_page(page_url: str, limit: int = 20) -> List[Groun
                 context_manager = context
                 page = await context_manager.new_page()
 
+                rate_limit_key = await _await_rate_limit_for_url(page_url)
+                _attach_playwright_rate_limiter(page, rate_limit_key)
                 await page.goto(page_url, wait_until="domcontentloaded")
                 await asyncio.sleep(config.GROUND_NEWS_ARTICLE_DELAY_SECONDS)
 
