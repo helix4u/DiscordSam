@@ -313,13 +313,13 @@ async def _collect_new_tweets(
                 image_num = i + 1
                 alt_text = t_data.alt_texts[i] if i < len(t_data.alt_texts) else None
                 if alt_text:
-                    image_description_text += f'\n*Image {image_num}/{total_images} Alt Text: "{alt_text}"*'
+                    image_description_text += f'\n*Image Alt Text: "{alt_text}"*'
                 await _emit(
                     f"Describing image {image_num}/{total_images} in tweet from @{author_display}..."
                 )
                 description = await describe_image(image_url)
                 if description:
-                    image_description_text += f'\n*Image {image_num}/{total_images} Description: "{description}"*'
+                    image_description_text += f'\n*Image Description: "{description}"*'
 
         link_text = f" ([Link]({tweet_url_display}))" if tweet_url_display else ""
         tweet_texts_for_display.append(
@@ -1110,6 +1110,8 @@ async def process_twitter_user(
         content=f"Scraping tweets for @{clean_username} (up to {limit})...",
     )
 
+    progress_update_count = [0]  # Use list to allow modification in nested function
+    
     async def send_progress(message: str) -> None:
         nonlocal progress_message
         if not interaction.channel:
@@ -1119,11 +1121,24 @@ async def process_twitter_user(
             )
             return
         try:
-            progress_message = await safe_message_edit(
-                progress_message,
-                interaction.channel,
-                content=message,
-            )
+            progress_update_count[0] += 1
+            # Delete and recreate every 3 updates to bump to bottom, otherwise just edit
+            if progress_update_count[0] % 3 == 0 and progress_message:
+                try:
+                    await progress_message.delete()
+                except (discord.NotFound, discord.HTTPException):
+                    pass  # Message already deleted or webhook expired
+                progress_message = await safe_followup_send(
+                    interaction,
+                    content=message,
+                )
+            else:
+                # Just edit the existing message
+                progress_message = await safe_message_edit(
+                    progress_message,
+                    interaction.channel,
+                    content=message,
+                )
         except Exception as exc:
             logger.error(
                 "Unexpected error in send_progress for @%s: %s",
@@ -3048,17 +3063,32 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 content=f"Starting to scrape tweets for @{clean_username_for_initial_message} (up to {limit})..."
             )
 
+        progress_update_count = [0]  # Use list to allow modification in nested function
+        
         async def send_progress(message: str) -> None:
             nonlocal progress_message
             if not interaction.channel:
                 logger.error("Cannot send progress update for gettweets: interaction.channel is None")
                 return
             try:
-                progress_message = await safe_message_edit(
-                    progress_message,
-                    interaction.channel,
-                    content=message,
-                )
+                progress_update_count[0] += 1
+                # Delete and recreate every 3 updates to bump to bottom, otherwise just edit
+                if progress_update_count[0] % 3 == 0 and progress_message:
+                    try:
+                        await progress_message.delete()
+                    except (discord.NotFound, discord.HTTPException):
+                        pass  # Message already deleted or webhook expired
+                    progress_message = await safe_followup_send(
+                        interaction,
+                        content=message,
+                    )
+                else:
+                    # Just edit the existing message
+                    progress_message = await safe_message_edit(
+                        progress_message,
+                        interaction.channel,
+                        content=message,
+                    )
             except Exception as e_unexp:
                 logger.error(f"Unexpected error in send_progress for gettweets: {e_unexp}", exc_info=True)
 
@@ -3170,11 +3200,11 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                         image_num = i + 1
                         alt_text = t_data.alt_texts[i] if i < len(t_data.alt_texts) else None
                         if alt_text:
-                            image_description_text += f'\n*Image {image_num}/{total_images} Alt Text: "{alt_text}"*'
+                            image_description_text += f'\n*Image Alt Text: "{alt_text}"*'
                         await send_progress(f"Describing image {image_num}/{total_images} in tweet from @{author_display}...")
                         description = await describe_image(image_url)
                         if description:
-                            image_description_text += f'\n*Image {image_num}/{total_images} Description: "{description}"*'
+                            image_description_text += f'\n*Image Description: "{description}"*'
 
                 link_text = f" ([Link]({tweet_url_display}))" if tweet_url_display else ""
                 tweet_texts_for_display.append(f"**{header}**: {content_display}{image_description_text}{link_text}")
@@ -3400,17 +3430,32 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 content=f"Starting to scrape home timeline tweets (up to {limit})..."
             )
 
+        progress_update_count = [0]  # Use list to allow modification in nested function
+        
         async def send_progress(message: str) -> None:
             nonlocal progress_message
             if not interaction.channel:
                 logger.error("Cannot send progress update for homefeed: interaction.channel is None")
                 return
             try:
-                progress_message = await safe_message_edit(
-                    progress_message,
-                    interaction.channel,
-                    content=message,
-                )
+                progress_update_count[0] += 1
+                # Delete and recreate every 3 updates to bump to bottom, otherwise just edit
+                if progress_update_count[0] % 3 == 0 and progress_message:
+                    try:
+                        await progress_message.delete()
+                    except (discord.NotFound, discord.HTTPException):
+                        pass  # Message already deleted or webhook expired
+                    progress_message = await safe_followup_send(
+                        interaction,
+                        content=message,
+                    )
+                else:
+                    # Just edit the existing message
+                    progress_message = await safe_message_edit(
+                        progress_message,
+                        interaction.channel,
+                        content=message,
+                    )
             except Exception as e_unexp:
                 logger.error(f"Unexpected error in send_progress for homefeed: {e_unexp}", exc_info=True)
 
@@ -3498,11 +3543,11 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                         image_num = i + 1
                         alt_text = t_data.alt_texts[i] if i < len(t_data.alt_texts) else None
                         if alt_text:
-                            image_description_text += f'\n*Image {image_num}/{total_images} Alt Text: "{alt_text}"*'
+                            image_description_text += f'\n*Image Alt Text: "{alt_text}"*'
                         await send_progress(f"Describing image {image_num}/{total_images} in tweet from @{author_display}...")
                         description = await describe_image(image_url)
                         if description:
-                            image_description_text += f'\n*Image {image_num}/{total_images} Description: "{description}"*'
+                            image_description_text += f'\n*Image Description: "{description}"*'
 
                 link_text = f" ([Link]({tweet_url_display}))" if tweet_url_display else ""
                 tweet_texts_for_display.append(f"**{header}**: {content_display}{image_description_text}{link_text}")
