@@ -3700,27 +3700,25 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
         scrape_lock = bot_state_instance.get_scrape_lock()
         queue_notice = scrape_lock.locked()
         acquired_lock = False
-        if queue_notice:
-            await interaction.response.send_message(
-                "Waiting for other scraping tasks to finish before fetching tweets...",
-                ephemeral=True,
-            )
-            await scrape_lock.acquire()
-            acquired_lock = True
-            await safe_followup_send(
-                interaction,
-                content=f"Starting to scrape tweets from {list_descriptor}...",
-                error_hint=" starting alltweets (queued)",
-            )
-        else:
-            await scrape_lock.acquire()
-            acquired_lock = True
+
+        if not interaction.response.is_done():
             await interaction.response.defer(ephemeral=False)
+
+        if queue_notice:
             await safe_followup_send(
                 interaction,
-                content=f"Starting to scrape tweets from {list_descriptor}...",
-                error_hint=" starting alltweets",
+                content="Waiting for other scraping tasks to finish before fetching tweets...",
+                ephemeral=interaction.guild_id is not None,
+                error_hint=" waiting for alltweets lock",
             )
+
+        await scrape_lock.acquire()
+        acquired_lock = True
+        await safe_followup_send(
+            interaction,
+            content=f"Starting to scrape tweets from {list_descriptor}...",
+            error_hint=" starting alltweets (queued)" if queue_notice else " starting alltweets",
+        )
 
         try:
             any_new = False
