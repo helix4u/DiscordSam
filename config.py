@@ -147,14 +147,17 @@ class Config:
             1, _get_int("OPENAI_RETRY_MAX_ATTEMPTS", 6)
         )
         self.OPENAI_BACKOFF_BASE_SECONDS = max(
-            0.1, _get_float("OPENAI_BACKOFF_BASE_SECONDS", 1.5)
+            0.1, _get_float("OPENAI_BACKOFF_BASE_SECONDS", 30.0)
         )
         self.OPENAI_BACKOFF_MAX_SECONDS = max(
             self.OPENAI_BACKOFF_BASE_SECONDS,
-            _get_float("OPENAI_BACKOFF_MAX_SECONDS", 60.0),
+            _get_float("OPENAI_BACKOFF_MAX_SECONDS", 360.0),
         )
         self.OPENAI_BACKOFF_JITTER_SECONDS = max(
-            0.0, _get_float("OPENAI_BACKOFF_JITTER_SECONDS", 0.5)
+            0.0, _get_float("OPENAI_BACKOFF_JITTER_SECONDS", 3.0)
+        )
+        self.OPENAI_CLIENT_MAX_RETRIES = max(
+            0, _get_int("OPENAI_CLIENT_MAX_RETRIES", 0)
         )
 
         # GPT-5 mode: adapt Chat Completions for GPT-5 models
@@ -281,6 +284,8 @@ class Config:
         self.SEARX_PREFERENCES = os.getenv("SEARX_PREFERENCES", "")
 
         # Shared rate limiter configuration for outbound HTTP requests.
+        # Proactive rate limiting: max requests per minute (default conservative for OpenRouter)
+        self.RATE_LIMIT_REQUESTS_PER_MINUTE = _get_float("RATE_LIMIT_REQUESTS_PER_MINUTE", 16.0)
         self.RATE_LIMIT_JITTER_SECONDS = _get_float("RATE_LIMIT_JITTER_SECONDS", 1.5)
         self.RATE_LIMIT_FAILURE_BACKOFF_SECONDS = _get_float(
             "RATE_LIMIT_FAILURE_BACKOFF_SECONDS", 45.0

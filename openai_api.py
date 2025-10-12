@@ -9,13 +9,30 @@ import time
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any, Dict, List, Optional, Sequence
+from urllib.parse import urlparse
 
 import httpx
 from openai import RateLimitError, BadRequestError
 
 from config import config
+from rate_limiter import get_rate_limiter
 
 logger = logging.getLogger(__name__)
+
+_rate_limiter = get_rate_limiter()
+
+
+def _get_rate_limit_key(llm_client: Any) -> str:
+    """Extract a rate limit key from the LLM client's base URL."""
+    try:
+        base_url = getattr(llm_client, "base_url", None)
+        if base_url:
+            parsed = urlparse(str(base_url))
+            host = parsed.netloc.lower() if parsed.netloc else "default"
+            return host or "default"
+    except Exception:
+        pass
+    return "default"
 
 
 def _extract_header(headers: Any, name: str) -> Optional[str]:
@@ -298,10 +315,21 @@ async def create_chat_completion(
 
         last_exception: Optional[Exception] = None
         max_attempts = config.OPENAI_RETRY_MAX_ATTEMPTS
+        rate_limit_key = _get_rate_limit_key(llm_client)
+        
         for attempt in range(max_attempts):
             try:
-                return await llm_client.chat.completions.create(**params)
+                # Proactive rate limiting: wait for a slot before making the request
+                await _rate_limiter.await_slot(rate_limit_key)
+                response = await llm_client.chat.completions.create(**params)
+                
+                # Record successful response for reactive rate limiting
+                # Note: OpenAI SDK doesn't expose response headers easily, but we track 200 status
+                await _rate_limiter.record_response(rate_limit_key, 200, {})
+                return response
             except RateLimitError as exc:
+                # Record the 429 response to update reactive cooldowns
+                await _rate_limiter.record_response(rate_limit_key, 429, {})
                 last_exception = exc
                 request_id = getattr(exc, "request_id", None)
                 reason = "Rate limit encountered"
@@ -388,10 +416,20 @@ async def create_chat_completion(
 
     last_exception: Optional[Exception] = None
     max_attempts = config.OPENAI_RETRY_MAX_ATTEMPTS
+    rate_limit_key = _get_rate_limit_key(llm_client)
+    
     for attempt in range(max_attempts):
         try:
-            return await llm_client.responses.create(**params)
+            # Proactive rate limiting: wait for a slot before making the request
+            await _rate_limiter.await_slot(rate_limit_key)
+            response = await llm_client.responses.create(**params)
+            
+            # Record successful response for reactive rate limiting
+            await _rate_limiter.record_response(rate_limit_key, 200, {})
+            return response
         except RateLimitError as exc:
+            # Record the 429 response to update reactive cooldowns
+            await _rate_limiter.record_response(rate_limit_key, 429, {})
             if params.get("service_tier") == "flex":
                 logger.warning(
                     "Flex tier request failed due to rate limit. Retrying with 'auto' tier."

@@ -274,6 +274,7 @@ The bot now uses a provider-based architecture to manage different LLM roles (ma
 
 *   `SEARX_URL` (Default: `http://192.168.1.3:9092/search`): The URL of your SearXNG instance.
 *   `SEARX_PREFERENCES` (Optional, Default: `""`): Optional preferences for SearXNG engine selection. Example: `{"engines" : ["google", "wikipedia"]}`.
+*   `RATE_LIMIT_REQUESTS_PER_MINUTE` (Default: `20.0`): Maximum number of requests per minute to send to LLM APIs. This proactively prevents hitting rate limits. Set higher if your API provider allows more requests.
 *   `RATE_LIMIT_JITTER_SECONDS` (Default: `1.5`): Random jitter applied to enforced cooldowns after rate limit responses.
 *   `RATE_LIMIT_FAILURE_BACKOFF_SECONDS` (Default: `45.0`): Base backoff window used when X/Twitter or other APIs return 429 without reset hints.
 *   `RATE_LIMIT_FALLBACK_WINDOW_SECONDS` (Default: `90.0`): Conservative cooldown applied for transient server-side failures lacking explicit rate limit headers.
