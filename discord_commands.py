@@ -284,6 +284,10 @@ async def _collect_new_tweets(
             total_fetched=total_fetched,
         )
 
+    # Count total images across all tweets for global progress tracking
+    total_images_global = sum(len(t.image_urls) for t in new_tweets_to_process if t.image_urls)
+    current_image_num = 0
+    
     tweet_texts_for_display: List[str] = []
     for t_data in new_tweets_to_process:
         display_ts = t_data.timestamp
@@ -308,14 +312,13 @@ async def _collect_new_tweets(
 
         image_description_text = ""
         if t_data.image_urls:
-            total_images = len(t_data.image_urls)
             for i, image_url in enumerate(t_data.image_urls):
-                image_num = i + 1
+                current_image_num += 1
                 alt_text = t_data.alt_texts[i] if i < len(t_data.alt_texts) else None
                 if alt_text:
                     image_description_text += f'\n*Image Alt Text: "{alt_text}"*'
                 await _emit(
-                    f"Describing image {image_num}/{total_images} in tweet from @{author_display}..."
+                    f"Describing image {current_image_num}/{total_images_global} in tweet from @{author_display}..."
                 )
                 description = await describe_image(image_url)
                 if description:
@@ -3177,6 +3180,10 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 )
                 return
 
+            # Count total images across all tweets for global progress tracking
+            total_images_global = sum(len(t.image_urls) for t in new_tweets_to_process if t.image_urls)
+            current_image_num = 0
+            
             tweet_texts_for_display = []
             for t_data in new_tweets_to_process: # Iterate over new_tweets_to_process
                 display_ts = t_data.timestamp
@@ -3195,13 +3202,12 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
 
                 image_description_text = ""
                 if t_data.image_urls:
-                    total_images = len(t_data.image_urls)
                     for i, image_url in enumerate(t_data.image_urls):
-                        image_num = i + 1
+                        current_image_num += 1
                         alt_text = t_data.alt_texts[i] if i < len(t_data.alt_texts) else None
                         if alt_text:
                             image_description_text += f'\n*Image Alt Text: "{alt_text}"*'
-                        await send_progress(f"Describing image {image_num}/{total_images} in tweet from @{author_display}...")
+                        await send_progress(f"Describing image {current_image_num}/{total_images_global} in tweet from @{author_display}...")
                         description = await describe_image(image_url)
                         if description:
                             image_description_text += f'\n*Image Description: "{description}"*'
@@ -3519,6 +3525,10 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 )
                 return
 
+            # Count total images across all tweets for global progress tracking
+            total_images_global = sum(len(t.image_urls) for t in new_tweets_to_process if t.image_urls)
+            current_image_num = 0
+            
             tweet_texts_for_display = []
             for t_data in new_tweets_to_process:
                 display_ts = t_data.timestamp
@@ -3538,13 +3548,12 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
 
                 image_description_text = ""
                 if t_data.image_urls:
-                    total_images = len(t_data.image_urls)
                     for i, image_url in enumerate(t_data.image_urls):
-                        image_num = i + 1
+                        current_image_num += 1
                         alt_text = t_data.alt_texts[i] if i < len(t_data.alt_texts) else None
                         if alt_text:
                             image_description_text += f'\n*Image Alt Text: "{alt_text}"*'
-                        await send_progress(f"Describing image {image_num}/{total_images} in tweet from @{author_display}...")
+                        await send_progress(f"Describing image {current_image_num}/{total_images_global} in tweet from @{author_display}...")
                         description = await describe_image(image_url)
                         if description:
                             image_description_text += f'\n*Image Description: "{description}"*'
