@@ -26,12 +26,28 @@ async def open_chatgpt_login():
     async with async_playwright() as p:
         browser_context: Optional[BrowserContext] = None
         try:
+            # Import the helper function from web_utils if available
+            try:
+                from web_utils import _get_playwright_args
+                playwright_args = _get_playwright_args()
+            except ImportError:
+                # Fallback if web_utils isn't available
+                playwright_args = ["--disable-blink-features=AutomationControlled"]
+                if not config.HEADLESS_PLAYWRIGHT:
+                    playwright_args.extend([
+                        "--disable-background-networking",
+                        "--disable-background-timer-throttling",
+                        "--disable-backgrounding-occluded-windows",
+                        "--disable-renderer-backgrounding",
+                        "--disable-features=TranslateUI",
+                        "--disable-infobars",
+                        "--disable-notifications",
+                    ])
+            
             browser_context = await p.chromium.launch_persistent_context(
                 user_data_dir,
                 headless=config.HEADLESS_PLAYWRIGHT,
-                args=[
-                    "--disable-blink-features=AutomationControlled",
-                ],
+                args=playwright_args,
                 slow_mo=100,
             )
 

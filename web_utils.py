@@ -30,6 +30,51 @@ logger = logging.getLogger(__name__)
 PLAYWRIGHT_SEM = asyncio.Semaphore(config.PLAYWRIGHT_MAX_CONCURRENCY)
 
 
+def _get_playwright_args() -> List[str]:
+    """Get Chrome/Chromium launch arguments including focus-stealing prevention flags."""
+    base_args = [
+        "--disable-blink-features=AutomationControlled",
+        "--no-sandbox",
+        "--disable-dev-shm-usage",
+    ]
+    
+    # Add focus-stealing prevention flags for non-headless mode on Windows
+    if not config.HEADLESS_PLAYWRIGHT:
+        focus_prevention_args = [
+            "--disable-background-networking",
+            "--disable-background-timer-throttling",
+            "--disable-backgrounding-occluded-windows",
+            "--disable-renderer-backgrounding",
+            "--disable-features=TranslateUI",
+            "--disable-infobars",
+            "--disable-notifications",
+            "--start-minimized",  # Start browser minimized to prevent focus stealing
+        ]
+        base_args.extend(focus_prevention_args)
+    
+    return base_args
+
+
+async def _prevent_window_focus(page: Any) -> None:
+    """Prevent browser window from stealing focus by blurring and disabling focus events."""
+    if not config.HEADLESS_PLAYWRIGHT:
+        try:
+            # Blur the window immediately
+            await page.evaluate("""
+                () => {
+                    if (window.blur) window.blur();
+                    // Prevent focus events
+                    window.addEventListener("focus", (e) => { e.preventDefault(); window.blur(); }, true);
+                    document.addEventListener("focus", (e) => { e.preventDefault(); window.blur(); }, true);
+                    // Keep window blurred
+                    if (document.activeElement) document.activeElement.blur();
+                }
+            """)
+            logger.debug("Applied focus prevention to browser window")
+        except Exception as e:
+            logger.debug(f"Could not prevent window focus (non-critical): {e}")
+
+
 class UnsafeRemoteURLError(RuntimeError):
     """Raised when a URL points to an unsafe or disallowed host."""
 
@@ -307,7 +352,8 @@ async def _scrape_with_bs(url: str) -> Optional[str]:
 async def scrape_website(
     url: str,
     progress_callback: Optional[Callable[[str], Awaitable[None]]] = None,
-    screenshots_dir: Optional[str] = None
+    screenshots_dir: Optional[str] = None,
+    _is_fallback: bool = False  # Internal flag to prevent recursive fallback loops
 ) -> Tuple[Optional[str], List[str]]:
     try:
         await ensure_safe_remote_url(url)
@@ -315,19 +361,48 @@ async def scrape_website(
         logger.warning("Blocked scrape to unsafe URL %s: %s", url, exc)
         return f"Blocked from fetching URL: {exc}", []
 
-    if (
-        url.startswith("https://www.nytimes.com/")
-        or url.startswith("https://www.wsj.com/")
-        or url.startswith("https://www.thedailybeast.com/")
-    ):
-        if "nytimes.com" in url:
-            archive_domain = "NYTimes"
-        elif "wsj.com" in url:
-            archive_domain = "WSJ"
-        else:
-            archive_domain = "DailyBeast"
-        url = f"https://archive.is/newest/{url}"
-        logger.info(f"{archive_domain} URL detected. Using archive.is: {url}")
+    original_url = url
+    archive_url = None
+    is_paywalled_domain = False
+
+    # Check if archive service is enabled and if this is a paywalled domain
+    if config.USE_ARCHIVE_SERVICE and not _is_fallback:
+        if (
+            url.startswith("https://www.nytimes.com/")
+            or url.startswith("https://www.wsj.com/")
+            or url.startswith("https://www.thedailybeast.com/")
+        ):
+            is_paywalled_domain = True
+            if "nytimes.com" in url:
+                archive_domain = "NYTimes"
+            elif "wsj.com" in url:
+                archive_domain = "WSJ"
+            else:
+                archive_domain = "DailyBeast"
+
+            # Build archive URL based on configured service
+            archive_service = config.ARCHIVE_SERVICE.lower()
+            if archive_service == "archive.is":
+                archive_url = f"https://archive.is/newest/{url}"
+            elif archive_service == "archive.today":
+                archive_url = f"https://archive.today/newest/{url}"
+            elif archive_service == "archive.ph":
+                archive_url = f"https://archive.ph/newest/{url}"
+            elif archive_service == "web.archive.org":
+                # Wayback Machine uses a different URL format
+                archive_url = f"https://web.archive.org/web/{url}"
+            elif archive_service == "none":
+                # Explicitly disable archive service
+                archive_url = None
+            else:
+                # Default fallback to archive.is
+                logger.warning(f"Unknown archive service '{config.ARCHIVE_SERVICE}', defaulting to archive.is")
+                archive_url = f"https://archive.is/newest/{url}"
+
+            if archive_url:
+                logger.info(f"{archive_domain} URL detected. Using {config.ARCHIVE_SERVICE}: {archive_url}")
+                url = archive_url
+
     logger.info(f"Attempting to scrape website: {url}")
     screenshot_paths: List[str] = []
     if screenshots_dir:
@@ -358,14 +433,14 @@ async def scrape_website(
                     context = await p.chromium.launch_persistent_context(
                         user_data_dir,
                         headless=config.HEADLESS_PLAYWRIGHT,
-                        args=["--disable-blink-features=AutomationControlled", "--no-sandbox", "--disable-dev-shm-usage"],
+                        args=_get_playwright_args(),
                         user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
                     )
                 else:
                     logger.warning("Using non-persistent context for scrape_website due to profile directory issue.")
                     browser_instance_sw = await p.chromium.launch(
                         headless=config.HEADLESS_PLAYWRIGHT,
-                        args=["--disable-blink-features=AutomationControlled", "--no-sandbox", "--disable-dev-shm-usage"]
+                        args=_get_playwright_args()
                     )
                     context = await browser_instance_sw.new_context(
                         user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
@@ -374,6 +449,7 @@ async def scrape_website(
                     )
                 context_manager = context
                 page = await context_manager.new_page()
+                await _prevent_window_focus(page)
 
                 rate_limit_key = await _await_rate_limit_for_url(url)
                 _attach_playwright_rate_limiter(page, rate_limit_key)
@@ -411,7 +487,12 @@ async def scrape_website(
                                 logger.error(f"Failed to take screenshot: {e_ss}")
 
                         try:
-                            await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                            # Use mouse wheel instead of JavaScript scroll to prevent focus stealing
+                            current_scroll = await page.evaluate("window.pageYOffset || document.documentElement.scrollTop")
+                            target_scroll = await page.evaluate("document.body.scrollHeight")
+                            scroll_delta = target_scroll - current_scroll
+                            if scroll_delta > 0:
+                                await page.mouse.wheel(0, scroll_delta)
                         except Exception as e_scroll:
                             logger.warning(f"Error scrolling page {url}: {e_scroll}")
                             break
@@ -471,20 +552,54 @@ async def scrape_website(
                     if bs_content:
                         logger.info("BeautifulSoup fallback succeeded.")
                         return bs_content, screenshot_paths # screenshot_paths will be empty here
+                    
+                    # If we used archive service and got no content, try original URL as fallback
+                    if archive_url and url == archive_url and config.ARCHIVE_FALLBACK_TO_ORIGINAL and not _is_fallback and is_paywalled_domain:
+                        logger.warning(f"Archive service {config.ARCHIVE_SERVICE} returned no content. Falling back to original URL: {original_url}")
+                        # Close resources before recursive call
+                        await _graceful_close_playwright(page, context_manager, browser_instance_sw, profile_dir_usable)
+                        page = None  # Prevent finally block from trying to close again
+                        context_manager = None
+                        browser_instance_sw = None
+                        # Retry with original URL (mark as fallback to prevent recursion)
+                        return await scrape_website(original_url, progress_callback, screenshots_dir, _is_fallback=True)
+                    
                     return None, screenshot_paths # screenshot_paths will be empty here
 
     except PlaywrightTimeoutError:
         logger.error(f"Playwright timed out during the scraping process for {url}")
         if progress_callback: # Notify about timeout
             await progress_callback(f"Scraping {url} timed out.")
+        # If we used archive service and it timed out, try original URL as fallback
+        if archive_url and url == archive_url and config.ARCHIVE_FALLBACK_TO_ORIGINAL and not _is_fallback and is_paywalled_domain:
+            logger.warning(f"Archive service {config.ARCHIVE_SERVICE} timed out. Falling back to original URL: {original_url}")
+            # Close resources before recursive call
+            await _graceful_close_playwright(page, context_manager, browser_instance_sw, profile_dir_usable)
+            page = None  # Prevent finally block from trying to close again
+            context_manager = None
+            browser_instance_sw = None
+            # Retry with original URL (mark as fallback to prevent recursion)
+            return await scrape_website(original_url, progress_callback, screenshots_dir, _is_fallback=True)
         return "Scraping timed out.", screenshot_paths # Return collected paths even on timeout
     except Exception as e:
         logger.error(f"Playwright encountered an unexpected error for {url}: {e}", exc_info=True)
         if progress_callback: # Notify about error
             await progress_callback(f"Failed to scrape {url} due to an error.")
+        # If we used archive service and it errored, try original URL as fallback
+        if archive_url and url == archive_url and config.ARCHIVE_FALLBACK_TO_ORIGINAL and not _is_fallback and is_paywalled_domain:
+            logger.warning(f"Archive service {config.ARCHIVE_SERVICE} errored. Falling back to original URL: {original_url}")
+            # Close resources before recursive call
+            await _graceful_close_playwright(page, context_manager, browser_instance_sw, profile_dir_usable)
+            page = None  # Prevent finally block from trying to close again
+            context_manager = None
+            browser_instance_sw = None
+            # Retry with original URL (mark as fallback to prevent recursion)
+            return await scrape_website(original_url, progress_callback, screenshots_dir, _is_fallback=True)
         return "Failed to scrape the website due to an unexpected error.", screenshot_paths # Return collected paths on error
     finally:
-        await _graceful_close_playwright(page, context_manager, browser_instance_sw, profile_dir_usable)
+        # Only close if we haven't already closed (i.e., not doing a fallback)
+        if page is not None or context_manager is not None or browser_instance_sw is not None:
+            await _graceful_close_playwright(page, context_manager, browser_instance_sw, profile_dir_usable)
 
 async def scrape_latest_tweets(
     username_queried: str,
@@ -515,7 +630,7 @@ async def scrape_latest_tweets(
                 if profile_dir_usable:
                     context = await p.chromium.launch_persistent_context(
                         user_data_dir, headless=config.HEADLESS_PLAYWRIGHT,
-                        args=["--disable-blink-features=AutomationControlled", "--no-sandbox", "--disable-dev-shm-usage"],
+                        args=_get_playwright_args(),
                         user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36",
                         slow_mo=150
                     )
@@ -523,7 +638,7 @@ async def scrape_latest_tweets(
                     logger.warning("Using non-persistent context for tweet scraping.")
                     browser_instance_st = await p.chromium.launch(
                         headless=config.HEADLESS_PLAYWRIGHT,
-                        args=["--disable-blink-features=AutomationControlled", "--no-sandbox", "--disable-dev-shm-usage"],
+                        args=_get_playwright_args(),
                         slow_mo=150
                     )
                     context = await browser_instance_st.new_context(
@@ -531,6 +646,7 @@ async def scrape_latest_tweets(
                     )
                 context_manager = context
                 page = await context_manager.new_page()
+                await _prevent_window_focus(page)
 
                 url = f"https://x.com/{username_queried.lstrip('@')}/with_replies"
                 logger.info(f"Navigating to Twitter profile: {url}")
@@ -639,7 +755,9 @@ async def scrape_latest_tweets(
 
                     # Scroll down to load more tweets
                     try:
-                        await page.evaluate("window.scrollBy(0, window.innerHeight * 1);")
+                        # Use mouse wheel instead of JavaScript scroll to prevent focus stealing
+                        scroll_amount = await page.evaluate("window.innerHeight")
+                        await page.mouse.wheel(0, scroll_amount)
                         await asyncio.sleep(random.uniform(0.5, 2.0))
                     except PlaywrightTimeoutError:
                         logger.warning(f"Timeout during page scroll for @{username_queried}. Assuming end of content or page issue.")
@@ -692,7 +810,7 @@ async def scrape_home_timeline(limit: int = 20, progress_callback: Optional[Call
                     context = await p.chromium.launch_persistent_context(
                         user_data_dir,
                         headless=config.HEADLESS_PLAYWRIGHT,
-                        args=["--disable-blink-features=AutomationControlled", "--no-sandbox", "--disable-dev-shm-usage"],
+                        args=_get_playwright_args(),
                         user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36",
                         slow_mo=150,
                     )
@@ -700,7 +818,7 @@ async def scrape_home_timeline(limit: int = 20, progress_callback: Optional[Call
                     logger.warning("Using non-persistent context for tweet scraping.")
                     browser_instance_st = await p.chromium.launch(
                         headless=config.HEADLESS_PLAYWRIGHT,
-                        args=["--disable-blink-features=AutomationControlled", "--no-sandbox", "--disable-dev-shm-usage"],
+                        args=_get_playwright_args(),
                         slow_mo=150,
                     )
                     context = await browser_instance_st.new_context(
@@ -708,6 +826,7 @@ async def scrape_home_timeline(limit: int = 20, progress_callback: Optional[Call
                     )
                 context_manager = context
                 page = await context_manager.new_page()
+                await _prevent_window_focus(page)
 
                 url = "https://x.com/home"
                 logger.info(f"Navigating to Twitter home timeline: {url}")
@@ -787,7 +906,9 @@ async def scrape_home_timeline(limit: int = 20, progress_callback: Optional[Call
                         break
 
                     try:
-                        await page.evaluate("window.scrollBy(0, window.innerHeight * 1.5);")
+                        # Use mouse wheel instead of JavaScript scroll to prevent focus stealing
+                        scroll_amount = await page.evaluate("window.innerHeight * 1.5")
+                        await page.mouse.wheel(0, scroll_amount)
                         await asyncio.sleep(random.uniform(0.5, 1.5))
                     except PlaywrightTimeoutError:
                         logger.warning("Timeout during page scroll on home timeline. Assuming end of content or page issue.")
@@ -1018,17 +1139,18 @@ async def _scrape_ground_news_page(page_url: str, limit: int = 20) -> List[Groun
                     context = await p.chromium.launch_persistent_context(
                         user_data_dir,
                         headless=config.HEADLESS_PLAYWRIGHT,
-                        args=["--disable-blink-features=AutomationControlled", "--no-sandbox", "--disable-dev-shm-usage"],
+                        args=_get_playwright_args(),
                         ignore_https_errors=True,
                     )
                 else:
                     browser_instance = await p.chromium.launch(
                         headless=config.HEADLESS_PLAYWRIGHT,
-                        args=["--disable-blink-features=AutomationControlled", "--no-sandbox", "--disable-dev-shm-usage"],
+                        args=_get_playwright_args(),
                     )
                     context = await browser_instance.new_context(ignore_https_errors=True)
                 context_manager = context
                 page = await context_manager.new_page()
+                await _prevent_window_focus(page)
 
                 rate_limit_key = await _await_rate_limit_for_url(page_url)
                 _attach_playwright_rate_limiter(page, rate_limit_key)
@@ -1104,7 +1226,9 @@ async def _scrape_ground_news_page(page_url: str, limit: int = 20) -> List[Groun
                     if len(articles) >= limit:
                         break
                     try:
-                        await page.evaluate("window.scrollBy(0, window.innerHeight)")
+                        # Use mouse wheel instead of JavaScript scroll to prevent focus stealing
+                        scroll_amount = await page.evaluate("window.innerHeight")
+                        await page.mouse.wheel(0, scroll_amount)
                         await asyncio.sleep(2)
                     except Exception as e_scroll:
                         logger.warning("Scrolling failed on Ground News page: %s", e_scroll)
