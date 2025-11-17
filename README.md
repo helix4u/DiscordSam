@@ -36,6 +36,7 @@ DiscordSam is an advanced, context-aware Discord bot designed to provide intelli
 *   **High Configurability:** Most settings are managed via a `.env` file, allowing for easy customization of LLM endpoints, API keys, and bot behavior.
 *   **Modular Codebase:** Refactored into multiple Python files for better organization, maintainability, and scalability.
 *   **Automated Maintenance:** Includes background tasks for checking reminders, cleaning up idle Playwright processes, and pruning/summarizing old chat history from ChromaDB.
+*   **Gaming Mode Pause Switch:** Admins can temporarily pause/resume all scheduled scrapers via `/schedules_pause` and `/schedules_resume` so background Playwright windows stop stealing focus when you're gaming or heads-down on work.
 
 ---
 
@@ -507,8 +508,19 @@ DiscordSam offers a variety of slash commands for diverse functionalities, group
     *   **Purpose:** Schedules a recurring job to run `/allrss` in the current channel.
     *   **Arguments:** `interval_minutes` (Required, min 15), `limit` (Optional, Default: 10).
 
+*   **`/schedules_pause [reason]`**
+    *   **Purpose:** Activates "gaming mode" by pausing all scheduled scrapers globally so Playwright windows stop taking focus.
+    *   **Arguments:** `reason` (Optional, defaults to "Gaming mode" and is shown in `/schedules` output).
+    *   **Behavior:** Pauses the scheduler loop until an admin runs `/schedules_resume`.
+
+*   **`/schedules_resume`**
+    *   **Purpose:** Turns gaming mode off and resumes all paused schedules.
+    *   **Arguments:** None.
+    *   **Behavior:** Background jobs pick back up on the next scheduler tick (about 60 seconds).
+
 *   **`/schedules`**
     *   **Purpose:** Lists all active scheduled jobs for the current channel.
+    *   **Behavior:** When gaming mode is active, it shows who paused schedules, when, and why before listing jobs.
 
 *   **`/unschedule <schedule_id>`**
     *   **Purpose:** Removes a scheduled job by its ID.
