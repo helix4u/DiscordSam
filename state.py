@@ -25,8 +25,14 @@ class BotState:
         # Per-channel toggle: auto "podcast that shit" after RSS/allrss chunks
         self._podcast_after_rss_by_channel: Dict[int, bool] = {}
         # Persistent schedules for background tasks
-        self.schedules_file = os.path.join(os.path.dirname(__file__), "schedules.json")
+        base_dir = os.path.dirname(__file__)
+        self.schedules_file = os.path.join(base_dir, "schedules.json")
+        self.scheduler_status_file = os.path.join(base_dir, "scheduler_status.json")
         self._schedules: List[Dict[str, Any]] = []
+        self._schedules_paused: bool = False
+        self._schedules_paused_reason: str = ""
+        self._schedules_paused_by: Optional[str] = None
+        self._schedules_paused_at: Optional[str] = None
         # Track long-running per-channel tasks
         self._active_tasks: Dict[int, asyncio.Task[Any]] = {}
         # TTS delivery preferences per guild
@@ -40,6 +46,13 @@ class BotState:
         except Exception:
             # Start with empty if load fails; errors are not fatal
             self._schedules = []
+        try:
+            self._load_scheduler_status()
+        except Exception:
+            self._schedules_paused = False
+            self._schedules_paused_reason = ""
+            self._schedules_paused_by = None
+            self._schedules_paused_at = None
         try:
             self._load_tts_delivery_modes()
         except Exception:
@@ -140,6 +153,30 @@ class BotState:
             json.dump(self._schedules, f, ensure_ascii=False, indent=2)
         os.replace(tmp_path, self.schedules_file)
 
+    def _load_scheduler_status(self) -> None:
+        if os.path.exists(self.scheduler_status_file):
+            with open(self.scheduler_status_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    self._schedules_paused = bool(data.get("paused", False))
+                    self._schedules_paused_reason = str(data.get("reason") or "")
+                    paused_by = data.get("paused_by")
+                    self._schedules_paused_by = str(paused_by) if paused_by is not None else None
+                    paused_at = data.get("paused_at")
+                    self._schedules_paused_at = paused_at if isinstance(paused_at, str) else None
+
+    def _save_scheduler_status(self) -> None:
+        tmp_path = self.scheduler_status_file + ".tmp"
+        payload = {
+            "paused": self._schedules_paused,
+            "reason": self._schedules_paused_reason,
+            "paused_by": self._schedules_paused_by,
+            "paused_at": self._schedules_paused_at,
+        }
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, self.scheduler_status_file)
+
     async def list_schedules(self, channel_id: Optional[int] = None) -> List[Dict[str, Any]]:
         async with self._lock:
             if channel_id is None:
@@ -167,6 +204,44 @@ class BotState:
                     s["last_run"] = when.isoformat()
                     break
             self._save_schedules()
+
+    async def set_schedules_paused(
+        self,
+        paused: bool,
+        *,
+        reason: str = "",
+        user_id: Optional[int] = None,
+    ) -> None:
+        """Toggle the global pause state for scheduled jobs."""
+        async with self._lock:
+            if paused:
+                trimmed_reason = reason.strip()
+                if len(trimmed_reason) > 200:
+                    trimmed_reason = trimmed_reason[:200] + "…"
+                self._schedules_paused = True
+                self._schedules_paused_reason = trimmed_reason
+                self._schedules_paused_by = str(user_id) if user_id is not None else None
+                self._schedules_paused_at = datetime.now().astimezone().isoformat()
+            else:
+                self._schedules_paused = False
+                self._schedules_paused_reason = ""
+                self._schedules_paused_by = None
+                self._schedules_paused_at = None
+            self._save_scheduler_status()
+
+    async def get_schedules_pause_state(self) -> Dict[str, Any]:
+        """Return the current pause metadata for scheduled jobs."""
+        async with self._lock:
+            return {
+                "paused": self._schedules_paused,
+                "reason": self._schedules_paused_reason,
+                "paused_by": self._schedules_paused_by,
+                "paused_at": self._schedules_paused_at,
+            }
+
+    async def are_schedules_paused(self) -> bool:
+        async with self._lock:
+            return self._schedules_paused
 
     # --- Active task tracking ---
     async def set_active_task(self, channel_id: int, task: asyncio.Task[Any]) -> None:
