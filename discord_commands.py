@@ -171,6 +171,34 @@ async def _ensure_default_twitter_list(
         user_id=user_id,
     )
 
+def _format_iso_timestamp(value: Optional[str]) -> str:
+    if not value:
+        return "unknown time"
+    try:
+        parsed = datetime.fromisoformat(value)
+    except Exception:
+        return value
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone().strftime("%Y-%m-%d %H:%M %Z")
+
+
+def _format_user_reference(user_id_value: Optional[str]) -> str:
+    if not user_id_value:
+        return "unknown user"
+    try:
+        numeric = int(str(user_id_value))
+    except (TypeError, ValueError):
+        return str(user_id_value)
+    return f"<@{numeric}>"
+
+
+def _format_pause_notice(state: Dict[str, Any]) -> str:
+    reason = state.get("reason") or "No reason provided."
+    paused_by = _format_user_reference(state.get("paused_by"))
+    paused_at = _format_iso_timestamp(state.get("paused_at"))
+    return f"⚠️ Gaming mode enabled by {paused_by} at {paused_at}. Reason: {reason}"
+
 
 async def _collect_new_tweets(
     clean_username: str,
@@ -2036,6 +2064,62 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             )
         )
 
+    @bot_instance.tree.command(name="schedules_pause", description="Pause all scheduled jobs for gaming mode (admin only).")
+    @app_commands.describe(reason="Optional reason noted in /schedules.")
+    async def schedules_pause_command(
+        interaction: discord.Interaction,
+        reason: str = "Gaming mode",
+    ) -> None:
+        if not config.ADMIN_USER_IDS or not is_admin_user(interaction.user.id):
+            await interaction.response.send_message("This command is restricted to bot administrators.", ephemeral=True)
+            return
+        if not bot_state_instance:
+            await interaction.response.send_message("Bot state not ready. Try again later.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        current_state = await bot_state_instance.get_schedules_pause_state()
+        if current_state.get("paused"):
+            notice = _format_pause_notice(current_state)
+            await interaction.edit_original_response(
+                content=f"Schedules are already paused. {notice}"
+            )
+            return
+        normalized_reason = reason.strip() or "Gaming mode"
+        await bot_state_instance.set_schedules_paused(
+            True,
+            reason=normalized_reason,
+            user_id=interaction.user.id,
+        )
+        new_state = await bot_state_instance.get_schedules_pause_state()
+        await interaction.edit_original_response(
+            content=(
+                f"Paused all schedules. {_format_pause_notice(new_state)} "
+                "Use `/schedules_resume` when you're ready."
+            )
+        )
+
+    @bot_instance.tree.command(name="schedules_resume", description="Resume scheduled jobs if gaming mode is active (admin only).")
+    async def schedules_resume_command(interaction: discord.Interaction) -> None:
+        if not config.ADMIN_USER_IDS or not is_admin_user(interaction.user.id):
+            await interaction.response.send_message("This command is restricted to bot administrators.", ephemeral=True)
+            return
+        if not bot_state_instance:
+            await interaction.response.send_message("Bot state not ready. Try again later.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        current_state = await bot_state_instance.get_schedules_pause_state()
+        if not current_state.get("paused"):
+            await interaction.edit_original_response(content="Schedules are already running.")
+            return
+        await bot_state_instance.set_schedules_paused(False, user_id=interaction.user.id)
+        notice = _format_pause_notice(current_state)
+        await interaction.edit_original_response(
+            content=(
+                f"Resumed all schedules. They were previously paused as: {notice} "
+                "Jobs will pick back up within the next minute."
+            )
+        )
+
     @bot_instance.tree.command(name="schedules", description="List scheduled jobs for this channel (admin only).")
     async def schedules_list_command(interaction: discord.Interaction):
         if not config.ADMIN_USER_IDS or not is_admin_user(interaction.user.id):
@@ -2046,10 +2130,20 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             return
         await interaction.response.defer(ephemeral=True)
         items = await bot_state_instance.list_schedules(interaction.channel_id)
+        pause_state = await bot_state_instance.get_schedules_pause_state()
+        pause_notice = _format_pause_notice(pause_state) if pause_state.get("paused") else ""
         if not items:
-            await interaction.edit_original_response(content="No schedules configured for this channel.")
+            if pause_notice:
+                await interaction.edit_original_response(
+                    content=f"{pause_notice}\n\nNo schedules configured for this channel."
+                )
+            else:
+                await interaction.edit_original_response(content="No schedules configured for this channel.")
             return
         lines = []
+        if pause_notice:
+            lines.append(pause_notice)
+            lines.append("")
         now = datetime.now()
         for s in items:
             last_run = s.get("last_run") or "never"

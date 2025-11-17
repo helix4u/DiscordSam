@@ -38,6 +38,7 @@ class _LLMRegistry:
                     base_url=provider.api_base_url,
                     api_key=provider.api_key or "lm-studio",
                     timeout=resolved_timeout,
+                    max_retries=config.OPENAI_CLIENT_MAX_RETRIES,
                 )
                 self._shared[cache_key] = client
             self._runtimes[role] = LLMRuntime(provider=provider, client=client)

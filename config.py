@@ -285,10 +285,10 @@ class Config:
 
         # Shared rate limiter configuration for outbound HTTP requests.
         # Proactive rate limiting: max requests per minute (default conservative for OpenRouter)
-        self.RATE_LIMIT_REQUESTS_PER_MINUTE = _get_float("RATE_LIMIT_REQUESTS_PER_MINUTE", 16.0)
+        self.RATE_LIMIT_REQUESTS_PER_MINUTE = _get_float("RATE_LIMIT_REQUESTS_PER_MINUTE", 15.0)
         self.RATE_LIMIT_JITTER_SECONDS = _get_float("RATE_LIMIT_JITTER_SECONDS", 1.5)
         self.RATE_LIMIT_FAILURE_BACKOFF_SECONDS = _get_float(
-            "RATE_LIMIT_FAILURE_BACKOFF_SECONDS", 45.0
+            "RATE_LIMIT_FAILURE_BACKOFF_SECONDS", 3.0
         )
         self.RATE_LIMIT_FALLBACK_WINDOW_SECONDS = _get_float(
             "RATE_LIMIT_FALLBACK_WINDOW_SECONDS", 90.0
@@ -359,6 +359,11 @@ class Config:
         self.GROUND_NEWS_ARTICLE_DELAY_SECONDS = _get_float(
             "GROUND_NEWS_ARTICLE_DELAY_SECONDS", 5.0
         )
+
+        # Archive service configuration for paywalled sites
+        self.USE_ARCHIVE_SERVICE = _get_bool("USE_ARCHIVE_SERVICE", False)  # Disabled by default
+        self.ARCHIVE_SERVICE = os.getenv("ARCHIVE_SERVICE", "archive.is")  # Options: archive.is, archive.today, archive.ph, web.archive.org, none
+        self.ARCHIVE_FALLBACK_TO_ORIGINAL = _get_bool("ARCHIVE_FALLBACK_TO_ORIGINAL", True)  # Fallback to original URL if archive fails
 
         # Configuration for Playwright cleanup task
         self.PLAYWRIGHT_CLEANUP_INTERVAL_MINUTES = _get_int("PLAYWRIGHT_CLEANUP_INTERVAL_MINUTES", 5) # How often the cleanup task runs

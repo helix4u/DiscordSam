@@ -53,7 +53,7 @@ LOGIT_BIAS_UNWANTED_TOKENS: Dict[int, int] = {
     11100: -100,   # 😂 tears of joy
     49867: -100,   # 👍 thumbs up
     15064: -100,   # ✅ checkmark
-    # Add more as needed
+
 }
 
 # The OpenAI API expects string keys for the logit_bias mapping.

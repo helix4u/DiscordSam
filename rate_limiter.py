@@ -14,16 +14,16 @@ class RateLimiter:
     """Proactive async rate limiter with sliding window and per-key cooldowns.
     
     This limiter enforces both:
-    1. Proactive rate limiting: max requests per time window (e.g., 20 req/min)
+    1. Proactive rate limiting: max requests per time window (e.g., 16 req/min)
     2. Reactive cooldowns: respects 429 responses and backoff headers
     """
 
     def __init__(
         self,
         *,
-        requests_per_minute: float = 20.0,
+        requests_per_minute: float = 16.0,
         jitter_seconds: float = 1.5,
-        failure_backoff_seconds: float = 45.0,
+        failure_backoff_seconds: float = 3.0,
         fallback_window_seconds: float = 90.0,
     ) -> None:
         self._requests_per_minute = max(1.0, requests_per_minute)

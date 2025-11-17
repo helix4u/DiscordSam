@@ -213,13 +213,17 @@ async def safe_followup_send(
     try:
         return await interaction.followup.send(**kwargs)
     except discord.HTTPException as e:
-        if e.status == 401 and getattr(e, "code", None) == 50027:
+        status = getattr(e, "status", None)
+        code = getattr(e, "code", None)
+        token_lost = (status == 401 and code == 50027) or (status == 404 and code == 10062)
+        if token_lost:
             logger.warning(
-                "Interaction token expired%s; falling back to channel.send", " " + error_hint if error_hint else ""
+                "Interaction token unavailable%s; falling back to alternate delivery",
+                " " + error_hint if error_hint else "",
             )
             if kwargs.get("ephemeral"):
                 logger.warning(
-                    "Skipping channel fallback for ephemeral message%s to avoid leaking response.",
+                    "Skipping public fallback for ephemeral message%s to avoid leaking response.",
                     " " + error_hint if error_hint else "",
                 )
                 content = kwargs.get("content")
@@ -227,7 +231,7 @@ async def safe_followup_send(
                     try:
                         return await interaction.user.send(content)
                     except Exception as dm_exc:
-                        logger.warning("Failed to DM user after token expiry: %s", dm_exc)
+                        logger.warning("Failed to DM user after token loss: %s", dm_exc)
                 raise
             if interaction.channel:
                 kwargs_fallback = dict(kwargs)

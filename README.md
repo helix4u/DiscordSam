@@ -36,6 +36,7 @@ DiscordSam is an advanced, context-aware Discord bot designed to provide intelli
 *   **High Configurability:** Most settings are managed via a `.env` file, allowing for easy customization of LLM endpoints, API keys, and bot behavior.
 *   **Modular Codebase:** Refactored into multiple Python files for better organization, maintainability, and scalability.
 *   **Automated Maintenance:** Includes background tasks for checking reminders, cleaning up idle Playwright processes, and pruning/summarizing old chat history from ChromaDB.
+*   **Gaming Mode Pause Switch:** Admins can temporarily pause/resume all scheduled scrapers via `/schedules_pause` and `/schedules_resume` so background Playwright windows stop stealing focus when you're gaming or heads-down on work.
 
 ---
 
@@ -291,6 +292,9 @@ The bot now uses a provider-based architecture to manage different LLM roles (ma
 *   `PLAYWRIGHT_CLEANUP_INTERVAL_MINUTES` (Default: `5`): How often the background task runs to clean up idle Playwright processes.
 *   `PLAYWRIGHT_IDLE_CLEANUP_THRESHOLD_MINUTES` (Default: `10`): How long Playwright must be idle before its processes are terminated.
 *   `SCRAPE_LOCK_TIMEOUT_SECONDS` (Default: `60`): How long to wait when acquiring the scraping lock before giving up.
+*   `USE_ARCHIVE_SERVICE` (Default: `false`): Enable archive service for paywalled domains (NYTimes, WSJ, DailyBeast). When enabled, URLs from these domains will be redirected through an archive service before scraping.
+*   `ARCHIVE_SERVICE` (Default: `archive.is`): Archive service to use for paywalled domains. Options: `archive.is`, `archive.today`, `archive.ph`, `web.archive.org`, or `none`. Set to `none` to explicitly disable archive service even if `USE_ARCHIVE_SERVICE` is enabled.
+*   `ARCHIVE_FALLBACK_TO_ORIGINAL` (Default: `true`): If `true`, the bot will fallback to scraping the original URL if the archive service fails, times out, returns no content, or encounters an error. This ensures paywalled articles can still be accessed if archive services are blocked or unavailable.
 
 **ChromaDB (RAG & Long-Term Memory):**
 
@@ -507,8 +511,19 @@ DiscordSam offers a variety of slash commands for diverse functionalities, group
     *   **Purpose:** Schedules a recurring job to run `/allrss` in the current channel.
     *   **Arguments:** `interval_minutes` (Required, min 15), `limit` (Optional, Default: 10).
 
+*   **`/schedules_pause [reason]`**
+    *   **Purpose:** Activates "gaming mode" by pausing all scheduled scrapers globally so Playwright windows stop taking focus.
+    *   **Arguments:** `reason` (Optional, defaults to "Gaming mode" and is shown in `/schedules` output).
+    *   **Behavior:** Pauses the scheduler loop until an admin runs `/schedules_resume`.
+
+*   **`/schedules_resume`**
+    *   **Purpose:** Turns gaming mode off and resumes all paused schedules.
+    *   **Arguments:** None.
+    *   **Behavior:** Background jobs pick back up on the next scheduler tick (about 60 seconds).
+
 *   **`/schedules`**
     *   **Purpose:** Lists all active scheduled jobs for the current channel.
+    *   **Behavior:** When gaming mode is active, it shows who paused schedules, when, and why before listing jobs.
 
 *   **`/unschedule <schedule_id>`**
     *   **Purpose:** Removes a scheduled job by its ID.
