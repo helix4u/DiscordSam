@@ -133,160 +133,167 @@ def setup_events_and_tasks(bot: commands.Bot, llm_client_in: Any, bot_state_in: 
         except Exception as e:
             logger.error(f"Timeline pruner task failed: {e}", exc_info=True)
 
-        @tasks.loop(seconds=60)
-        async def scheduler_task():
-            """Check and run due background schedules (scoped per-channel)."""
-            if not bot_state_instance or not bot_instance:
+    @tasks.loop(seconds=60)
+    async def scheduler_task():
+        """Check and run due background schedules (scoped per-channel)."""
+        if not bot_state_instance or not bot_instance:
+            return
+        try:
+            pause_state = await bot_state_instance.get_schedules_pause_state()
+            if pause_state.get("paused"):
+                already_logged = getattr(scheduler_task, "_pause_logged", False)
+                if not already_logged:
+                    reason = pause_state.get("reason") or "No reason provided"
+                    paused_by = pause_state.get("paused_by")
+                    paused_at = pause_state.get("paused_at")
+                    logger.info(
+                        "Scheduler paused by %s at %s. Reason: %s",
+                        paused_by or "unknown user",
+                        paused_at or "unknown time",
+                        reason,
+                    )
+                    scheduler_task._pause_logged = True  # type: ignore[attr-defined]
+                logger.debug("Scheduler: Pause is active, skipping all scheduled jobs.")
                 return
-            try:
-                pause_state = await bot_state_instance.get_schedules_pause_state()
-                if pause_state.get("paused"):
-                    already_logged = getattr(scheduler_task, "_pause_logged", False)
-                    if not already_logged:
-                        reason = pause_state.get("reason") or "No reason provided"
-                        paused_by = pause_state.get("paused_by")
-                        paused_at = pause_state.get("paused_at")
-                        logger.info(
-                            "Scheduler paused by %s at %s. Reason: %s",
-                            paused_by or "unknown user",
-                            paused_at or "unknown time",
-                            reason,
-                        )
-                        scheduler_task._pause_logged = True  # type: ignore[attr-defined]
-                    return
-                if getattr(scheduler_task, "_pause_logged", False):
-                    logger.info("Scheduler pause cleared. Resuming scheduled jobs.")
-                    scheduler_task._pause_logged = False  # type: ignore[attr-defined]
+            if getattr(scheduler_task, "_pause_logged", False):
+                logger.info("Scheduler pause cleared. Resuming scheduled jobs.")
+                scheduler_task._pause_logged = False  # type: ignore[attr-defined]
 
-                schedules = await bot_state_instance.list_schedules()
-                now = datetime.now()
-                for s in schedules:
-                    try:
-                        sched_id = s.get("id")
-                        channel_id = int(s.get("channel_id"))
-                        kind = s.get("type")
-                        interval_seconds = int(s.get("interval_seconds", 0))
-                        last_run_iso = s.get("last_run")
-                        last_run_dt = None
-                        if isinstance(last_run_iso, str):
-                            try:
-                                last_run_dt = datetime.fromisoformat(last_run_iso)
-                            except Exception:
-                                last_run_dt = None
+            schedules = await bot_state_instance.list_schedules()
+            now = datetime.now()
+            for s in schedules:
+                try:
+                    sched_id = s.get("id")
+                    channel_id = int(s.get("channel_id"))
+                    kind = s.get("type")
+                    interval_seconds = int(s.get("interval_seconds", 0))
+                    last_run_iso = s.get("last_run")
+                    last_run_dt = None
+                    if isinstance(last_run_iso, str):
+                        try:
+                            last_run_dt = datetime.fromisoformat(last_run_iso)
+                        except Exception:
+                            last_run_dt = None
 
-                        due = False
-                        if interval_seconds > 0:
-                            if not last_run_dt:
-                                due = True
-                            else:
-                                due = (now - last_run_dt).total_seconds() >= interval_seconds
+                    due = False
+                    if interval_seconds > 0:
+                        if not last_run_dt:
+                            due = True
                         else:
-                            # If interval not set, skip
-                            continue
+                            due = (now - last_run_dt).total_seconds() >= interval_seconds
+                    else:
+                        # If interval not set, skip
+                        continue
 
-                        if not due:
-                            continue
+                    if not due:
+                        continue
 
-                        # Serialize execution per global scrape lock for heavy tasks
-                        if kind == "allrss":
-                            async with bot_state_instance.get_scrape_lock():
-                                lim = int(s.get("params", {}).get("limit", 10))
+                    # Check pause state again right before executing (in case it changed during iteration)
+                    pause_state_check = await bot_state_instance.get_schedules_pause_state()
+                    if pause_state_check.get("paused"):
+                        logger.debug("Scheduler: Skipping due schedule %s (type: %s) - schedules are paused.", sched_id, kind)
+                        continue
+
+                    # Serialize execution per global scrape lock for heavy tasks
+                    if kind == "allrss":
+                        async with bot_state_instance.get_scrape_lock():
+                            lim = int(s.get("params", {}).get("limit", 10))
+                            try:
+                                await run_allrss_digest(
+                                    bot_instance,
+                                    llm_client_instance,
+                                    channel_id,
+                                    limit=lim,
+                                    bot_state=bot_state_instance,
+                                )
+                            except asyncio.CancelledError:
+                                logger.info("Scheduler: digest for channel %s cancelled.", channel_id)
+                                continue
+                            await bot_state_instance.update_schedule_last_run(sched_id, now)
+                    elif kind == "alltweets":
+                        async with bot_state_instance.get_scrape_lock():
+                            params = s.get("params", {}) or {}
+                            lim = int(params.get("limit", 100))
+                            list_name = str(params.get("list_name") or "")
+                            scope_guild_raw = params.get("scope_guild_id")
+                            scope_user_raw = params.get("scope_user_id")
+                            scope_guild_id = None
+                            scope_user_id = None
+                            if scope_guild_raw is not None:
                                 try:
-                                    await run_allrss_digest(
-                                        bot_instance,
-                                        llm_client_instance,
-                                        channel_id,
-                                        limit=lim,
-                                        bot_state=bot_state_instance,
-                                    )
-                                except asyncio.CancelledError:
-                                    logger.info("Scheduler: digest for channel %s cancelled.", channel_id)
-                                    continue
-                                await bot_state_instance.update_schedule_last_run(sched_id, now)
-                        elif kind == "alltweets":
-                            async with bot_state_instance.get_scrape_lock():
-                                params = s.get("params", {}) or {}
-                                lim = int(params.get("limit", 100))
-                                list_name = str(params.get("list_name") or "")
-                                scope_guild_raw = params.get("scope_guild_id")
-                                scope_user_raw = params.get("scope_user_id")
-                                scope_guild_id = None
-                                scope_user_id = None
-                                if scope_guild_raw is not None:
+                                    scope_guild_id = int(scope_guild_raw)
+                                except (TypeError, ValueError):
+                                    scope_guild_id = None
+                            if scope_user_raw is not None:
+                                try:
+                                    scope_user_id = int(scope_user_raw)
+                                except (TypeError, ValueError):
+                                    scope_user_id = None
+                            if scope_user_id is None and scope_guild_id is None:
+                                created_by = s.get("created_by")
+                                if created_by is not None:
                                     try:
-                                        scope_guild_id = int(scope_guild_raw)
-                                    except (TypeError, ValueError):
-                                        scope_guild_id = None
-                                if scope_user_raw is not None:
-                                    try:
-                                        scope_user_id = int(scope_user_raw)
+                                        scope_user_id = int(created_by)
                                     except (TypeError, ValueError):
                                         scope_user_id = None
-                                if scope_user_id is None and scope_guild_id is None:
-                                    created_by = s.get("created_by")
-                                    if created_by is not None:
-                                        try:
-                                            scope_user_id = int(created_by)
-                                        except (TypeError, ValueError):
-                                            scope_user_id = None
-                                try:
-                                    await run_alltweets_digest(
-                                        bot_instance,
-                                        llm_client_instance,
-                                        channel_id,
-                                        limit=lim,
-                                        list_name=list_name,
-                                        scope_guild_id=scope_guild_id,
-                                        scope_user_id=scope_user_id,
-                                        bot_state=bot_state_instance,
-                                    )
-                                except asyncio.CancelledError:
-                                    logger.info("Scheduler: alltweets for channel %s cancelled.", channel_id)
-                                    continue
-                                await bot_state_instance.update_schedule_last_run(sched_id, now)
-                        elif kind == "groundrss":
-                            async with bot_state_instance.get_scrape_lock():
-                                params = s.get("params", {}) or {}
-                                lim = int(params.get("limit", 100))
-                                try:
-                                    await run_groundrss_digest(
-                                        bot_instance,
-                                        llm_client_instance,
-                                        channel_id,
-                                        limit=lim,
-                                        bot_state=bot_state_instance,
-                                    )
-                                except asyncio.CancelledError:
-                                    logger.info("Scheduler: groundrss for channel %s cancelled.", channel_id)
-                                    continue
-                                await bot_state_instance.update_schedule_last_run(sched_id, now)
-                        elif kind == "groundtopic":
-                            async with bot_state_instance.get_scrape_lock():
-                                params = s.get("params", {}) or {}
-                                lim = int(params.get("limit", 100))
-                                topic_slug = params.get("topic")
-                                if not topic_slug:
-                                    logger.warning("Scheduler: groundtopic schedule %s missing topic slug.", sched_id)
-                                    continue
-                                try:
-                                    await run_groundtopic_digest(
-                                        bot_instance,
-                                        llm_client_instance,
-                                        channel_id,
-                                        topic_slug=topic_slug,
-                                        limit=lim,
-                                        bot_state=bot_state_instance,
-                                    )
-                                except asyncio.CancelledError:
-                                    logger.info("Scheduler: groundtopic for channel %s cancelled.", channel_id)
-                                    continue
-                                await bot_state_instance.update_schedule_last_run(sched_id, now)
-                    except Exception as inner:
-                        logger.error("Scheduler: error running schedule %s: %s", s, inner, exc_info=True)
-            except Exception as e:
-                logger.error("Scheduler: loop error: %s", e, exc_info=True)
+                            try:
+                                await run_alltweets_digest(
+                                    bot_instance,
+                                    llm_client_instance,
+                                    channel_id,
+                                    limit=lim,
+                                    list_name=list_name,
+                                    scope_guild_id=scope_guild_id,
+                                    scope_user_id=scope_user_id,
+                                    bot_state=bot_state_instance,
+                                )
+                            except asyncio.CancelledError:
+                                logger.info("Scheduler: alltweets for channel %s cancelled.", channel_id)
+                                continue
+                            await bot_state_instance.update_schedule_last_run(sched_id, now)
+                    elif kind == "groundrss":
+                        async with bot_state_instance.get_scrape_lock():
+                            params = s.get("params", {}) or {}
+                            lim = int(params.get("limit", 100))
+                            try:
+                                await run_groundrss_digest(
+                                    bot_instance,
+                                    llm_client_instance,
+                                    channel_id,
+                                    limit=lim,
+                                    bot_state=bot_state_instance,
+                                )
+                            except asyncio.CancelledError:
+                                logger.info("Scheduler: groundrss for channel %s cancelled.", channel_id)
+                                continue
+                            await bot_state_instance.update_schedule_last_run(sched_id, now)
+                    elif kind == "groundtopic":
+                        async with bot_state_instance.get_scrape_lock():
+                            params = s.get("params", {}) or {}
+                            lim = int(params.get("limit", 100))
+                            topic_slug = params.get("topic")
+                            if not topic_slug:
+                                logger.warning("Scheduler: groundtopic schedule %s missing topic slug.", sched_id)
+                                continue
+                            try:
+                                await run_groundtopic_digest(
+                                    bot_instance,
+                                    llm_client_instance,
+                                    channel_id,
+                                    topic_slug=topic_slug,
+                                    limit=lim,
+                                    bot_state=bot_state_instance,
+                                )
+                            except asyncio.CancelledError:
+                                logger.info("Scheduler: groundtopic for channel %s cancelled.", channel_id)
+                                continue
+                            await bot_state_instance.update_schedule_last_run(sched_id, now)
+                except Exception as inner:
+                    logger.error("Scheduler: error running schedule %s: %s", s, inner, exc_info=True)
+        except Exception as e:
+            logger.error("Scheduler: loop error: %s", e, exc_info=True)
 
-        scheduler_task._pause_logged = False  # type: ignore[attr-defined]
+    scheduler_task._pause_logged = False  # type: ignore[attr-defined]
 
 
     @bot_instance.event # type: ignore
