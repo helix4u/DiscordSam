@@ -37,6 +37,10 @@ DiscordSam is an advanced, context-aware Discord bot designed to provide intelli
 *   **Modular Codebase:** Refactored into multiple Python files for better organization, maintainability, and scalability.
 *   **Automated Maintenance:** Includes background tasks for checking reminders, cleaning up idle Playwright processes, and pruning/summarizing old chat history from ChromaDB.
 *   **Gaming Mode Pause Switch:** Admins can temporarily pause/resume all scheduled scrapers via `/schedules_pause` and `/schedules_resume` so background Playwright windows stop stealing focus when you're gaming or heads-down on work.
+*   **Knowledge Graph System:** Per-day knowledge graphs that deduplicate, merge, and consolidate entities, relations, and observations. Enables efficient retrieval and reduces database bloat.
+*   **Multi-Provider LLM Support:** Seamlessly switch between LLM providers including Local (LM Studio, Ollama), OpenAI, Claude (Anthropic), Google (Gemini), Mistral, and OpenRouter with preset configurations.
+*   **Usage Tracking & Spending Reports:** Comprehensive token usage tracking with cost calculation, daily/weekly/monthly spending reports, and cost projections based on historical usage.
+*   **Enhanced Rate Limiting:** Full compliance with rate limit headers from all major providers, proactive rate limiting to avoid hitting limits, global edits-per-second limiting, and channel output serialization.
 
 ---
 
@@ -315,6 +319,45 @@ The bot now uses a provider-based architecture to manage different LLM roles (ma
 *   `ENABLE_MEMORY_MERGE` (Default: `false`): Set to `true` to enable the experimental memory merging feature.
 *   `TIMELINE_PRUNE_DAYS` (Default: `365`): Age in days at which chat history is pruned and summarized.
 
+**Multi-Provider LLM Configuration:**
+
+The bot supports multiple LLM providers that can be switched dynamically via Discord commands.
+
+*   `OPENAI_API_KEY` (Optional): API key for OpenAI services.
+*   `ANTHROPIC_API_KEY` (Optional): API key for Anthropic (Claude) services.
+*   `GOOGLE_API_KEY` (Optional): API key for Google (Gemini) services.
+*   `MISTRAL_API_KEY` (Optional): API key for Mistral AI services.
+*   `OPENROUTER_API_KEY` (Optional): API key for OpenRouter services.
+*   `OPENROUTER_REFERER` (Optional): HTTP Referer header for OpenRouter requests.
+*   `OPENROUTER_TITLE` (Default: `DiscordSam`): X-Title header for OpenRouter requests.
+*   `DEFAULT_LLM_PROVIDER` (Default: `lm_studio`): The default provider to use on startup.
+
+**Knowledge Graph Configuration:**
+
+*   `KG_STORAGE_PATH` (Default: `./knowledge_graphs`): Directory for storing knowledge graph snapshots.
+*   `CHROMA_KG_COLLECTION_NAME` (Default: `knowledge_graph_snapshots`): ChromaDB collection for knowledge graphs.
+*   `KG_AUTO_BUILD` (Default: `false`): Automatically build daily knowledge graphs.
+*   `KG_BUILD_DAYS_BACK` (Default: `7`): Number of days to build graphs for on startup.
+*   `KG_CLEANUP_DAYS` (Default: `90`): Age in days after which old daily snapshots are cleaned up.
+
+**Usage Tracking Configuration:**
+
+*   `USAGE_TRACKING_ENABLED` (Default: `true`): Enable token usage and cost tracking.
+*   `USAGE_DB_PATH` (Default: `./usage_tracking.db`): SQLite database path for usage records.
+*   `USAGE_RETENTION_DAYS` (Default: `365`): Number of days to retain usage records.
+
+**Enhanced Rate Limiting Configuration:**
+
+*   `RATE_LIMIT_OPENAI_RPM` (Default: `60.0`): Requests per minute for OpenAI.
+*   `RATE_LIMIT_ANTHROPIC_RPM` (Default: `50.0`): Requests per minute for Anthropic.
+*   `RATE_LIMIT_GOOGLE_RPM` (Default: `60.0`): Requests per minute for Google.
+*   `RATE_LIMIT_MISTRAL_RPM` (Default: `100.0`): Requests per minute for Mistral.
+*   `RATE_LIMIT_OPENROUTER_RPM` (Default: `20.0`): Requests per minute for OpenRouter.
+*   `RATE_LIMIT_LOCAL_RPM` (Default: `1000.0`): Requests per minute for local servers.
+*   `RATE_LIMIT_SAFETY_MARGIN` (Default: `0.9`): Use only 90% of rate limit capacity proactively.
+*   `MAX_CONCURRENT_REQUESTS` (Default: `10`): Maximum concurrent requests per provider.
+*   `CHANNEL_OUTPUT_TIMEOUT_SECONDS` (Default: `30.0`): Timeout for acquiring channel output lock.
+
 **Discord Embed & Streaming Settings:**
 
 *   `EMBED_COLOR_INCOMPLETE` (Default: `0xFFA500` - Orange): Hex color code for embeds indicating an in-progress operation.
@@ -545,6 +588,88 @@ DiscordSam offers a variety of slash commands for diverse functionalities, group
 *   **`/rss_podcast <enabled>`**
     *   **Purpose:** Toggles whether the bot automatically runs `/podcastthatshit` after RSS commands.
     *   **Arguments:** `enabled` (Required: `true` or `false`).
+
+### Knowledge Graph Commands
+
+*   **`/kg_build [date] [force_rebuild]`**
+    *   **Purpose:** Build or rebuild the knowledge graph for a specific date.
+    *   **Arguments:** `date` (Optional, YYYY-MM-DD format, defaults to today), `force_rebuild` (Optional, default: false).
+    *   **Access:** Admin-only.
+    *   **Behavior:** Creates a daily knowledge graph snapshot by extracting and deduplicating entities, relations, and observations from that day's database content.
+
+*   **`/kg_query <query> [days_back]`**
+    *   **Purpose:** Query the knowledge graph for relevant information.
+    *   **Arguments:** `query` (Required), `days_back` (Optional, default: 30).
+    *   **Behavior:** Searches knowledge graph snapshots for entities, relations, and observations relevant to the query and returns a synthesized summary.
+
+*   **`/kg_maintain`**
+    *   **Purpose:** Run maintenance tasks on knowledge graphs.
+    *   **Access:** Admin-only.
+    *   **Behavior:** Builds missing daily graphs, cleans up old snapshots, and reports statistics.
+
+*   **`/kg_stats`**
+    *   **Purpose:** Show knowledge graph statistics.
+    *   **Behavior:** Displays counts of snapshots, entities, relations, and observations.
+
+### Provider Management Commands
+
+*   **`/provider_list`**
+    *   **Purpose:** List all available LLM providers.
+    *   **Behavior:** Shows available providers with their status, default models, and capabilities.
+
+*   **`/provider_set <provider> [api_key]`**
+    *   **Purpose:** Set the active LLM provider.
+    *   **Arguments:** `provider` (Required: lm_studio, ollama, openai, openai_responses, anthropic, google, mistral, openrouter), `api_key` (Optional).
+    *   **Access:** Admin-only.
+    *   **Behavior:** Changes the active provider for all subsequent LLM requests.
+
+*   **`/provider_test <provider>`**
+    *   **Purpose:** Test connectivity to a specific provider.
+    *   **Arguments:** `provider` (Required).
+    *   **Access:** Admin-only.
+    *   **Behavior:** Sends a test request and reports latency and success/failure.
+
+*   **`/provider_info`**
+    *   **Purpose:** Show current provider information.
+    *   **Behavior:** Displays the active provider's configuration details.
+
+### Pricing & Spending Commands
+
+*   **`/pricing <model>`**
+    *   **Purpose:** Show pricing information for a specific model.
+    *   **Arguments:** `model` (Required).
+    *   **Behavior:** Displays input/output costs per million tokens with example calculations.
+
+*   **`/pricing_list`**
+    *   **Purpose:** List pricing for all known models.
+    *   **Behavior:** Shows a table of all models with their input, output, and cached token pricing.
+
+*   **`/spending [period]`**
+    *   **Purpose:** Show spending report for a time period.
+    *   **Arguments:** `period` (Optional: hourly, daily, weekly, monthly, yearly, all_time; default: daily).
+    *   **Behavior:** Displays total requests, tokens, costs, and breakdowns by provider/model.
+
+*   **`/spending_projection [days]`**
+    *   **Purpose:** Show projected costs for the upcoming period.
+    *   **Arguments:** `days` (Optional, default: 30).
+    *   **Behavior:** Projects future costs based on recent usage patterns.
+
+*   **`/spending_daily [days]`**
+    *   **Purpose:** Show daily spending breakdown.
+    *   **Arguments:** `days` (Optional, default: 7).
+    *   **Behavior:** Shows a day-by-day table of requests, tokens, and costs.
+
+### Rate Limiting & Statistics Commands
+
+*   **`/ratelimit_status`**
+    *   **Purpose:** Show rate limiter status and statistics.
+    *   **Access:** Admin-only.
+    *   **Behavior:** Displays API rate limiter stats, active requests, and channel output limiter stats.
+
+*   **`/bot_stats`**
+    *   **Purpose:** Show comprehensive bot statistics.
+    *   **Access:** Admin-only.
+    *   **Behavior:** Shows memory usage, scheduled jobs, active operations, output queues, and more.
 
 ---
 

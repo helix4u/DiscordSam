@@ -1,12 +1,61 @@
 import asyncio
 from collections import defaultdict
-from datetime import datetime, timedelta # Added timedelta
-from typing import List, Tuple, Any, Optional # Added Optional
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
+from typing import List, Tuple, Any, Optional, Set, Callable, Awaitable
 from typing import Dict
 import json
 import os
+import time
+from enum import Enum
 
 from config import config
+
+
+# ============================================================================
+# Channel Operation State
+# ============================================================================
+
+class OperationType(Enum):
+    """Types of channel operations."""
+    CHAT = "chat"
+    COMMAND = "command"
+    RSS_DIGEST = "rss_digest"
+    TWEET_DIGEST = "tweet_digest"
+    NEWS_DIGEST = "news_digest"
+    SCRAPING = "scraping"
+    TTS = "tts"
+    SCHEDULED = "scheduled"
+    BACKGROUND = "background"
+
+
+@dataclass
+class ChannelOperation:
+    """Tracks an active operation in a channel."""
+    operation_id: str
+    operation_type: OperationType
+    channel_id: int
+    started_at: datetime
+    description: str = ""
+    user_id: Optional[int] = None
+    progress: float = 0.0  # 0.0 to 1.0
+    status_message: str = ""
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def duration_seconds(self) -> float:
+        """Get operation duration in seconds."""
+        return (datetime.now(timezone.utc) - self.started_at).total_seconds()
+
+
+@dataclass
+class OutputQueueItem:
+    """An item waiting to be sent to a channel."""
+    channel_id: int
+    content: Any
+    priority: int = 0  # Higher = more urgent
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    callback: Optional[Callable[[], Awaitable[None]]] = None
+
 
 class BotState:
     """An async-safe container for the bot's shared, mutable state."""
@@ -444,3 +493,248 @@ class BotState:
             if guild_id in self._tts_delivery_by_guild:
                 self._tts_delivery_by_guild.pop(guild_id, None)
                 self._save_tts_delivery_modes()
+
+    # --- Channel Operation Tracking ---
+
+    async def start_channel_operation(
+        self,
+        channel_id: int,
+        operation_id: str,
+        operation_type: OperationType,
+        description: str = "",
+        user_id: Optional[int] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> ChannelOperation:
+        """Start tracking a new channel operation."""
+        async with self._lock:
+            operation = ChannelOperation(
+                operation_id=operation_id,
+                operation_type=operation_type,
+                channel_id=channel_id,
+                started_at=datetime.now(timezone.utc),
+                description=description,
+                user_id=user_id,
+                metadata=metadata or {},
+            )
+            if not hasattr(self, "_channel_operations"):
+                self._channel_operations: Dict[int, ChannelOperation] = {}
+            self._channel_operations[channel_id] = operation
+            return operation
+
+    async def update_channel_operation(
+        self,
+        channel_id: int,
+        progress: Optional[float] = None,
+        status_message: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Optional[ChannelOperation]:
+        """Update an existing channel operation."""
+        async with self._lock:
+            if not hasattr(self, "_channel_operations"):
+                return None
+            operation = self._channel_operations.get(channel_id)
+            if operation:
+                if progress is not None:
+                    operation.progress = min(1.0, max(0.0, progress))
+                if status_message is not None:
+                    operation.status_message = status_message
+                if metadata:
+                    operation.metadata.update(metadata)
+            return operation
+
+    async def end_channel_operation(
+        self,
+        channel_id: int,
+        operation_id: Optional[str] = None,
+    ) -> Optional[ChannelOperation]:
+        """End a channel operation."""
+        async with self._lock:
+            if not hasattr(self, "_channel_operations"):
+                return None
+            operation = self._channel_operations.get(channel_id)
+            if operation:
+                # Only remove if operation_id matches (if specified)
+                if operation_id is None or operation.operation_id == operation_id:
+                    return self._channel_operations.pop(channel_id, None)
+            return None
+
+    async def get_channel_operation(
+        self,
+        channel_id: int,
+    ) -> Optional[ChannelOperation]:
+        """Get the current operation for a channel."""
+        async with self._lock:
+            if not hasattr(self, "_channel_operations"):
+                return None
+            return self._channel_operations.get(channel_id)
+
+    async def is_channel_busy(self, channel_id: int) -> bool:
+        """Check if a channel has an active operation."""
+        async with self._lock:
+            if not hasattr(self, "_channel_operations"):
+                return False
+            return channel_id in self._channel_operations
+
+    async def get_all_channel_operations(self) -> Dict[int, ChannelOperation]:
+        """Get all active channel operations."""
+        async with self._lock:
+            if not hasattr(self, "_channel_operations"):
+                return {}
+            return dict(self._channel_operations)
+
+    async def cleanup_stale_operations(
+        self,
+        max_age_seconds: float = 3600.0,
+    ) -> int:
+        """Remove stale operations older than max_age_seconds."""
+        async with self._lock:
+            if not hasattr(self, "_channel_operations"):
+                return 0
+            now = datetime.now(timezone.utc)
+            stale_channels = []
+            for channel_id, operation in self._channel_operations.items():
+                if (now - operation.started_at).total_seconds() > max_age_seconds:
+                    stale_channels.append(channel_id)
+            for channel_id in stale_channels:
+                self._channel_operations.pop(channel_id, None)
+            return len(stale_channels)
+
+    # --- Output Queue Management ---
+
+    async def queue_output(
+        self,
+        channel_id: int,
+        content: Any,
+        priority: int = 0,
+        callback: Optional[Callable[[], Awaitable[None]]] = None,
+    ) -> None:
+        """Queue content for output to a channel."""
+        async with self._lock:
+            if not hasattr(self, "_output_queues"):
+                self._output_queues: Dict[int, List[OutputQueueItem]] = {}
+            if channel_id not in self._output_queues:
+                self._output_queues[channel_id] = []
+            
+            item = OutputQueueItem(
+                channel_id=channel_id,
+                content=content,
+                priority=priority,
+                callback=callback,
+            )
+            self._output_queues[channel_id].append(item)
+            # Sort by priority (highest first)
+            self._output_queues[channel_id].sort(key=lambda x: -x.priority)
+
+    async def get_next_output(
+        self,
+        channel_id: int,
+    ) -> Optional[OutputQueueItem]:
+        """Get and remove the next queued output for a channel."""
+        async with self._lock:
+            if not hasattr(self, "_output_queues"):
+                return None
+            queue = self._output_queues.get(channel_id)
+            if queue:
+                return queue.pop(0)
+            return None
+
+    async def get_output_queue_size(self, channel_id: int) -> int:
+        """Get the number of queued outputs for a channel."""
+        async with self._lock:
+            if not hasattr(self, "_output_queues"):
+                return 0
+            return len(self._output_queues.get(channel_id, []))
+
+    async def clear_output_queue(self, channel_id: int) -> int:
+        """Clear the output queue for a channel."""
+        async with self._lock:
+            if not hasattr(self, "_output_queues"):
+                return 0
+            queue = self._output_queues.pop(channel_id, [])
+            return len(queue)
+
+    # --- Rate Limit State ---
+
+    async def record_api_call(
+        self,
+        provider: str,
+        model: str,
+        tokens: int = 0,
+        success: bool = True,
+    ) -> None:
+        """Record an API call for rate limiting purposes."""
+        async with self._lock:
+            if not hasattr(self, "_api_call_history"):
+                self._api_call_history: List[Dict[str, Any]] = []
+            
+            self._api_call_history.append({
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "provider": provider,
+                "model": model,
+                "tokens": tokens,
+                "success": success,
+            })
+            
+            # Keep only last 1000 records
+            if len(self._api_call_history) > 1000:
+                self._api_call_history = self._api_call_history[-1000:]
+
+    async def get_recent_api_calls(
+        self,
+        minutes: int = 60,
+        provider: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Get recent API calls within the specified time window."""
+        async with self._lock:
+            if not hasattr(self, "_api_call_history"):
+                return []
+            
+            cutoff = datetime.now(timezone.utc) - timedelta(minutes=minutes)
+            cutoff_iso = cutoff.isoformat()
+            
+            result = []
+            for call in self._api_call_history:
+                if call["timestamp"] >= cutoff_iso:
+                    if provider is None or call["provider"] == provider:
+                        result.append(call)
+            return result
+
+    # --- Statistics and Metrics ---
+
+    async def get_bot_statistics(self) -> Dict[str, Any]:
+        """Get comprehensive bot statistics."""
+        history_counts = await self.get_history_counts()
+        reminder_count = await self.get_reminder_count()
+        schedules = await self.list_schedules()
+        pause_state = await self.get_schedules_pause_state()
+        
+        active_operations = {}
+        if hasattr(self, "_channel_operations"):
+            async with self._lock:
+                for ch_id, op in self._channel_operations.items():
+                    active_operations[ch_id] = {
+                        "type": op.operation_type.value,
+                        "description": op.description,
+                        "duration_seconds": op.duration_seconds(),
+                        "progress": op.progress,
+                    }
+        
+        queue_sizes = {}
+        if hasattr(self, "_output_queues"):
+            async with self._lock:
+                for ch_id, queue in self._output_queues.items():
+                    queue_sizes[ch_id] = len(queue)
+        
+        return {
+            "channels_with_history": len(history_counts),
+            "total_messages_cached": sum(history_counts.values()),
+            "pending_reminders": reminder_count,
+            "scheduled_jobs": len(schedules),
+            "schedules_paused": pause_state.get("paused", False),
+            "active_operations": active_operations,
+            "output_queue_sizes": queue_sizes,
+            "playwright_last_usage": (
+                self.last_playwright_usage_time.isoformat()
+                if self.last_playwright_usage_time else None
+            ),
+        }

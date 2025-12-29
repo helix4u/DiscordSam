@@ -371,6 +371,73 @@ class Config:
 
         self.SCRAPE_LOCK_TIMEOUT_SECONDS = _get_int("SCRAPE_LOCK_TIMEOUT_SECONDS", 60) # Timeout for acquiring scrape lock
 
+        # ===============================================================
+        # Multi-Provider LLM Configuration
+        # ===============================================================
+
+        # API Keys for various providers
+        self.OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+        self.ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+        self.GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
+        self.MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "")
+        self.OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
+
+        # OpenRouter specific settings
+        self.OPENROUTER_REFERER = os.getenv("OPENROUTER_REFERER", "")
+        self.OPENROUTER_TITLE = os.getenv("OPENROUTER_TITLE", "DiscordSam")
+
+        # Default provider selection
+        self.DEFAULT_LLM_PROVIDER = os.getenv("DEFAULT_LLM_PROVIDER", "lm_studio")
+
+        # ===============================================================
+        # Knowledge Graph Configuration
+        # ===============================================================
+
+        self.KG_STORAGE_PATH = os.getenv(
+            "KG_STORAGE_PATH",
+            os.path.join(os.path.dirname(__file__), "knowledge_graphs")
+        )
+        self.CHROMA_KG_COLLECTION_NAME = os.getenv(
+            "CHROMA_KG_COLLECTION_NAME", "knowledge_graph_snapshots"
+        )
+        self.KG_AUTO_BUILD = _get_bool("KG_AUTO_BUILD", False)
+        self.KG_BUILD_DAYS_BACK = _get_int("KG_BUILD_DAYS_BACK", 7)
+        self.KG_CLEANUP_DAYS = _get_int("KG_CLEANUP_DAYS", 90)
+
+        # ===============================================================
+        # Usage Tracking Configuration
+        # ===============================================================
+
+        self.USAGE_TRACKING_ENABLED = _get_bool("USAGE_TRACKING_ENABLED", True)
+        self.USAGE_DB_PATH = os.getenv(
+            "USAGE_DB_PATH",
+            os.path.join(os.path.dirname(__file__), "usage_tracking.db")
+        )
+        self.USAGE_RETENTION_DAYS = _get_int("USAGE_RETENTION_DAYS", 365)
+
+        # ===============================================================
+        # Enhanced Rate Limiting Configuration
+        # ===============================================================
+
+        # Per-provider rate limits (requests per minute)
+        self.RATE_LIMIT_OPENAI_RPM = _get_float("RATE_LIMIT_OPENAI_RPM", 60.0)
+        self.RATE_LIMIT_ANTHROPIC_RPM = _get_float("RATE_LIMIT_ANTHROPIC_RPM", 50.0)
+        self.RATE_LIMIT_GOOGLE_RPM = _get_float("RATE_LIMIT_GOOGLE_RPM", 60.0)
+        self.RATE_LIMIT_MISTRAL_RPM = _get_float("RATE_LIMIT_MISTRAL_RPM", 100.0)
+        self.RATE_LIMIT_OPENROUTER_RPM = _get_float("RATE_LIMIT_OPENROUTER_RPM", 20.0)
+        self.RATE_LIMIT_LOCAL_RPM = _get_float("RATE_LIMIT_LOCAL_RPM", 1000.0)
+
+        # Safety margin for rate limiting (percentage of limit to use)
+        self.RATE_LIMIT_SAFETY_MARGIN = _get_float("RATE_LIMIT_SAFETY_MARGIN", 0.9)
+
+        # Maximum concurrent requests per provider
+        self.MAX_CONCURRENT_REQUESTS = _get_int("MAX_CONCURRENT_REQUESTS", 10)
+
+        # Channel output rate limiting
+        self.CHANNEL_OUTPUT_TIMEOUT_SECONDS = _get_float(
+            "CHANNEL_OUTPUT_TIMEOUT_SECONDS", 30.0
+        )
+
     def _build_llm_provider(
         self,
         *,
