@@ -27,10 +27,11 @@ chat_history_collection: Optional[chromadb.Collection] = None
 distilled_chat_summary_collection: Optional[chromadb.Collection] = None
 # news_summary_collection: Optional[chromadb.Collection] = None
 rss_summary_collection: Optional[chromadb.Collection] = None # New collection for RSS summaries
-timeline_summary_collection: Optional[chromadb.Collection] = None
-relation_collection: Optional[chromadb.Collection] = None
-observation_collection: Optional[chromadb.Collection] = None
-tweets_collection: Optional[chromadb.Collection] = None # New collection for tweets
+    timeline_summary_collection: Optional[chromadb.Collection] = None
+    relation_collection: Optional[chromadb.Collection] = None
+    observation_collection: Optional[chromadb.Collection] = None
+    daily_kg_collection: Optional[chromadb.Collection] = None # New collection for consolidated daily KG
+    tweets_collection: Optional[chromadb.Collection] = None # New collection for tweets
 
 
 def _parse_json_with_recovery(content: str) -> Optional[Dict[str, Any]]:
@@ -131,7 +132,7 @@ def _parse_relative_date_range(query: str) -> Optional[Tuple[datetime, datetime]
 def initialize_chromadb() -> bool:
     global chroma_client, chat_history_collection, distilled_chat_summary_collection, \
            news_summary_collection, rss_summary_collection, timeline_summary_collection, \
-           relation_collection, observation_collection, tweets_collection # Added tweets_collection
+           relation_collection, observation_collection, daily_kg_collection, tweets_collection # Added tweets_collection
 
     if chroma_client:
         logger.debug("ChromaDB already initialized.")
@@ -160,6 +161,9 @@ def initialize_chromadb() -> bool:
 
         logger.info(f"Getting or creating ChromaDB collection: {config.CHROMA_OBSERVATIONS_COLLECTION_NAME}")
         observation_collection = chroma_client.get_or_create_collection(name=config.CHROMA_OBSERVATIONS_COLLECTION_NAME)
+
+        logger.info("Getting or creating ChromaDB collection: daily_knowledge_graph")
+        daily_kg_collection = chroma_client.get_or_create_collection(name="daily_knowledge_graph")
 
         logger.info(f"Getting or creating ChromaDB collection: {config.CHROMA_TWEETS_COLLECTION_NAME}") # New
         tweets_collection = chroma_client.get_or_create_collection(name=config.CHROMA_TWEETS_COLLECTION_NAME) # New
@@ -593,6 +597,7 @@ async def retrieve_and_prepare_rag_context(
         collections_to_search = [
             ("rss", rss_summary_collection),
             ("tweets", tweets_collection),
+            ("daily_kg", daily_kg_collection), # Added daily_kg
             # ("news", news_summary_collection),
             ("timeline", timeline_summary_collection),
             ("chat_history", chat_history_collection),
@@ -749,6 +754,7 @@ async def retrieve_and_prepare_rag_context(
             # ("news", news_summary_collection),
             ("rss", rss_summary_collection),
             ("tweets", tweets_collection), # New
+            ("daily_kg", daily_kg_collection), # Added
             ("relation", relation_collection),
             ("observation", observation_collection),
         ]
@@ -1327,6 +1333,7 @@ async def get_chroma_collection_counts() -> Dict[str, int]:
         "timeline": timeline_summary_collection,
         "relations": relation_collection,
         "observations": observation_collection,
+        "daily_kg": daily_kg_collection,
         "tweets": tweets_collection,
     }
 

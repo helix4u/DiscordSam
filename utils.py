@@ -8,6 +8,7 @@ import logging
 import psutil
 import discord
 from dateparser.search import search_dates
+from discord_rate_limiter import discord_limiter
 
 logger = logging.getLogger(__name__)
 
@@ -210,6 +211,7 @@ async def safe_followup_send(
     interaction: discord.Interaction, *, error_hint: str = "", **kwargs
 ) -> discord.Message:
     """Send a followup message with fallback to channel.send if the token expired."""
+    await discord_limiter.acquire()
     try:
         return await interaction.followup.send(**kwargs)
     except discord.HTTPException as e:
@@ -270,6 +272,7 @@ async def safe_message_edit(
     :class:`discord.Message`
         The edited message, or the newly-sent replacement.
     """
+    await discord_limiter.acquire()
     try:
         await message.edit(**kwargs)
         return message

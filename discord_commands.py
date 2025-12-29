@@ -61,6 +61,9 @@ from twitter_cache import load_seen_tweet_ids, save_seen_tweet_ids # New import
 from timeline_pruner import prune_oldest_items
 from ground_news_cache import load_seen_links, save_seen_links
 from rate_limiter import get_rate_limiter
+from usage_tracker import usage_tracker
+from knowledge_graph_manager import kg_manager
+from discord_rate_limiter import discord_limiter
 
 logger = logging.getLogger(__name__)
 
@@ -2298,6 +2301,57 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 await interaction.edit_original_response(embed=embed, content=None)
             else:
                 await safe_followup_send(interaction, embed=embed, ephemeral=True)
+
+    @bot_instance.tree.command(name="pricing_report", description="View Usage and Cost Report")
+    @app_commands.choices(timeframe=[
+        app_commands.Choice(name="Daily", value="daily"),
+        app_commands.Choice(name="Monthly", value="monthly"),
+        app_commands.Choice(name="By Model", value="models"),
+    ])
+    async def pricing_report(interaction: discord.Interaction, timeframe: str = "daily"):
+        if not is_admin_user(interaction.user.id):
+             await interaction.response.send_message("Only admins can view pricing reports.", ephemeral=True)
+             return
+             
+        await interaction.response.defer(ephemeral=True)
+        report = usage_tracker.get_report(timeframe)
+        await interaction.followup.send(report, ephemeral=True)
+
+    @bot_instance.tree.command(name="consolidate_kg", description="Manually trigger Daily KG Consolidation")
+    @app_commands.describe(date="YYYY-MM-DD (Optional, defaults to yesterday)")
+    async def consolidate_kg(interaction: discord.Interaction, date: Optional[str] = None):
+        if not is_admin_user(interaction.user.id):
+             await interaction.response.send_message("Only admins can manage the Knowledge Graph.", ephemeral=True)
+             return
+             
+        await interaction.response.defer(ephemeral=True)
+        
+        target_dt = None
+        if date:
+            try:
+                target_dt = datetime.strptime(date, "%Y-%m-%d")
+            except ValueError:
+                await interaction.followup.send("Invalid date format. Use YYYY-MM-DD.", ephemeral=True)
+                return
+
+        await interaction.followup.send(f"Starting KG consolidation for {date or 'yesterday'}...", ephemeral=True)
+        await kg_manager.consolidate_daily_graph(target_dt)
+        await interaction.followup.send("KG Consolidation complete.", ephemeral=True)
+        
+    @bot_instance.tree.command(name="model_info", description="View current model configuration")
+    async def model_info(interaction: discord.Interaction):
+        if not is_admin_user(interaction.user.id):
+             await interaction.response.send_message("Only admins can view model info.", ephemeral=True)
+             return
+             
+        info = (
+            f"**LLM Model:** {config.LLM_MODEL}\n"
+            f"**Fast Model:** {config.FAST_LLM_MODEL}\n"
+            f"**Vision Model:** {config.VISION_LLM_MODEL}\n"
+            f"**Provider URL:** {config.LLM_COMPLETIONS_URL}\n"
+            f"**Global Rate Limit:** {discord_limiter.delay:.2f}s delay (approx {1.0/discord_limiter.delay:.1f} req/s)\n"
+        )
+        await interaction.response.send_message(info, ephemeral=True)
 
 
     @bot_instance.tree.command(name="remindme", description="Sets a reminder. E.g., /remindme 1h30m Check the oven.")

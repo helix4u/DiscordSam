@@ -16,6 +16,7 @@ from openai import RateLimitError, BadRequestError, InternalServerError, APIErro
 
 from config import config
 from rate_limiter import get_rate_limiter
+from usage_tracker import usage_tracker
 
 logger = logging.getLogger(__name__)
 
@@ -321,11 +322,21 @@ async def create_chat_completion(
             try:
                 # Proactive rate limiting: wait for a slot before making the request
                 await _rate_limiter.await_slot(rate_limit_key)
+
+                if params.get("stream"):
+                     params["stream_options"] = {"include_usage": True}
+
                 response = await llm_client.chat.completions.create(**params)
                 
                 # Record successful response for reactive rate limiting
                 # Note: OpenAI SDK doesn't expose response headers easily, but we track 200 status
                 await _rate_limiter.record_response(rate_limit_key, 200, {})
+
+                if not params.get("stream"):
+                    usage = getattr(response, "usage", None)
+                    if usage:
+                        usage_tracker.track_usage("openai", model, usage)
+
                 return response
             except RateLimitError as exc:
                 # Record the 429 response to update reactive cooldowns
@@ -434,14 +445,19 @@ async def create_chat_completion(
     rate_limit_key = _get_rate_limit_key(llm_client)
     
     for attempt in range(max_attempts):
-        try:
-            # Proactive rate limiting: wait for a slot before making the request
-            await _rate_limiter.await_slot(rate_limit_key)
-            response = await llm_client.responses.create(**params)
-            
-            # Record successful response for reactive rate limiting
-            await _rate_limiter.record_response(rate_limit_key, 200, {})
-            return response
+            try:
+                # Proactive rate limiting: wait for a slot before making the request
+                await _rate_limiter.await_slot(rate_limit_key)
+                response = await llm_client.responses.create(**params)
+                
+                # Record successful response for reactive rate limiting
+                await _rate_limiter.record_response(rate_limit_key, 200, {})
+
+                usage = getattr(response, "usage", None)
+                if usage:
+                     usage_tracker.track_usage("openai-responses", model, usage)
+
+                return response
         except RateLimitError as exc:
             # Record the 429 response to update reactive cooldowns
             await _rate_limiter.record_response(rate_limit_key, 429, {})
