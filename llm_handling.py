@@ -419,6 +419,16 @@ async def _stream_llm_handler(
                    (current_time - last_edit_time >= (1.0 / config.EDITS_PER_SECOND) or \
                     len(accumulated_delta_for_update) > config.MAX_CHARS_PER_EDIT):
 
+                    # Use global edit rate limiter if available
+                    try:
+                        from enhanced_rate_limiter import get_global_edit_limiter
+                        edit_limiter = get_global_edit_limiter()
+                        if edit_limiter:
+                            await edit_limiter.await_edit_slot()
+                    except Exception:
+                        # Fallback to sleep if limiter not available
+                        await asyncio.sleep(config.STREAM_EDIT_THROTTLE_SECONDS)
+
                     display_text = response_prefix + full_response_content
                     text_chunks = chunk_text(display_text, config.EMBED_MAX_LENGTH)
                     accumulated_delta_for_update = ""

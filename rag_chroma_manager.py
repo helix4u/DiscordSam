@@ -164,6 +164,14 @@ def initialize_chromadb() -> bool:
         logger.info(f"Getting or creating ChromaDB collection: {config.CHROMA_TWEETS_COLLECTION_NAME}") # New
         tweets_collection = chroma_client.get_or_create_collection(name=config.CHROMA_TWEETS_COLLECTION_NAME) # New
 
+        # Initialize knowledge graph collections if enabled
+        if getattr(config, "ENABLE_KNOWLEDGE_GRAPHS", True):
+            try:
+                from knowledge_graph_manager import initialize_knowledge_graph_collections
+                initialize_knowledge_graph_collections(chroma_client)
+            except Exception as e:
+                logger.warning(f"Failed to initialize knowledge graph collections: {e}", exc_info=True)
+
         logger.info(
             f"ChromaDB initialized successfully. Collections: "
             f"'{config.CHROMA_COLLECTION_NAME}', "
@@ -818,6 +826,17 @@ async def retrieve_and_prepare_rag_context(
         if progress_callback:
             await progress_callback("🧠 Synthesizing retrieved context...")
         synthesized_context = await synthesize_retrieved_contexts_llm(llm_client, retrieved_contexts_raw, query)
+
+        # Build knowledge graph for today if enabled and building on retrieval
+        if getattr(config, "ENABLE_KNOWLEDGE_GRAPHS", True) and getattr(config, "KG_BUILD_ON_RETRIEVAL", True):
+            try:
+                from knowledge_graph_manager import build_knowledge_graph_for_day
+                # Build KG for today in the background
+                asyncio.create_task(
+                    build_knowledge_graph_for_day(datetime.now(), chroma_client)
+                )
+            except Exception as e:
+                logger.debug(f"Failed to build knowledge graph on retrieval: {e}")
 
         # If synthesis fails but we have raw contexts, we should still return them.
         # The synthesized_context can be None if synthesis fails.

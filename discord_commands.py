@@ -4392,3 +4392,156 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 )
             except discord.HTTPException:
                 pass
+
+    # Knowledge Graph Commands
+    @bot_instance.tree.command(name="kg_build", description="Build knowledge graph for a specific day (admin only).")
+    @app_commands.describe(date="Date in YYYY-MM-DD format (defaults to today)")
+    async def kg_build(interaction: discord.Interaction, date: Optional[str] = None):
+        if not config.ADMIN_USER_IDS or not is_admin_user(interaction.user.id):
+            await interaction.response.send_message("This command is admin-only.", ephemeral=True)
+            return
+        
+        try:
+            await interaction.response.defer(ephemeral=True)
+            
+            from knowledge_graph_manager import build_knowledge_graph_for_day, _date_to_kg_key
+            from rag_chroma_manager import chroma_client
+            
+            if not chroma_client:
+                await interaction.followup.send("ChromaDB not initialized.", ephemeral=True)
+                return
+            
+            if date:
+                try:
+                    target_date = datetime.fromisoformat(date)
+                except ValueError:
+                    await interaction.followup.send(f"Invalid date format: {date}. Use YYYY-MM-DD.", ephemeral=True)
+                    return
+            else:
+                target_date = datetime.now()
+            
+            day_key = _date_to_kg_key(target_date)
+            await interaction.followup.send(f"Building knowledge graph for {day_key}...", ephemeral=True)
+            
+            kg_id = await build_knowledge_graph_for_day(target_date, chroma_client)
+            
+            if kg_id:
+                await interaction.followup.send(
+                    f"✅ Knowledge graph built for {day_key} (ID: {kg_id[:16]}...)", ephemeral=True
+                )
+            else:
+                await interaction.followup.send(f"❌ Failed to build knowledge graph for {day_key}.", ephemeral=True)
+        except Exception as e:
+            logger.error(f"/kg_build failed: {e}", exc_info=True)
+            await interaction.followup.send(f"Error: {str(e)[:500]}", ephemeral=True)
+
+    @bot_instance.tree.command(name="kg_summary", description="Get summary of knowledge graph for a day (admin only).")
+    @app_commands.describe(date="Date in YYYY-MM-DD format (defaults to today)")
+    async def kg_summary(interaction: discord.Interaction, date: Optional[str] = None):
+        if not config.ADMIN_USER_IDS or not is_admin_user(interaction.user.id):
+            await interaction.response.send_message("This command is admin-only.", ephemeral=True)
+            return
+        
+        try:
+            await interaction.response.defer(ephemeral=True)
+            
+            from knowledge_graph_manager import get_knowledge_graph_summary
+            
+            if date:
+                try:
+                    target_date = datetime.fromisoformat(date)
+                except ValueError:
+                    await interaction.followup.send(f"Invalid date format: {date}. Use YYYY-MM-DD.", ephemeral=True)
+                    return
+            else:
+                target_date = datetime.now()
+            
+            summary = await get_knowledge_graph_summary(target_date)
+            
+            if summary:
+                await interaction.followup.send(f"```\n{summary}\n```", ephemeral=True)
+            else:
+                await interaction.followup.send(f"No knowledge graph found for {target_date.date().isoformat()}.", ephemeral=True)
+        except Exception as e:
+            logger.error(f"/kg_summary failed: {e}", exc_info=True)
+            await interaction.followup.send(f"Error: {str(e)[:500]}", ephemeral=True)
+
+    # Pricing Report Commands
+    @bot_instance.tree.command(name="pricing_report", description="Get API usage and pricing report (admin only).")
+    @app_commands.describe(
+        period="Time period: daily, hourly, monthly, yearly",
+        provider="Filter by provider name (optional)",
+        model="Filter by model name (optional)"
+    )
+    @app_commands.choices(period=[
+        app_commands.Choice(name="Hourly", value="hourly"),
+        app_commands.Choice(name="Daily", value="daily"),
+        app_commands.Choice(name="Monthly", value="monthly"),
+        app_commands.Choice(name="Yearly", value="yearly"),
+    ])
+    async def pricing_report(
+        interaction: discord.Interaction,
+        period: app_commands.Choice[str],
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
+    ):
+        if not config.ADMIN_USER_IDS or not is_admin_user(interaction.user.id):
+            await interaction.response.send_message("This command is admin-only.", ephemeral=True)
+            return
+        
+        try:
+            await interaction.response.defer(ephemeral=True)
+            
+            from pricing_tracker import get_pricing_tracker
+            
+            tracker = get_pricing_tracker()
+            
+            if period.value == "hourly":
+                summary = tracker.get_hourly_summary()
+                period_label = "Hour"
+            elif period.value == "daily":
+                summary = tracker.get_daily_summary()
+                period_label = "Day"
+            elif period.value == "monthly":
+                summary = tracker.get_monthly_summary()
+                period_label = "Month"
+            else:  # yearly
+                summary = tracker.get_yearly_summary()
+                period_label = "Year"
+            
+            # Apply filters
+            if provider or model:
+                filtered_summary = tracker.get_usage_summary(
+                    provider=provider,
+                    model=model,
+                )
+                summary = filtered_summary
+            
+            # Format report
+            report_lines = [
+                f"**API Usage Report ({period_label})**",
+                f"Total Cost: ${summary['total_cost']:.6f} {summary.get('currency', 'USD')}",
+                f"Total Tokens: {summary['total_tokens']:,} ({summary['total_input_tokens']:,} in, {summary['total_output_tokens']:,} out)",
+                f"Requests: {summary['request_count']:,}",
+            ]
+            
+            if summary.get('by_provider_model'):
+                report_lines.append("\n**By Provider/Model:**")
+                for pm_key, stats in summary['by_provider_model'].items():
+                    report_lines.append(
+                        f"  {pm_key}: ${stats['cost']:.6f} "
+                        f"({stats['requests']} requests, {stats['input_tokens'] + stats['output_tokens']:,} tokens)"
+                    )
+            
+            report_text = "\n".join(report_lines)
+            
+            if len(report_text) > 2000:
+                # Split into chunks
+                chunks = [report_text[i:i+2000] for i in range(0, len(report_text), 2000)]
+                for chunk in chunks:
+                    await interaction.followup.send(f"```\n{chunk}\n```", ephemeral=True)
+            else:
+                await interaction.followup.send(f"```\n{report_text}\n```", ephemeral=True)
+        except Exception as e:
+            logger.error(f"/pricing_report failed: {e}", exc_info=True)
+            await interaction.followup.send(f"Error: {str(e)[:500]}", ephemeral=True)

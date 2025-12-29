@@ -332,8 +332,24 @@ class Config:
         self.CHROMA_OBSERVATIONS_COLLECTION_NAME = os.getenv("CHROMA_OBSERVATIONS_COLLECTION_NAME", "observations_collection")
         self.CHROMA_RSS_SUMMARY_COLLECTION_NAME = os.getenv("CHROMA_RSS_SUMMARY_COLLECTION_NAME", "rss_summaries") # New collection for RSS summaries
         self.CHROMA_TWEETS_COLLECTION_NAME = os.getenv("CHROMA_TWEETS_COLLECTION_NAME", "tweets_collection") # New collection for tweets
+        self.CHROMA_KNOWLEDGE_GRAPH_COLLECTION_NAME = os.getenv("CHROMA_KNOWLEDGE_GRAPH_COLLECTION_NAME", "knowledge_graphs")
+        self.CHROMA_KNOWLEDGE_GRAPH_METADATA_COLLECTION_NAME = os.getenv("CHROMA_KNOWLEDGE_GRAPH_METADATA_COLLECTION_NAME", "kg_metadata")
 
         self.USER_PROVIDED_CONTEXT = os.getenv("USER_PROVIDED_CONTEXT", "")
+        
+        # Knowledge Graph Settings
+        self.ENABLE_KNOWLEDGE_GRAPHS = _get_bool("ENABLE_KNOWLEDGE_GRAPHS", True)
+        self.KG_BUILD_ON_RETRIEVAL = _get_bool("KG_BUILD_ON_RETRIEVAL", True)
+        self.KG_SCHEDULE_BUILD_HOUR = _get_int("KG_SCHEDULE_BUILD_HOUR", 2)  # 2 AM default
+        self.KG_AUTO_CLEANUP_DAYS = _get_int("KG_AUTO_CLEANUP_DAYS", 90)  # Clean up raw content after 90 days
+        
+        # Enhanced Rate Limiting
+        self.GLOBAL_EDITS_PER_SECOND = _get_float("GLOBAL_EDITS_PER_SECOND", 1.3)
+        self.ENABLE_CHANNEL_COMMAND_TRACKING = _get_bool("ENABLE_CHANNEL_COMMAND_TRACKING", True)
+        
+        # Pricing Tracking
+        self.ENABLE_PRICING_TRACKING = _get_bool("ENABLE_PRICING_TRACKING", True)
+        self.PRICING_DATA_RETENTION_DAYS = _get_int("PRICING_DATA_RETENTION_DAYS", 365)
 
         self.MAX_IMAGE_BYTES_FOR_PROMPT = _get_int("MAX_IMAGE_BYTES_FOR_PROMPT", 4 * 1024 * 1024)
         self.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT = _get_int("MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT", 8000)

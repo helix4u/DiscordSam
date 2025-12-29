@@ -51,6 +51,19 @@ bot = commands.Bot(command_prefix=commands.when_mentioned_or("!"), intents=inten
 initialize_llm_clients()
 llm_client = get_llm_client("main")
 
+# Initialize API provider manager and pricing tracker
+try:
+    from api_provider_manager import initialize_providers_from_config
+    from pricing_tracker import get_pricing_tracker
+    from enhanced_rate_limiter import initialize_enhanced_rate_limiters
+    
+    initialize_providers_from_config()
+    get_pricing_tracker()  # Initialize pricing tracker
+    initialize_enhanced_rate_limiters(config.GLOBAL_EDITS_PER_SECOND)
+    logger.info("Initialized API provider manager, pricing tracker, and enhanced rate limiters")
+except Exception as e:
+    logger.warning(f"Failed to initialize some optional systems: {e}", exc_info=True)
+
 # Bot State Manager
 bot_state = BotState()
 

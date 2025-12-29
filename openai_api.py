@@ -326,6 +326,43 @@ async def create_chat_completion(
                 # Record successful response for reactive rate limiting
                 # Note: OpenAI SDK doesn't expose response headers easily, but we track 200 status
                 await _rate_limiter.record_response(rate_limit_key, 200, {})
+                
+                # Track pricing if enabled
+                try:
+                    if getattr(config, "ENABLE_PRICING_TRACKING", True):
+                        from pricing_tracker import get_pricing_tracker
+                        from api_provider_manager import get_provider_manager
+                        
+                        # Extract token usage from response
+                        usage = getattr(response, "usage", None)
+                        if usage:
+                            input_tokens = getattr(usage, "prompt_tokens", 0) or 0
+                            output_tokens = getattr(usage, "completion_tokens", 0) or 0
+                            
+                            # Determine provider name from base URL
+                            provider_name = "local"
+                            base_url = getattr(llm_client, "base_url", "")
+                            if "openai.com" in str(base_url):
+                                provider_name = "openai"
+                            elif "anthropic.com" in str(base_url):
+                                provider_name = "claude"
+                            elif "googleapis.com" in str(base_url):
+                                provider_name = "google"
+                            elif "mistral.ai" in str(base_url):
+                                provider_name = "mistral"
+                            elif "openrouter.ai" in str(base_url):
+                                provider_name = "openrouter"
+                            
+                            tracker = get_pricing_tracker()
+                            tracker.record_usage(
+                                provider=provider_name,
+                                model=model,
+                                input_tokens=input_tokens,
+                                output_tokens=output_tokens,
+                            )
+                except Exception as e:
+                    logger.debug(f"Failed to track pricing: {e}")
+                
                 return response
             except RateLimitError as exc:
                 # Record the 429 response to update reactive cooldowns
@@ -441,6 +478,29 @@ async def create_chat_completion(
             
             # Record successful response for reactive rate limiting
             await _rate_limiter.record_response(rate_limit_key, 200, {})
+            
+            # Track pricing if enabled (Responses API)
+            try:
+                if getattr(config, "ENABLE_PRICING_TRACKING", True):
+                    from pricing_tracker import get_pricing_tracker
+                    
+                    # Extract token usage from response
+                    usage = getattr(response, "usage", None)
+                    if usage:
+                        input_tokens = getattr(usage, "input_tokens", 0) or 0
+                        output_tokens = getattr(usage, "output_tokens", 0) or 0
+                        
+                        provider_name = "openai"  # Responses API is OpenAI
+                        tracker = get_pricing_tracker()
+                        tracker.record_usage(
+                            provider=provider_name,
+                            model=model,
+                            input_tokens=input_tokens,
+                            output_tokens=output_tokens,
+                        )
+            except Exception as e:
+                logger.debug(f"Failed to track pricing: {e}")
+            
             return response
         except RateLimitError as exc:
             # Record the 429 response to update reactive cooldowns

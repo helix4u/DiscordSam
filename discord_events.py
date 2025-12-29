@@ -124,6 +124,32 @@ def setup_events_and_tasks(bot: commands.Bot, llm_client_in: Any, bot_state_in: 
             logger.debug("Playwright cleanup task finished.")
 
     @tasks.loop(hours=24)
+    async def knowledge_graph_build_task():
+        """Build knowledge graphs for the previous day."""
+        if not getattr(config, "ENABLE_KNOWLEDGE_GRAPHS", True):
+            return
+        
+        try:
+            from knowledge_graph_manager import build_knowledge_graph_for_day
+            from rag_chroma_manager import chroma_client
+            
+            if not chroma_client:
+                logger.warning("Knowledge graph build task: ChromaDB not initialized")
+                return
+            
+            # Build KG for yesterday
+            yesterday = datetime.now() - timedelta(days=1)
+            logger.info(f"Building knowledge graph for {yesterday.date().isoformat()}")
+            kg_id = await build_knowledge_graph_for_day(yesterday, chroma_client)
+            
+            if kg_id:
+                logger.info(f"Successfully built knowledge graph for {yesterday.date().isoformat()}: {kg_id}")
+            else:
+                logger.warning(f"Failed to build knowledge graph for {yesterday.date().isoformat()}")
+        except Exception as e:
+            logger.error(f"Error in knowledge graph build task: {e}", exc_info=True)
+    
+    @tasks.loop(hours=24)
     async def timeline_pruner_task():
         logger.info("Timeline pruner task started.")
         prune_days = getattr(config, 'TIMELINE_PRUNE_DAYS', 30)
@@ -325,6 +351,10 @@ def setup_events_and_tasks(bot: commands.Bot, llm_client_in: Any, bot_state_in: 
             cleanup_playwright_task.start()
             logger.info("Playwright cleanup task started.")
 
+        if not knowledge_graph_build_task.is_running():
+            knowledge_graph_build_task.start()
+            logger.info("Knowledge graph build task started.")
+        
         if not timeline_pruner_task.is_running():
             timeline_pruner_task.start()
             logger.info("Timeline pruner task started.")
