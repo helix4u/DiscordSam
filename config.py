@@ -160,6 +160,9 @@ class Config:
             0, _get_int("OPENAI_CLIENT_MAX_RETRIES", 0)
         )
 
+        # Local usage/cost logging (best-effort)
+        self.USAGE_LOG_PATH = os.getenv("USAGE_LOG_PATH", "./usage_log.jsonl")
+
         # GPT-5 mode: adapt Chat Completions for GPT-5 models
         # - Force temperature to 1.0
         # - Remove logit_bias
@@ -332,6 +335,11 @@ class Config:
         self.CHROMA_OBSERVATIONS_COLLECTION_NAME = os.getenv("CHROMA_OBSERVATIONS_COLLECTION_NAME", "observations_collection")
         self.CHROMA_RSS_SUMMARY_COLLECTION_NAME = os.getenv("CHROMA_RSS_SUMMARY_COLLECTION_NAME", "rss_summaries") # New collection for RSS summaries
         self.CHROMA_TWEETS_COLLECTION_NAME = os.getenv("CHROMA_TWEETS_COLLECTION_NAME", "tweets_collection") # New collection for tweets
+        # Daily knowledge graph collection (time-bucketed consolidated memory)
+        self.CHROMA_DAILY_KG_COLLECTION_NAME = os.getenv(
+            "CHROMA_DAILY_KG_COLLECTION_NAME",
+            "daily_knowledge_graphs",
+        )
 
         self.USER_PROVIDED_CONTEXT = os.getenv("USER_PROVIDED_CONTEXT", "")
 
@@ -339,9 +347,26 @@ class Config:
         self.MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT = _get_int("MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT", 8000)
         self.RAG_NUM_DISTILLED_SENTENCES_TO_FETCH = _get_int("RAG_NUM_DISTILLED_SENTENCES_TO_FETCH", 3)
         self.RAG_NUM_COLLECTION_DOCS_TO_FETCH = _get_int("RAG_NUM_COLLECTION_DOCS_TO_FETCH", 3)
+        self.RAG_NUM_DAILY_KG_DOCS_TO_FETCH = _get_int(
+            "RAG_NUM_DAILY_KG_DOCS_TO_FETCH",
+            2,
+        )
         self.RAG_MAX_FULL_CONVO_CHARS = _get_int("RAG_MAX_FULL_CONVO_CHARS", 20000)
         self.RAG_MAX_DATE_RANGE_DOCS = _get_int("RAG_MAX_DATE_RANGE_DOCS", 15)
         self.ENABLE_MEMORY_MERGE = _get_bool("ENABLE_MEMORY_MERGE", False)
+
+        # Daily knowledge graph maintenance (compressed, deduped per-day memory)
+        self.ENABLE_DAILY_KG = _get_bool("ENABLE_DAILY_KG", True)
+        self.DAILY_KG_BUILD_ON_INGEST = _get_bool("DAILY_KG_BUILD_ON_INGEST", True)
+        self.DAILY_KG_BUILD_ON_RETRIEVAL = _get_bool(
+            "DAILY_KG_BUILD_ON_RETRIEVAL", False
+        )
+        self.DAILY_KG_MAX_SOURCE_DOCS_PER_COLLECTION = _get_int(
+            "DAILY_KG_MAX_SOURCE_DOCS_PER_COLLECTION",
+            2000,
+        )
+        self.DAILY_KG_MAX_EDGES = _get_int("DAILY_KG_MAX_EDGES", 1500)
+        self.DAILY_KG_MAX_OBSERVATIONS = _get_int("DAILY_KG_MAX_OBSERVATIONS", 2000)
 
         self.NEWS_MAX_LINKS_TO_PROCESS = _get_int("NEWS_MAX_LINKS_TO_PROCESS", 15)
 

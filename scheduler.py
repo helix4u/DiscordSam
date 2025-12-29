@@ -7,7 +7,11 @@ from email.utils import parsedate_to_datetime
 import discord
 
 from config import config
-from rag_chroma_manager import store_rss_summary, ingest_conversation_to_chromadb
+from rag_chroma_manager import (
+    store_rss_summary,
+    ingest_conversation_to_chromadb,
+    build_daily_knowledge_graph,
+)
 from common_models import MsgNode
 from rss_cache import load_seen_entries, save_seen_entries
 from ground_news_cache import load_seen_links, save_seen_links
@@ -18,6 +22,54 @@ from logit_biases import LOGIT_BIAS_UNWANTED_TOKENS_STR
 from llm_clients import get_llm_runtime
 
 logger = logging.getLogger(__name__)
+
+
+async def run_dailykg_maintenance(
+    bot: discord.Client,
+    llm_client: Any,
+    channel_id: int,
+    *,
+    scope: str = "channel",
+    days_back: int = 0,
+    bot_state: Optional[Any] = None,
+) -> None:
+    """Build daily knowledge graph docs on a schedule.
+
+    This runs silently (no channel output) by default to avoid noisy scheduled
+    chatter; admins can use /kg_show to inspect results.
+    """
+
+    if not config.ENABLE_DAILY_KG:
+        logger.debug("Scheduled dailykg skipped: ENABLE_DAILY_KG is false.")
+        return
+
+    target_day = datetime.now(timezone.utc).date() - timedelta(days=int(days_back or 0))
+    if scope not in ("channel", "global"):
+        scope = "channel"
+    channel_scope_id: Optional[int] = channel_id if scope == "channel" else None
+
+    try:
+        await build_daily_knowledge_graph(
+            llm_client,
+            day=target_day,
+            channel_id=channel_scope_id,
+            force=True,
+        )
+        logger.info(
+            "Scheduled dailykg built for day=%s scope=%s channel_id=%s",
+            target_day.isoformat(),
+            scope,
+            channel_id,
+        )
+    except Exception as exc:
+        logger.error(
+            "Scheduled dailykg failed (day=%s scope=%s channel_id=%s): %s",
+            target_day.isoformat(),
+            scope,
+            channel_id,
+            exc,
+            exc_info=True,
+        )
 
 
 async def run_allrss_digest(

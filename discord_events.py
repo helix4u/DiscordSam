@@ -34,6 +34,7 @@ from scheduler import (
     run_alltweets_digest,
     run_groundrss_digest,
     run_groundtopic_digest,
+    run_dailykg_maintenance,
 )
 
 logger = logging.getLogger(__name__)
@@ -288,6 +289,29 @@ def setup_events_and_tasks(bot: commands.Bot, llm_client_in: Any, bot_state_in: 
                                 logger.info("Scheduler: groundtopic for channel %s cancelled.", channel_id)
                                 continue
                             await bot_state_instance.update_schedule_last_run(sched_id, now)
+                    elif kind == "dailykg":
+                        params = s.get("params", {}) or {}
+                        scope = str(params.get("scope") or "channel").lower()
+                        days_back_raw = params.get("days_back", 0)
+                        try:
+                            days_back = int(days_back_raw)
+                        except (TypeError, ValueError):
+                            days_back = 0
+                        try:
+                            await run_dailykg_maintenance(
+                                bot_instance,
+                                llm_client_instance,
+                                channel_id,
+                                scope=scope,
+                                days_back=days_back,
+                                bot_state=bot_state_instance,
+                            )
+                        except asyncio.CancelledError:
+                            logger.info(
+                                "Scheduler: dailykg for channel %s cancelled.", channel_id
+                            )
+                            continue
+                        await bot_state_instance.update_schedule_last_run(sched_id, now)
                 except Exception as inner:
                     logger.error("Scheduler: error running schedule %s: %s", s, inner, exc_info=True)
         except Exception as e:

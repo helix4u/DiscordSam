@@ -5,7 +5,7 @@ import os
 from typing import List, Any, Optional, Union, Tuple, cast, Dict
 import discord
 from openai import AsyncStream, OpenAIError, BadRequestError  # type: ignore
-from datetime import datetime
+from datetime import datetime, timezone
 
 # Assuming config is imported from config.py
 from config import config
@@ -23,7 +23,11 @@ from utils import (
     temporary_status_message,
 )
 # Import functions for post-stream processing
-from rag_chroma_manager import ingest_conversation_to_chromadb, retrieve_and_prepare_rag_context
+from rag_chroma_manager import (
+    ingest_conversation_to_chromadb,
+    retrieve_and_prepare_rag_context,
+    build_daily_knowledge_graph,
+)
 from audio_utils import send_tts_audio
 from logit_biases import LOGIT_BIAS_UNWANTED_TOKENS_STR
 from openai_api import create_chat_completion, extract_text
@@ -64,6 +68,23 @@ async def retrieve_rag_context_with_progress(
         else:
             if completion_status:
                 await update_status(completion_status)
+            # Optional: opportunistic KG maintenance on retrieval (runs in background).
+            if config.ENABLE_DAILY_KG and config.DAILY_KG_BUILD_ON_RETRIEVAL:
+                try:
+                    channel_id: Optional[int] = None
+                    if interaction is not None and interaction.channel_id is not None:
+                        channel_id = int(interaction.channel_id)
+                    # If we can't resolve channel_id, fall back to global.
+                    asyncio.create_task(
+                        build_daily_knowledge_graph(
+                            llm_client,
+                            day=datetime.now().astimezone(timezone.utc).date(),
+                            channel_id=channel_id,
+                            force=False,
+                        )
+                    )
+                except Exception:
+                    pass
             return synthesized_context, raw_snippets
 
 

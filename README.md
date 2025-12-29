@@ -250,6 +250,7 @@ The bot now uses a provider-based architecture to manage different LLM roles (ma
 *   `OPENAI_BACKOFF_BASE_SECONDS` (Default: `1.5`): Initial delay for exponential backoff on retries. Only applies when rate limit headers are not present.
 *   `OPENAI_BACKOFF_MAX_SECONDS` (Default: `60`): Maximum delay cap for exponential backoff. Rate limit headers (Retry-After, X-RateLimit-Reset) are always respected at face value without this cap.
 *   `OPENAI_BACKOFF_JITTER_SECONDS` (Default: `0.5`): Random jitter added to all retry delays.
+*   `USAGE_LOG_PATH` (Default: `./usage_log.jsonl`): Local JSONL log file where the bot records best-effort token usage + estimated cost (when pricing is known).
 *   `MAX_MESSAGE_HISTORY` (Default: `10`): The maximum number of recent messages to include in the LLM context.
 *   `MAX_COMPLETION_TOKENS` (Default: `2048`): The maximum number of tokens the LLM is allowed to generate.
 
@@ -305,14 +306,19 @@ The bot now uses a provider-based architecture to manage different LLM roles (ma
 *   `CHROMA_RSS_SUMMARY_COLLECTION_NAME` (Default: `rss_summaries`): Collection for RSS feed item summaries.
 *   `CHROMA_TIMELINE_SUMMARY_COLLECTION_NAME` (Default: `timeline_summaries`): Collection for summaries of pruned, older chat history.
 *   `CHROMA_TWEETS_COLLECTION_NAME` (Default: `tweets_collection`): Collection for fetched tweets.
+*   `CHROMA_DAILY_KG_COLLECTION_NAME` (Default: `daily_knowledge_graphs`): Collection for **per-day knowledge graph** rollups (deduped, merged summaries derived from relations/observations).
 *   `CHROMA_ENTITIES_COLLECTION_NAME` (Default: `entities_collection`): Collection for extracted entities.
 *   `CHROMA_RELATIONS_COLLECTION_NAME` (Default: `relations_collection`): Collection for extracted relationships.
 *   `CHROMA_OBSERVATIONS_COLLECTION_NAME` (Default: `observations_collection`): Collection for extracted observations/facts.
 *   `RAG_NUM_DISTILLED_SENTENCES_TO_FETCH` (Default: `3`): Number of distilled summaries to fetch for RAG context.
 *   `RAG_NUM_COLLECTION_DOCS_TO_FETCH` (Default: `3`): Number of documents to fetch from other collections (news, etc.) for RAG.
+*   `RAG_NUM_DAILY_KG_DOCS_TO_FETCH` (Default: `2`): Number of daily knowledge graph documents to fetch for RAG before querying raw collections.
 *   `RAG_MAX_FULL_CONVO_CHARS` (Default: `20000`): Character limit for full conversation logs used in RAG.
 *   `RAG_MAX_DATE_RANGE_DOCS` (Default: `15`): Maximum documents to include for date-range RAG retrieval.
 *   `ENABLE_MEMORY_MERGE` (Default: `false`): Set to `true` to enable the experimental memory merging feature.
+*   `ENABLE_DAILY_KG` (Default: `true`): Enable daily knowledge graph generation and retrieval.
+*   `DAILY_KG_BUILD_ON_INGEST` (Default: `true`): Build/refresh the daily knowledge graph automatically after each conversation is ingested.
+*   `DAILY_KG_BUILD_ON_RETRIEVAL` (Default: `false`): Opportunistically build/refresh the daily knowledge graph during memory retrieval (runs in background).
 *   `TIMELINE_PRUNE_DAYS` (Default: `365`): Age in days at which chat history is pruned and summarized.
 
 **Discord Embed & Streaming Settings:**
@@ -530,6 +536,26 @@ DiscordSam offers a variety of slash commands for diverse functionalities, group
 
 *   **`/cancel`**
     *   **Purpose:** Cancels the current long-running task (like `/allrss`) in the channel.
+
+*   **`/usage_report [timeframe]`**
+    *   **Purpose:** Shows token totals (and best-effort cost estimates) from the local usage log.
+    *   **Access:** Admin-only.
+
+*   **`/pricing`**
+    *   **Purpose:** Lists built-in pricing entries used for cost estimates.
+    *   **Access:** Admin-only.
+
+*   **`/kg_build [day_utc] [scope] [force]`**
+    *   **Purpose:** Build/refresh the **daily knowledge graph** document for a UTC day (channel-scoped or global).
+    *   **Access:** Admin-only.
+
+*   **`/kg_show [day_utc] [scope]`**
+    *   **Purpose:** Display the stored daily knowledge graph document for a UTC day (builds it if missing).
+    *   **Access:** Admin-only.
+
+*   **`/schedule_dailykg [interval_hours] [scope] [days_back]`**
+    *   **Purpose:** Schedule periodic daily knowledge graph rebuilds for this channel.
+    *   **Access:** Admin-only.
 
 ### TTS & Voice Commands
 

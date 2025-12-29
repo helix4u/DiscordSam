@@ -16,6 +16,7 @@ from openai import RateLimitError, BadRequestError, InternalServerError, APIErro
 
 from config import config
 from rate_limiter import get_rate_limiter
+from usage_tracker import record_usage
 
 logger = logging.getLogger(__name__)
 
@@ -160,6 +161,29 @@ def _rate_limit_wait_seconds(error: RateLimitError) -> tuple[Optional[float], bo
                 return wait, True
 
     return None, False
+
+
+def _extract_error_headers(error: Exception) -> Dict[str, str]:
+    """Best-effort extraction of rate limit headers from OpenAI SDK errors."""
+
+    headers_source: Any = None
+    response_obj = getattr(error, "response", None)
+    if response_obj is not None:
+        headers_source = getattr(response_obj, "headers", response_obj)
+    if headers_source is None:
+        body = getattr(error, "body", None)
+        if isinstance(body, dict):
+            metadata = body.get("metadata", {})
+            if isinstance(metadata, dict):
+                headers_source = metadata.get("headers")
+    if headers_source is None:
+        return {}
+    try:
+        if hasattr(headers_source, "items"):
+            return {str(k): str(v) for k, v in headers_source.items()}
+    except Exception:
+        return {}
+    return {}
 
 
 def _retry_wait_seconds(exception: Optional[Exception], attempt: int) -> float:
@@ -326,10 +350,23 @@ async def create_chat_completion(
                 # Record successful response for reactive rate limiting
                 # Note: OpenAI SDK doesn't expose response headers easily, but we track 200 status
                 await _rate_limiter.record_response(rate_limit_key, 200, {})
+                # Best-effort usage logging (non-blocking for failures)
+                try:
+                    await record_usage(
+                        llm_client=llm_client,
+                        model=model,
+                        use_responses_api=False,
+                        stream=bool(stream),
+                        response=response,
+                    )
+                except Exception:
+                    pass
                 return response
             except RateLimitError as exc:
                 # Record the 429 response to update reactive cooldowns
-                await _rate_limiter.record_response(rate_limit_key, 429, {})
+                await _rate_limiter.record_response(
+                    rate_limit_key, 429, _extract_error_headers(exc)
+                )
                 last_exception = exc
                 request_id = getattr(exc, "request_id", None)
                 reason = "Rate limit encountered"
@@ -441,10 +478,23 @@ async def create_chat_completion(
             
             # Record successful response for reactive rate limiting
             await _rate_limiter.record_response(rate_limit_key, 200, {})
+            # Best-effort usage logging (non-blocking for failures)
+            try:
+                await record_usage(
+                    llm_client=llm_client,
+                    model=model,
+                    use_responses_api=True,
+                    stream=False,
+                    response=response,
+                )
+            except Exception:
+                pass
             return response
         except RateLimitError as exc:
             # Record the 429 response to update reactive cooldowns
-            await _rate_limiter.record_response(rate_limit_key, 429, {})
+            await _rate_limiter.record_response(
+                rate_limit_key, 429, _extract_error_headers(exc)
+            )
             if params.get("service_tier") == "flex":
                 logger.warning(
                     "Flex tier request failed due to rate limit. Retrying with 'auto' tier."

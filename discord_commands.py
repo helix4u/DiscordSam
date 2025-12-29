@@ -9,7 +9,7 @@ import random
 import asyncio
 import textwrap
 from typing import Any, Optional, List, Callable, Awaitable, Dict  # Keep existing imports
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta, date
 from email.utils import parsedate_to_datetime
 from dataclasses import dataclass
 from urllib.parse import urlparse
@@ -31,6 +31,7 @@ from rag_chroma_manager import (
 
     store_rss_summary,  # New import
     ingest_conversation_to_chromadb,
+    build_daily_knowledge_graph,
     get_chroma_collection_counts,
     fetch_recent_channel_memories,
 )
@@ -61,6 +62,7 @@ from twitter_cache import load_seen_tweet_ids, save_seen_tweet_ids # New import
 from timeline_pruner import prune_oldest_items
 from ground_news_cache import load_seen_links, save_seen_links
 from rate_limiter import get_rate_limiter
+from usage_tracker import summarize_usage, timeframe_to_since, list_known_pricing
 
 logger = logging.getLogger(__name__)
 
@@ -4267,6 +4269,297 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 ephemeral=True,
                 error_hint=" while sending dbcounts result",
             )
+
+    USAGE_TIMEFRAME_CHOICES = [
+        app_commands.Choice(name="Last hour", value="hour"),
+        app_commands.Choice(name="Last 24h", value="day"),
+        app_commands.Choice(name="Last 7d", value="week"),
+        app_commands.Choice(name="Last 30d", value="month"),
+        app_commands.Choice(name="Last 365d", value="year"),
+        app_commands.Choice(name="All time", value="all"),
+    ]
+
+    @bot_instance.tree.command(
+        name="usage_report",
+        description="Show token + cost totals from local usage logs (admin only).",
+    )
+    @app_commands.choices(timeframe=USAGE_TIMEFRAME_CHOICES)
+    async def usage_report_command(
+        interaction: discord.Interaction,
+        timeframe: app_commands.Choice[str] = USAGE_TIMEFRAME_CHOICES[1],
+    ) -> None:
+        if not config.ADMIN_USER_IDS or not is_admin_user(interaction.user.id):
+            await interaction.response.send_message(
+                "This command is restricted to bot administrators.", ephemeral=True
+            )
+            return
+        await interaction.response.defer(ephemeral=True)
+
+        since = timeframe_to_since(timeframe.value)
+        totals = await summarize_usage(since=since)
+        since_label = timeframe.name
+        content = (
+            f"**Usage totals ({since_label})**\n"
+            f"- Requests logged: {totals.requests}\n"
+            f"- Prompt tokens: {totals.prompt_tokens}\n"
+            f"- Completion tokens: {totals.completion_tokens}\n"
+            f"- Total tokens: {totals.total_tokens}\n"
+            f"- Estimated cost (USD): ${totals.cost_usd:,.4f}\n\n"
+            "Note: cost is best-effort and only computed for models with known pricing entries."
+        )
+        await interaction.edit_original_response(content=content)
+
+    @bot_instance.tree.command(
+        name="pricing",
+        description="List built-in token pricing entries used for cost estimates (admin only).",
+    )
+    async def pricing_command(interaction: discord.Interaction) -> None:
+        if not config.ADMIN_USER_IDS or not is_admin_user(interaction.user.id):
+            await interaction.response.send_message(
+                "This command is restricted to bot administrators.", ephemeral=True
+            )
+            return
+        await interaction.response.defer(ephemeral=True)
+        pricing = list_known_pricing()
+        if not pricing:
+            await interaction.edit_original_response(content="No pricing entries configured.")
+            return
+        lines = ["Model → $/1M input, $/1M output"]
+        for model, (inp, out) in sorted(pricing.items()):
+            inp_s = "unknown" if inp is None else f"{inp:.4g}"
+            out_s = "unknown" if out is None else f"{out:.4g}"
+            lines.append(f"- `{model}` → {inp_s}, {out_s}")
+        await interaction.edit_original_response(content="\n".join(lines)[:1900])
+
+    KG_SCOPE_CHOICES = [
+        app_commands.Choice(name="This channel", value="channel"),
+        app_commands.Choice(name="Global (all channels)", value="global"),
+    ]
+
+    @bot_instance.tree.command(
+        name="kg_build",
+        description="Build or refresh the daily knowledge graph (admin only).",
+    )
+    @app_commands.describe(
+        day_utc="UTC day to build (YYYY-MM-DD). Leave blank for today.",
+        scope="Whether to build per-channel or global.",
+        force="Rebuild even if a KG already exists.",
+    )
+    @app_commands.choices(scope=KG_SCOPE_CHOICES)
+    async def kg_build_command(
+        interaction: discord.Interaction,
+        day_utc: str = "",
+        scope: app_commands.Choice[str] = KG_SCOPE_CHOICES[0],
+        force: bool = False,
+    ) -> None:
+        if not llm_client_instance or not bot_state_instance:
+            await interaction.response.send_message("Bot components not ready.", ephemeral=True)
+            return
+        if not config.ADMIN_USER_IDS or not is_admin_user(interaction.user.id):
+            await interaction.response.send_message(
+                "This command is restricted to bot administrators.", ephemeral=True
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        target_day: date
+        if day_utc.strip():
+            try:
+                target_day = date.fromisoformat(day_utc.strip())
+            except Exception:
+                await interaction.edit_original_response(
+                    content="Invalid `day_utc`. Use format `YYYY-MM-DD`."
+                )
+                return
+        else:
+            target_day = datetime.now(timezone.utc).date()
+
+        channel_id: Optional[int]
+        if scope.value == "channel":
+            channel_id = interaction.channel_id
+            if channel_id is None:
+                await interaction.edit_original_response(
+                    content="No channel ID available for channel-scoped KG build."
+                )
+                return
+        else:
+            channel_id = None
+
+        doc_id = await build_daily_knowledge_graph(
+            llm_client_instance,
+            day=target_day,
+            channel_id=channel_id,
+            force=bool(force),
+        )
+        if not doc_id:
+            await interaction.edit_original_response(content="KG build failed. Check logs.")
+            return
+
+        await interaction.edit_original_response(
+            content=f"Built daily KG for `{target_day.isoformat()}` ({scope.name}). Doc ID: `{doc_id}`."
+        )
+
+    @bot_instance.tree.command(
+        name="kg_show",
+        description="Show the daily knowledge graph document (admin only).",
+    )
+    @app_commands.describe(
+        day_utc="UTC day to show (YYYY-MM-DD). Leave blank for today.",
+        scope="Whether to show per-channel or global.",
+    )
+    @app_commands.choices(scope=KG_SCOPE_CHOICES)
+    async def kg_show_command(
+        interaction: discord.Interaction,
+        day_utc: str = "",
+        scope: app_commands.Choice[str] = KG_SCOPE_CHOICES[0],
+    ) -> None:
+        if not llm_client_instance:
+            await interaction.response.send_message("LLM client not ready.", ephemeral=True)
+            return
+        if not config.ADMIN_USER_IDS or not is_admin_user(interaction.user.id):
+            await interaction.response.send_message(
+                "This command is restricted to bot administrators.", ephemeral=True
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        target_day: date
+        if day_utc.strip():
+            try:
+                target_day = date.fromisoformat(day_utc.strip())
+            except Exception:
+                await interaction.edit_original_response(
+                    content="Invalid `day_utc`. Use format `YYYY-MM-DD`."
+                )
+                return
+        else:
+            target_day = datetime.now(timezone.utc).date()
+
+        channel_id: Optional[int]
+        if scope.value == "channel":
+            channel_id = interaction.channel_id
+            if channel_id is None:
+                await interaction.edit_original_response(
+                    content="No channel ID available for channel-scoped KG display."
+                )
+                return
+        else:
+            channel_id = None
+
+        scope_key = f"channel_{channel_id}" if channel_id is not None else "global"
+        doc_id = f"dailykg_{scope_key}_{target_day.isoformat()}"
+
+        # Fetch doc; if missing, build it.
+        doc_text: Optional[str] = None
+        try:
+            if rcm.daily_kg_collection:
+                res = await asyncio.to_thread(
+                    rcm.daily_kg_collection.get,
+                    ids=[doc_id],
+                    include=["documents"],
+                )
+                docs = res.get("documents") or []
+                if docs and isinstance(docs[0], str):
+                    doc_text = docs[0]
+        except Exception:
+            doc_text = None
+
+        if not doc_text:
+            built_id = await build_daily_knowledge_graph(
+                llm_client_instance,
+                day=target_day,
+                channel_id=channel_id,
+                force=True,
+            )
+            if not built_id:
+                await interaction.edit_original_response(
+                    content="KG doc not found and rebuild failed."
+                )
+                return
+            try:
+                if rcm.daily_kg_collection:
+                    res = await asyncio.to_thread(
+                        rcm.daily_kg_collection.get,
+                        ids=[built_id],
+                        include=["documents"],
+                    )
+                    docs = res.get("documents") or []
+                    if docs and isinstance(docs[0], str):
+                        doc_text = docs[0]
+                    doc_id = built_id
+            except Exception:
+                doc_text = None
+
+        if not doc_text:
+            await interaction.edit_original_response(
+                content=f"No KG doc available for `{target_day.isoformat()}` ({scope.name})."
+            )
+            return
+
+        chunks = chunk_text(doc_text, config.EMBED_MAX_LENGTH)
+        for idx, chunk in enumerate(chunks):
+            embed = discord.Embed(
+                title=(
+                    f"Daily KG ({target_day.isoformat()} • {scope.name})"
+                    if idx == 0
+                    else f"Daily KG (cont. {idx + 1})"
+                ),
+                description=chunk,
+                color=config.EMBED_COLOR["complete"],
+            )
+            embed.set_footer(text=f"Doc ID: {doc_id}")
+            if idx == 0:
+                await interaction.edit_original_response(embed=embed, content=None)
+            else:
+                await safe_followup_send(interaction, embed=embed, ephemeral=True)
+
+    @bot_instance.tree.command(
+        name="schedule_dailykg",
+        description="Schedule periodic daily-knowledge-graph rebuilds (admin only).",
+    )
+    @app_commands.describe(
+        interval_hours="How often to rebuild (1-168 hours).",
+        scope="Whether to build per-channel or global.",
+        days_back="Build N days back from today (0=today, 1=yesterday, etc.).",
+    )
+    @app_commands.choices(scope=KG_SCOPE_CHOICES)
+    async def schedule_dailykg_command(
+        interaction: discord.Interaction,
+        interval_hours: app_commands.Range[int, 1, 168] = 24,
+        scope: app_commands.Choice[str] = KG_SCOPE_CHOICES[0],
+        days_back: app_commands.Range[int, 0, 30] = 0,
+    ) -> None:
+        if not bot_state_instance:
+            await interaction.response.send_message("Bot state not ready.", ephemeral=True)
+            return
+        if not config.ADMIN_USER_IDS or not is_admin_user(interaction.user.id):
+            await interaction.response.send_message(
+                "This command is restricted to bot administrators.", ephemeral=True
+            )
+            return
+        if interaction.channel_id is None:
+            await interaction.response.send_message("No channel ID present for scheduling.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        sched = {
+            "id": f"dailykg_{interaction.channel_id}_{int(datetime.now().timestamp())}",
+            "channel_id": interaction.channel_id,
+            "type": "dailykg",
+            "interval_seconds": int(interval_hours) * 3600,
+            "params": {"scope": scope.value, "days_back": int(days_back)},
+            "last_run": None,
+            "created_by": str(interaction.user.id),
+        }
+        await bot_state_instance.add_schedule(sched)
+        await interaction.edit_original_response(
+            content=(
+                f"Scheduled daily KG rebuild every {interval_hours} hour(s) "
+                f"({scope.name}, days_back={days_back}). Schedule ID: `{sched['id']}`."
+            )
+        )
 
     @bot_instance.tree.command(name="rss_podcast", description="Toggle auto-podcast after RSS/allrss chunks in this channel.")
     @app_commands.describe(enabled="True to enable; False to disable")

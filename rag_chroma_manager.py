@@ -7,6 +7,7 @@ import json
 import re
 import random
 import ast
+from datetime import date
 
 
 import chromadb
@@ -31,6 +32,7 @@ timeline_summary_collection: Optional[chromadb.Collection] = None
 relation_collection: Optional[chromadb.Collection] = None
 observation_collection: Optional[chromadb.Collection] = None
 tweets_collection: Optional[chromadb.Collection] = None # New collection for tweets
+daily_kg_collection: Optional[chromadb.Collection] = None
 
 
 def _parse_json_with_recovery(content: str) -> Optional[Dict[str, Any]]:
@@ -131,7 +133,7 @@ def _parse_relative_date_range(query: str) -> Optional[Tuple[datetime, datetime]
 def initialize_chromadb() -> bool:
     global chroma_client, chat_history_collection, distilled_chat_summary_collection, \
            news_summary_collection, rss_summary_collection, timeline_summary_collection, \
-           relation_collection, observation_collection, tweets_collection # Added tweets_collection
+           relation_collection, observation_collection, tweets_collection, daily_kg_collection # Added tweets_collection
 
     if chroma_client:
         logger.debug("ChromaDB already initialized.")
@@ -165,6 +167,14 @@ def initialize_chromadb() -> bool:
         tweets_collection = chroma_client.get_or_create_collection(name=config.CHROMA_TWEETS_COLLECTION_NAME) # New
 
         logger.info(
+            "Getting or creating ChromaDB collection: %s",
+            config.CHROMA_DAILY_KG_COLLECTION_NAME,
+        )
+        daily_kg_collection = chroma_client.get_or_create_collection(
+            name=config.CHROMA_DAILY_KG_COLLECTION_NAME
+        )
+
+        logger.info(
             f"ChromaDB initialized successfully. Collections: "
             f"'{config.CHROMA_COLLECTION_NAME}', "
             f"'{config.CHROMA_DISTILLED_COLLECTION_NAME}', "
@@ -173,7 +183,8 @@ def initialize_chromadb() -> bool:
             f"'{config.CHROMA_TIMELINE_SUMMARY_COLLECTION_NAME}', "
             f"'{config.CHROMA_RELATIONS_COLLECTION_NAME}', "
             f"'{config.CHROMA_OBSERVATIONS_COLLECTION_NAME}', "
-            f"'{config.CHROMA_TWEETS_COLLECTION_NAME}'." # New
+            f"'{config.CHROMA_TWEETS_COLLECTION_NAME}', "
+            f"'{config.CHROMA_DAILY_KG_COLLECTION_NAME}'."
         )
         return True
     except Exception as e:
@@ -187,7 +198,267 @@ def initialize_chromadb() -> bool:
         relation_collection = None
         observation_collection = None
         tweets_collection = None # New
+        daily_kg_collection = None
         return False
+
+
+def _normalize_kg_token(value: str) -> str:
+    """Normalize node/edge tokens for dedupe."""
+
+    if value is None:
+        return ""
+    cleaned = str(value).strip()
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    return cleaned
+
+
+def _parse_iso_dt_maybe(value: Any) -> Optional[datetime]:
+    if not isinstance(value, str):
+        return None
+    ts_str = value.strip()
+    if not ts_str:
+        return None
+    if ts_str.endswith("Z"):
+        ts_str = ts_str[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(ts_str)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _utc_day_key(dt: datetime) -> str:
+    return dt.astimezone(timezone.utc).date().isoformat()
+
+
+async def build_daily_knowledge_graph(
+    llm_client: Any,
+    *,
+    day: Optional[date] = None,
+    channel_id: Optional[int] = None,
+    force: bool = False,
+) -> Optional[str]:
+    """Build (or refresh) a deduped daily knowledge graph document.
+
+    The KG is derived from extracted relations + observations and stored as a
+    single compact document in ``daily_kg_collection``.
+    """
+
+    if not config.ENABLE_DAILY_KG:
+        return None
+    if not daily_kg_collection or not (relation_collection and observation_collection):
+        logger.warning("Daily KG build skipped: collections unavailable.")
+        return None
+
+    target_day = day or datetime.now(timezone.utc).date()
+    day_key = target_day.isoformat()
+    scope = f"channel_{channel_id}" if channel_id is not None else "global"
+    doc_id = f"dailykg_{scope}_{day_key}"
+
+    if not force:
+        try:
+            existing = await asyncio.to_thread(daily_kg_collection.get, ids=[doc_id])
+            if existing and (existing.get("ids") or []):
+                logger.debug("Daily KG %s already exists; skipping rebuild.", doc_id)
+                return doc_id
+        except Exception:
+            # If lookup fails, proceed with rebuild.
+            pass
+
+    start_dt = datetime(target_day.year, target_day.month, target_day.day, tzinfo=timezone.utc)
+    end_dt = start_dt + timedelta(days=1)
+
+    def _in_scope(meta: Dict[str, Any]) -> bool:
+        ts = _parse_iso_dt_maybe(meta.get("timestamp"))
+        if not ts:
+            return False
+        if not (start_dt <= ts < end_dt):
+            return False
+        if channel_id is None:
+            return True
+        # Channel scoping only works for newer docs where we record channel_id in metadata.
+        meta_channel = meta.get("channel_id")
+        if meta_channel is None:
+            return False
+        return str(meta_channel) == str(channel_id)
+
+    max_per_collection = max(1, int(config.DAILY_KG_MAX_SOURCE_DOCS_PER_COLLECTION))
+
+    # Collect relations
+    edges: List[Dict[str, str]] = []
+    edge_seen: set[tuple[str, str, str]] = set()
+    rel_count = 0
+    try:
+        rel_res = await asyncio.to_thread(relation_collection.get, include=["documents", "metadatas"])
+        rel_docs = rel_res.get("documents") or []
+        rel_metas = rel_res.get("metadatas") or []
+        for meta in rel_metas:
+            if not isinstance(meta, dict) or not _in_scope(meta):
+                continue
+            raw = meta.get("raw_details")
+            try:
+                rel = json.loads(raw) if isinstance(raw, str) else {}
+            except Exception:
+                rel = {}
+            subj = _normalize_kg_token(rel.get("subject_name") or meta.get("subject_name") or "")
+            pred = _normalize_kg_token(rel.get("predicate") or meta.get("predicate") or "")
+            obj = _normalize_kg_token(rel.get("object_name") or meta.get("object_name") or "")
+            if not (subj and pred and obj):
+                continue
+            key = (subj.lower(), pred.lower(), obj.lower())
+            if key in edge_seen:
+                continue
+            edge_seen.add(key)
+            edges.append({"subject": subj, "predicate": pred, "object": obj})
+            rel_count += 1
+            if rel_count >= max_per_collection or rel_count >= config.DAILY_KG_MAX_EDGES:
+                break
+    except Exception as exc:
+        logger.error("Daily KG: failed collecting relations: %s", exc, exc_info=True)
+
+    # Collect observations
+    observations: List[str] = []
+    obs_seen: set[str] = set()
+    nodes: set[str] = set()
+    obs_count = 0
+    try:
+        obs_res = await asyncio.to_thread(observation_collection.get, include=["documents", "metadatas"])
+        obs_docs = obs_res.get("documents") or []
+        obs_metas = obs_res.get("metadatas") or []
+        for doc_text, meta in zip(obs_docs, obs_metas):
+            if not isinstance(meta, dict) or not _in_scope(meta):
+                continue
+            if not isinstance(doc_text, str):
+                continue
+            statement = _normalize_kg_token(doc_text)
+            if not statement:
+                continue
+            statement_key = statement.lower()
+            if statement_key in obs_seen:
+                continue
+            obs_seen.add(statement_key)
+            observations.append(statement)
+            obs_count += 1
+            entities_raw = meta.get("entities_involved")
+            if isinstance(entities_raw, str):
+                try:
+                    parsed = json.loads(entities_raw)
+                    if isinstance(parsed, list):
+                        for ent in parsed:
+                            ent_norm = _normalize_kg_token(str(ent))
+                            if ent_norm:
+                                nodes.add(ent_norm)
+                except Exception:
+                    pass
+            if obs_count >= max_per_collection or obs_count >= config.DAILY_KG_MAX_OBSERVATIONS:
+                break
+    except Exception as exc:
+        logger.error("Daily KG: failed collecting observations: %s", exc, exc_info=True)
+
+    for edge in edges:
+        nodes.add(edge["subject"])
+        nodes.add(edge["object"])
+
+    kg_payload: Dict[str, Any] = {
+        "day": day_key,
+        "scope": scope,
+        "nodes": sorted(nodes)[:5000],
+        "edges": edges[: int(config.DAILY_KG_MAX_EDGES)],
+        "observations": observations[: int(config.DAILY_KG_MAX_OBSERVATIONS)],
+        "source_counts": {
+            "relations_used": len(edges),
+            "observations_used": len(observations),
+            "nodes_used": len(nodes),
+        },
+    }
+
+    # Optional: compact narrative summary using the fast model
+    summary_text: Optional[str] = None
+    try:
+        fast_runtime = get_llm_runtime("fast")
+        fast_client = fast_runtime.client
+        fast_provider = fast_runtime.provider
+        fast_logit_bias = (
+            LOGIT_BIAS_UNWANTED_TOKENS_STR if fast_provider.supports_logit_bias else None
+        )
+
+        # Keep this prompt deterministic-ish and compact.
+        prompt = (
+            "You maintain a compact daily knowledge graph for a personal assistant.\n"
+            f"DAY (UTC): {day_key}\n"
+            f"SCOPE: {scope}\n\n"
+            "Given the JSON payload below, write:\n"
+            "1) A 5-15 bullet 'Key facts' list (dense, deduped, no fluff)\n"
+            "2) A short 'Notable entities' line\n"
+            "3) A short 'Notable relations' line\n"
+            "Do not invent facts. If information is sparse, say so.\n\n"
+            f"JSON:\n{json.dumps(kg_payload, ensure_ascii=False)[:120000]}\n"
+        )
+        resp = await create_chat_completion(
+            fast_client,
+            [
+                {"role": "system", "content": "You are a meticulous knowledge graph summarizer."},
+                {"role": "user", "content": prompt},
+            ],
+            model=fast_provider.model,
+            max_tokens=2048,
+            temperature=fast_provider.temperature,
+            logit_bias=fast_logit_bias,
+            use_responses_api=fast_provider.use_responses_api,
+        )
+        summary_text = extract_text(resp, fast_provider.use_responses_api) or None
+    except Exception as exc:
+        logger.warning("Daily KG: summary generation failed: %s", exc)
+
+    doc_text_parts = [
+        f"Daily Knowledge Graph (UTC day {day_key})",
+        f"Scope: {scope}",
+        "",
+        "## Summary",
+        summary_text or "[No summary generated.]",
+        "",
+        "## Graph JSON",
+        json.dumps(kg_payload, ensure_ascii=False, indent=2),
+    ]
+    doc_text = "\n".join(doc_text_parts)
+
+    metadata: Dict[str, Any] = {
+        "type": "daily_knowledge_graph",
+        "scope": scope,
+        "day": day_key,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    if channel_id is not None:
+        metadata["channel_id"] = str(channel_id)
+
+    try:
+        # Prefer upsert if available; fall back to delete+add.
+        upsert = getattr(daily_kg_collection, "upsert", None)
+        if callable(upsert):
+            await asyncio.to_thread(
+                upsert,
+                documents=[doc_text],
+                metadatas=[metadata],
+                ids=[doc_id],
+            )
+        else:
+            try:
+                await asyncio.to_thread(daily_kg_collection.delete, ids=[doc_id])
+            except Exception:
+                pass
+            await asyncio.to_thread(
+                daily_kg_collection.add,
+                documents=[doc_text],
+                metadatas=[metadata],
+                ids=[doc_id],
+            )
+        logger.info("Stored daily KG doc %s.", doc_id)
+        return doc_id
+    except Exception as exc:
+        logger.error("Daily KG: failed to store %s: %s", doc_id, exc, exc_info=True)
+        return None
 
 async def extract_structured_data_llm(
     llm_client: Any,
@@ -591,6 +862,7 @@ async def retrieve_and_prepare_rag_context(
         start_dt, end_dt = date_range
         start_iso, end_iso = start_dt.isoformat(), end_dt.isoformat()
         collections_to_search = [
+            ("daily_kg", daily_kg_collection),
             ("rss", rss_summary_collection),
             ("tweets", tweets_collection),
             # ("news", news_summary_collection),
@@ -677,6 +949,24 @@ async def retrieve_and_prepare_rag_context(
     retrieved_contexts_raw: List[Tuple[str, str]] = [] # Stores tuples of (document_text, source_collection_name)
 
     try:
+        # Prefer daily knowledge-graph docs first (more compact, deduped).
+        if config.ENABLE_DAILY_KG and daily_kg_collection:
+            try:
+                if progress_callback:
+                    await progress_callback("🕸️ Searching daily knowledge graphs...")
+                kg_results = await asyncio.to_thread(
+                    daily_kg_collection.query,
+                    query_texts=[query],
+                    n_results=max(1, int(getattr(config, "RAG_NUM_DAILY_KG_DOCS_TO_FETCH", 2))),
+                    include=["documents"],
+                )
+                if kg_results and kg_results.get("documents") and kg_results["documents"][0]:
+                    for doc_text in kg_results["documents"][0]:
+                        if isinstance(doc_text, str):
+                            retrieved_contexts_raw.append((doc_text, "daily_kg"))
+            except Exception as kg_exc:
+                logger.debug("RAG: daily KG query failed: %s", kg_exc, exc_info=True)
+
         logger.debug(f"RAG: Querying distilled_chat_summary_collection for query: '{query[:50]}...' (n_results={n_results_sentences})")
         results = await asyncio.to_thread(
             distilled_chat_summary_collection.query,
@@ -931,6 +1221,8 @@ async def ingest_conversation_to_chromadb(
                 rel_docs.append(f"{rel['subject_name']} {rel['predicate']} {rel['object_name']}")
                 meta = {
                     "source_doc_id": full_convo_doc_id,
+                    "channel_id": str(channel_id),
+                    "user_id": str_user_id,
                     "subject_name": rel["subject_name"],
                     "predicate": rel["predicate"],
                     "object_name": rel["object_name"],
@@ -960,6 +1252,8 @@ async def ingest_conversation_to_chromadb(
                 obs_docs.append(obs["statement"]) # Document is the observation statement
                 meta = {
                     "source_doc_id": full_convo_doc_id,
+                    "channel_id": str(channel_id),
+                    "user_id": str_user_id,
                     "observation_type": obs["type"],
                     "entities_involved": json.dumps(obs.get("entities_involved", [])), # Store as JSON string
                     "context_phrase": obs.get("context_phrase", ""),
@@ -1044,6 +1338,21 @@ async def ingest_conversation_to_chromadb(
             # Optionally merge retrieved snippets with the new summary for long-term consolidation
             if config.ENABLE_MEMORY_MERGE:
                 await update_retrieved_memories(llm_client, retrieved_snippets, distilled_sentence)
+            # Daily KG maintenance (ongoing, per-turn)
+            if config.ENABLE_DAILY_KG and config.DAILY_KG_BUILD_ON_INGEST:
+                try:
+                    await build_daily_knowledge_graph(
+                        llm_client,
+                        day=timestamp_now.astimezone(timezone.utc).date(),
+                        channel_id=channel_id,
+                        force=True,
+                    )
+                except Exception as kg_exc:
+                    logger.warning(
+                        "Daily KG build failed during ingest for channel %s: %s",
+                        channel_id,
+                        kg_exc,
+                    )
         except Exception as e_add_distilled:
             logger.error(
                 f"Failed to add distilled sentence (ID: {distilled_doc_id}) to ChromaDB: {e_add_distilled}",
@@ -1328,6 +1637,7 @@ async def get_chroma_collection_counts() -> Dict[str, int]:
         "relations": relation_collection,
         "observations": observation_collection,
         "tweets": tweets_collection,
+        "daily_kg": daily_kg_collection,
     }
 
     counts: Dict[str, int] = {}
@@ -1494,6 +1804,7 @@ def get_collection_counts() -> Dict[str, int]:
         "relation": relation_collection,
         "observation": observation_collection,
         "tweets": tweets_collection,
+        "daily_kg": daily_kg_collection,
     }
 
     # Include entity collection if defined
