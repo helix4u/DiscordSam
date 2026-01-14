@@ -290,11 +290,15 @@ async def _summarize_and_prune_documents(
         if summary:
             summaries.append(summary)
             ids_to_prune = [item["id"] for item in block]
-            _store_timeline_summary(
+            await asyncio.to_thread(
+                _store_timeline_summary,
                 block_start_dt, block_end_dt, summary, ids_to_prune, block_key_for_id
             )
             if rcm.chat_history_collection:
-                rcm.chat_history_collection.delete(ids=ids_to_prune)
+                await asyncio.to_thread(
+                    rcm.chat_history_collection.delete,
+                    ids=ids_to_prune
+                )
                 total_pruned += len(ids_to_prune)
                 logger.info(
                     f"Pruner: Pruned {len(ids_to_prune)} documents for block {block_start_dt.strftime('%Y-%m-%d %H:%M')} - {block_end_dt.strftime('%Y-%m-%d %H:%M')}"
@@ -358,7 +362,7 @@ async def prune_and_summarize(prune_days: int = PRUNE_DAYS) -> int:
             base_url=config.LOCAL_SERVER_URL, api_key=config.LLM_API_KEY or "lm-studio"
         )
 
-        docs = _fetch_old_documents(prune_days)
+        docs = await asyncio.to_thread(_fetch_old_documents, prune_days)
         logger.info(f"Pruner: Fetched {len(docs)} documents from the database.")
 
         if not docs:
@@ -398,7 +402,7 @@ async def prune_oldest_items(item_limit: int) -> Tuple[int, List[str]]:
         base_url=config.LOCAL_SERVER_URL, api_key=config.LLM_API_KEY or "lm-studio"
     )
 
-    docs = _fetch_all_documents()
+    docs = await asyncio.to_thread(_fetch_all_documents)
     if not docs:
         logger.info("Pruner: No documents found in chat history.")
         return 0, []
