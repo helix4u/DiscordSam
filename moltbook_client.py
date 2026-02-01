@@ -1,3 +1,6 @@
+"""Moltbook API client. API spec: https://www.moltbook.com/skill.md
+Always use https://www.moltbook.com (with www); redirect without www strips Authorization."""
+import json
 import logging
 from typing import Any, Dict, Optional
 from urllib.parse import urlparse
@@ -20,6 +23,12 @@ class MoltbookAPIError(RuntimeError):
         super().__init__(message)
         self.status = status
         self.hint = hint
+
+    def __str__(self) -> str:
+        msg = super().__str__()
+        if self.status is not None:
+            msg = f"{msg} (HTTP {self.status})"
+        return msg
 
 
 def _normalize_base_url(base_url: str) -> str:
@@ -52,28 +61,31 @@ async def _moltbook_request(
     key = parsed.netloc.lower() if parsed.netloc else "default"
 
     await _shared_rate_limiter.await_slot(key)
+    req_kwargs: Dict[str, Any] = {"params": params, "headers": _build_auth_headers()}
+    if json_body is not None:
+        req_kwargs["json"] = json_body
     async with aiohttp.ClientSession() as session:
-        async with session.request(
-            method,
-            url,
-            params=params,
-            json=json_body,
-            headers=_build_auth_headers(),
-        ) as response:
+        async with session.request(method, url, **req_kwargs) as response:
             await _shared_rate_limiter.record_response(key, response.status, response.headers)
             payload_text = await response.text()
             payload: Dict[str, Any] = {}
             if payload_text:
                 try:
-                    payload = await response.json(content_type=None)
-                except Exception:
+                    payload = json.loads(payload_text)
+                except (json.JSONDecodeError, TypeError):
                     payload = {"raw": payload_text}
 
             if response.status >= 400:
+                logger.warning(
+                    "Moltbook API error: %s %s -> %s",
+                    method,
+                    url,
+                    response.status,
+                )
                 error_message = "Moltbook API request failed."
                 hint = None
                 if isinstance(payload, dict):
-                    error_message = payload.get("error", error_message)
+                    error_message = payload.get("error") or payload.get("message") or error_message
                     hint = payload.get("hint")
                 raise MoltbookAPIError(
                     error_message,
@@ -112,7 +124,10 @@ async def moltbook_search(
     search_type: str,
     limit: int,
 ) -> Dict[str, Any]:
-    params = {"q": query, "type": search_type, "limit": limit}
+    # https://www.moltbook.com/skill.md: q (required, max 500), type (posts|comments|all), limit (default 20, max 50)
+    q = (query or "").strip()[:500]
+    limit_bounded = max(1, min(limit, 50))
+    params: Dict[str, Any] = {"q": q, "type": search_type or "all", "limit": limit_bounded}
     return await _moltbook_request("GET", "/search", params=params)
 
 
@@ -156,4 +171,57 @@ async def moltbook_add_comment(
         "POST",
         f"/posts/{post_id}/comments",
         json_body=payload,
+    )
+
+
+# --- DM (Private Messages) ---
+# https://www.moltbook.com/heartbeat.md
+
+
+async def moltbook_dm_check() -> Dict[str, Any]:
+    """Check for pending DM requests and unread messages."""
+    return await _moltbook_request("GET", "/agents/dm/check")
+
+
+async def moltbook_dm_requests() -> Dict[str, Any]:
+    """List pending DM requests (need owner approval)."""
+    return await _moltbook_request("GET", "/agents/dm/requests")
+
+
+async def moltbook_dm_approve(conversation_id: str) -> Dict[str, Any]:
+    """Approve a DM request (conversation can then be used)."""
+    return await _moltbook_request(
+        "POST",
+        f"/agents/dm/requests/{conversation_id}/approve",
+    )
+
+
+async def moltbook_dm_conversations() -> Dict[str, Any]:
+    """List DM conversations."""
+    return await _moltbook_request("GET", "/agents/dm/conversations")
+
+
+async def moltbook_dm_get_conversation(conversation_id: str) -> Dict[str, Any]:
+    """Get a conversation (marks as read)."""
+    return await _moltbook_request(
+        "GET",
+        f"/agents/dm/conversations/{conversation_id}",
+    )
+
+
+async def moltbook_dm_send(conversation_id: str, message: str) -> Dict[str, Any]:
+    """Send a message in a DM conversation."""
+    return await _moltbook_request(
+        "POST",
+        f"/agents/dm/conversations/{conversation_id}/send",
+        json_body={"message": message},
+    )
+
+
+async def moltbook_dm_request(to_agent: str, message: str) -> Dict[str, Any]:
+    """Start a new DM (request to another molty; their owner must approve)."""
+    return await _moltbook_request(
+        "POST",
+        "/agents/dm/request",
+        json_body={"to": to_agent, "message": message},
     )

@@ -23,7 +23,7 @@ DiscordSam is an advanced, context-aware Discord bot designed to provide intelli
     *   Fetch and summarize recent tweets from X/Twitter users.
     *   Process RSS feeds, summarizing new articles.
     *   Validate user-supplied URLs before scraping to block localhost and private-network targets for safety.
-*   **Moltbook Integration:** Read, search, and post to Moltbook directly from Discord.
+*   **Moltbook Integration:** Read, search, post, and manage DMs on Moltbook directly from Discord (feed, posts, comments, semantic search, and private messages with other moltys).
 *   **Adaptive Rate Limiting:** A shared async rate limiter reads API headers (including X/Twitter's `x-rate-limit-*`) and enforces jittered backoffs so scheduled tasks and interactive commands play nicely with platform limits.
 *   **Multimedia Interaction:**
     *   Analyze and describe attached images (with a creative "AP Photo" twist using a vision LLM).
@@ -420,6 +420,8 @@ DiscordSam offers a variety of slash commands for diverse functionalities, group
 
 ### Moltbook Commands
 
+**Note:** Moltbook features are in flux; behavior may be strange, and failures or API redesigns are possible. We’ll update the integration as the platform stabilizes.
+
 *   **`/moltbook_status`**
     *   **Purpose:** Verifies Moltbook connectivity, claim status, and profile basics.
     *   **Examples:**
@@ -434,14 +436,14 @@ DiscordSam offers a variety of slash commands for diverse functionalities, group
         *   `/moltbook_feed personalized:true sort:hot`
 
 *   **`/moltbook_search <query> [search_type] [limit]`**
-    *   **Purpose:** Semantic search across Moltbook posts and comments.
-    *   **Arguments:** `query` (Required), `search_type` (Optional: `all`, `posts`, `comments`), `limit` (Optional, Default: 10).
+    *   **Purpose:** Semantic search across Moltbook posts and comments (natural language, max 500 chars).
+    *   **Arguments:** `query` (Required), `search_type` (Optional: `all`, `posts`, `comments`), `limit` (Optional, Default: 10, max: 50).
     *   **Examples:**
         *   `/moltbook_search query:"agent memory strategies"`
         *   `/moltbook_search query:"rate limits" search_type:posts limit:5`
 
 *   **`/moltbook_get <post_id> [include_comments] [comment_sort]`**
-    *   **Purpose:** Retrieves a specific Moltbook post with optional top comments.
+    *   **Purpose:** Retrieves a specific Moltbook post with optional comments. Long posts span multiple embeds; the post ID is a link to the post on Moltbook.
     *   **Arguments:** `post_id` (Required), `include_comments` (Optional, Default: true), `comment_sort` (Optional: `top`, `new`, `controversial`).
     *   **Examples:**
         *   `/moltbook_get post_id:abc123`
@@ -460,6 +462,14 @@ DiscordSam offers a variety of slash commands for diverse functionalities, group
     *   **Examples:**
         *   `/moltbook_comment post_id:abc123 content:"Great insight, thanks for sharing!"`
         *   `/moltbook_comment post_id:abc123 content:"Replying to this point" parent_id:def456`
+
+*   **Moltbook DMs (heartbeat)** — Check and manage private messages with other moltys. Your human must approve incoming DM requests before you can chat.
+    *   **`/moltbook_dm_check`** — Summary: pending DM requests and unread message count.
+    *   **`/moltbook_dm_requests`** — List pending requests (need approval). Use **`/moltbook_dm_approve`** with a `conversation_id` to approve.
+    *   **`/moltbook_dm_conversations`** — List your DM conversations.
+    *   **`/moltbook_dm_read <conversation_id>`** — Read a conversation (marks as read).
+    *   **`/moltbook_dm_reply <conversation_id> <message>`** — Send a reply in a conversation.
+    *   **`/moltbook_dm_start <to_agent> <message>`** — Request a new DM with another molty; their owner must approve.
 
 ### Creative & Fun Commands
 
