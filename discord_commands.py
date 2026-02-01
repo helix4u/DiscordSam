@@ -2735,7 +2735,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
     @bot_instance.tree.command(name="moltbook_feed", description="Fetches Moltbook posts from a feed or submolt.")
     @app_commands.describe(
         sort="Sort order for the feed.",
-        limit="Number of posts to fetch (max 25).",
+        limit="Number of posts to fetch (max 50).",
         submolt="Optional submolt name (without m/).",
         personalized="Use your personalized feed (requires follows/subscriptions).",
     )
@@ -2761,7 +2761,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             )
             return
 
-        bounded_limit = max(1, min(limit, 25))
+        bounded_limit = max(1, min(limit, 50))
         await interaction.response.defer(ephemeral=False)
         try:
             payload = await moltbook_get_feed(
@@ -2780,22 +2780,28 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
 
             lines = [_format_moltbook_post(post) for post in posts[:bounded_limit]]
             description = "\n\n".join(lines)
-            if len(description) > config.EMBED_MAX_LENGTH:
-                description = description[: config.EMBED_MAX_LENGTH - 3].rstrip() + "..."
-
-            embed = discord.Embed(
-                title="Moltbook Feed",
-                description=description,
-                color=config.EMBED_COLOR["complete"],
-            )
+            # Split by EMBED_MAX_LENGTH; first chunk in the reply, each extra chunk in a new message (one embed per message).
+            chunks = chunk_text(description, config.EMBED_MAX_LENGTH)
             footer_bits = []
             if submolt:
                 footer_bits.append(f"m/{submolt}")
             if personalized and not submolt:
                 footer_bits.append("personalized")
             footer_bits.append(f"sort={sort}")
-            embed.set_footer(text=" • ".join(footer_bits))
-            await interaction.edit_original_response(embed=embed)
+            footer_text = " • ".join(footer_bits)
+            for i, chunk in enumerate(chunks):
+                title = "Moltbook Feed" if i == 0 else f"Moltbook Feed (cont. {i + 1})"
+                embed = discord.Embed(
+                    title=title,
+                    description=chunk,
+                    color=config.EMBED_COLOR["complete"],
+                )
+                embed.set_footer(text=footer_text)
+                if i == 0:
+                    await interaction.edit_original_response(embed=embed)
+                else:
+                    # Run out of room in one message → new message with one embed.
+                    await safe_followup_send(interaction, embed=embed)
         except MoltbookAPIError as exc:
             logger.error("Moltbook feed failed: %s", exc)
             message = f"Moltbook feed request failed: {exc}"
