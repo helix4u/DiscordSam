@@ -151,8 +151,10 @@ chroma_data/
 chroma_data1/
 temp/
 
-# Test files
+# Test files (local scripts, not for repo)
 test_*.py
+test_moltbook_auth.py
+test_moltbook_search.py
 simple_*.py
 create_dataset.py
 
