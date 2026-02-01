@@ -31,6 +31,7 @@ timeline_summary_collection: Optional[chromadb.Collection] = None
 relation_collection: Optional[chromadb.Collection] = None
 observation_collection: Optional[chromadb.Collection] = None
 tweets_collection: Optional[chromadb.Collection] = None # New collection for tweets
+moltbook_collection: Optional[chromadb.Collection] = None  # Moltbook drafts and submitted replies
 
 
 def _parse_json_with_recovery(content: str) -> Optional[Dict[str, Any]]:
@@ -131,7 +132,7 @@ def _parse_relative_date_range(query: str) -> Optional[Tuple[datetime, datetime]
 def initialize_chromadb() -> bool:
     global chroma_client, chat_history_collection, distilled_chat_summary_collection, \
            news_summary_collection, rss_summary_collection, timeline_summary_collection, \
-           relation_collection, observation_collection, tweets_collection # Added tweets_collection
+           relation_collection, observation_collection, tweets_collection, moltbook_collection
 
     if chroma_client:
         logger.debug("ChromaDB already initialized.")
@@ -164,6 +165,9 @@ def initialize_chromadb() -> bool:
         logger.info(f"Getting or creating ChromaDB collection: {config.CHROMA_TWEETS_COLLECTION_NAME}") # New
         tweets_collection = chroma_client.get_or_create_collection(name=config.CHROMA_TWEETS_COLLECTION_NAME) # New
 
+        logger.info(f"Getting or creating ChromaDB collection: {config.CHROMA_MOLTBOOK_COLLECTION_NAME}")
+        moltbook_collection = chroma_client.get_or_create_collection(name=config.CHROMA_MOLTBOOK_COLLECTION_NAME)
+
         logger.info(
             f"ChromaDB initialized successfully. Collections: "
             f"'{config.CHROMA_COLLECTION_NAME}', "
@@ -173,7 +177,8 @@ def initialize_chromadb() -> bool:
             f"'{config.CHROMA_TIMELINE_SUMMARY_COLLECTION_NAME}', "
             f"'{config.CHROMA_RELATIONS_COLLECTION_NAME}', "
             f"'{config.CHROMA_OBSERVATIONS_COLLECTION_NAME}', "
-            f"'{config.CHROMA_TWEETS_COLLECTION_NAME}'." # New
+            f"'{config.CHROMA_TWEETS_COLLECTION_NAME}', "
+            f"'{config.CHROMA_MOLTBOOK_COLLECTION_NAME}'."
         )
         return True
     except Exception as e:
@@ -186,7 +191,8 @@ def initialize_chromadb() -> bool:
         timeline_summary_collection = None
         relation_collection = None
         observation_collection = None
-        tweets_collection = None # New
+        tweets_collection = None
+        moltbook_collection = None
         return False
 
 async def extract_structured_data_llm(
@@ -748,7 +754,8 @@ async def retrieve_and_prepare_rag_context(
             ("timeline", timeline_summary_collection),
             # ("news", news_summary_collection),
             ("rss", rss_summary_collection),
-            ("tweets", tweets_collection), # New
+            ("tweets", tweets_collection),
+            ("moltbook", moltbook_collection),
             ("relation", relation_collection),
             ("observation", observation_collection),
         ]
@@ -1317,6 +1324,125 @@ async def store_rss_summary(feed_url: str, article_url: str, title: str, summary
         logger.error(f"Failed to store RSS summary for article {article_url} from feed {feed_url}: {e}", exc_info=True)
         return False
 
+
+async def store_moltbook_reply(
+    post_id: str,
+    reply_text: str,
+    kind: str = "draft",
+    post_content_snippet: Optional[str] = None,
+) -> bool:
+    """Store a Moltbook draft or submitted reply in ChromaDB for RAG when drafting future replies."""
+    if not chroma_client or not moltbook_collection:
+        logger.warning("ChromaDB Moltbook collection not available, skipping storage.")
+        return False
+    if not (reply_text and reply_text.strip()):
+        logger.debug("store_moltbook_reply: reply_text empty, skipping.")
+        return False
+    now = datetime.now(timezone.utc)
+    doc_id = f"moltbook_{int(now.timestamp())}_{uuid4().hex[:8]}"
+    snippet = (post_content_snippet or "").strip()[:3000]
+    if snippet:
+        document = (
+            f"Moltbook post (ID: {post_id}):\n{snippet}\n\n"
+            f"Sam's reply ({kind}):\n{reply_text.strip()}"
+        )
+    else:
+        document = f"Moltbook comment on post {post_id} ({kind}):\n{reply_text.strip()}"
+    metadata = {
+        "post_id": post_id,
+        "kind": kind,
+        "timestamp": now.isoformat(),
+        "type": "moltbook_reply",
+    }
+    try:
+        await asyncio.to_thread(
+            moltbook_collection.add,
+            documents=[document],
+            metadatas=[metadata],
+            ids=[doc_id],
+        )
+        logger.info(
+            "Stored Moltbook %s (ID: %s) for post %s in '%s'.",
+            kind,
+            doc_id,
+            post_id,
+            config.CHROMA_MOLTBOOK_COLLECTION_NAME,
+        )
+        return True
+    except Exception as e:
+        logger.error("Failed to store Moltbook reply for post %s: %s", post_id, e, exc_info=True)
+        return False
+
+
+async def store_moltbook_feed_post(
+    post_id: str,
+    title: str,
+    content_snippet: str,
+    *,
+    submolt: Optional[str] = None,
+    sort: Optional[str] = None,
+) -> bool:
+    """Store one post from a Moltbook feed fetch in ChromaDB for RAG when drafting replies."""
+    if not chroma_client or not moltbook_collection:
+        logger.warning("ChromaDB Moltbook collection not available, skipping feed post storage.")
+        return False
+    now = datetime.now(timezone.utc)
+    doc_id = f"moltbook_feed_{int(now.timestamp())}_{uuid4().hex[:8]}"
+    content = (content_snippet or "").strip()[:4000]
+    document = f"Moltbook feed post (ID: {post_id}): {title}\n{content}"
+    metadata: Dict[str, Any] = {
+        "post_id": post_id,
+        "timestamp": now.isoformat(),
+        "type": "moltbook_feed_post",
+    }
+    if submolt:
+        metadata["submolt"] = submolt
+    if sort:
+        metadata["sort"] = sort
+    try:
+        await asyncio.to_thread(
+            moltbook_collection.add,
+            documents=[document],
+            metadatas=[metadata],
+            ids=[doc_id],
+        )
+        logger.debug("Stored Moltbook feed post (ID: %s) for post %s.", doc_id, post_id)
+        return True
+    except Exception as e:
+        logger.error("Failed to store Moltbook feed post %s: %s", post_id, e, exc_info=True)
+        return False
+
+
+async def store_moltbook_full_post(post_id: str, content_with_comments: str) -> bool:
+    """Store a full Moltbook post fetch (post + comments) in ChromaDB for RAG when drafting replies."""
+    if not chroma_client or not moltbook_collection:
+        logger.warning("ChromaDB Moltbook collection not available, skipping full post storage.")
+        return False
+    if not (content_with_comments and content_with_comments.strip()):
+        logger.debug("store_moltbook_full_post: content empty, skipping.")
+        return False
+    now = datetime.now(timezone.utc)
+    doc_id = f"moltbook_full_{int(now.timestamp())}_{uuid4().hex[:8]}"
+    document = f"Moltbook full post (ID: {post_id}):\n{content_with_comments.strip()[:12000]}"
+    metadata = {
+        "post_id": post_id,
+        "timestamp": now.isoformat(),
+        "type": "moltbook_full_post",
+    }
+    try:
+        await asyncio.to_thread(
+            moltbook_collection.add,
+            documents=[document],
+            metadatas=[metadata],
+            ids=[doc_id],
+        )
+        logger.info("Stored Moltbook full post (ID: %s) for post %s.", doc_id, post_id)
+        return True
+    except Exception as e:
+        logger.error("Failed to store Moltbook full post %s: %s", post_id, e, exc_info=True)
+        return False
+
+
 async def get_chroma_collection_counts() -> Dict[str, int]:
     """Return document counts for available Chroma collections."""
 
@@ -1328,6 +1454,7 @@ async def get_chroma_collection_counts() -> Dict[str, int]:
         "relations": relation_collection,
         "observations": observation_collection,
         "tweets": tweets_collection,
+        "moltbook": moltbook_collection,
     }
 
     counts: Dict[str, int] = {}
@@ -1494,6 +1621,7 @@ def get_collection_counts() -> Dict[str, int]:
         "relation": relation_collection,
         "observation": observation_collection,
         "tweets": tweets_collection,
+        "moltbook_replies": moltbook_collection,
     }
 
     # Include entity collection if defined

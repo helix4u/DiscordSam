@@ -347,6 +347,7 @@ class Config:
         self.CHROMA_OBSERVATIONS_COLLECTION_NAME = os.getenv("CHROMA_OBSERVATIONS_COLLECTION_NAME", "observations_collection")
         self.CHROMA_RSS_SUMMARY_COLLECTION_NAME = os.getenv("CHROMA_RSS_SUMMARY_COLLECTION_NAME", "rss_summaries") # New collection for RSS summaries
         self.CHROMA_TWEETS_COLLECTION_NAME = os.getenv("CHROMA_TWEETS_COLLECTION_NAME", "tweets_collection") # New collection for tweets
+        self.CHROMA_MOLTBOOK_COLLECTION_NAME = os.getenv("CHROMA_MOLTBOOK_COLLECTION_NAME", "moltbook_replies")
 
         self.USER_PROVIDED_CONTEXT = os.getenv("USER_PROVIDED_CONTEXT", "")
 

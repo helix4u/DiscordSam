@@ -22,14 +22,17 @@ from common_models import MsgNode, TweetData, GroundNewsArticle
 
 from llm_handling import (
     _build_initial_prompt_messages,
+    get_system_prompt,
     stream_llm_response_to_interaction,
     retrieve_rag_context_with_progress,
 )
 from rag_chroma_manager import (
     parse_chatgpt_export,
     store_chatgpt_conversations_in_chromadb,
-
-    store_rss_summary,  # New import
+    store_rss_summary,
+    store_moltbook_reply,
+    store_moltbook_feed_post,
+    store_moltbook_full_post,
     ingest_conversation_to_chromadb,
     get_chroma_collection_counts,
     fetch_recent_channel_memories,
@@ -287,6 +290,8 @@ async def _do_show_moltbook_post(
                 for c in comments[:5]
             ]
             description = f"{description}\n\n**Comments**\n" + "\n\n".join(snippets)
+        # Store full post fetch in ChromaDB for RAG when drafting replies (fire-and-forget)
+        start_post_processing_task(store_moltbook_full_post(post_id, description))
         chunks = chunk_text(description, config.EMBED_MAX_LENGTH)
         total = 0
         embeds_list = []
@@ -323,12 +328,19 @@ async def _handle_moltbook_get_button(interaction: discord.Interaction, post_id:
 
 
 class DraftReplySubmitView(discord.ui.View):
-    """Submit or Don't submit buttons for a drafted Moltbook reply."""
+    """Submit, Don't submit, and Get TTS for a drafted Moltbook reply."""
 
     def __init__(self, draft: str, post_id: str, *, timeout: float = 300.0) -> None:
         super().__init__(timeout=timeout)
         self.draft = draft
         self.post_id = post_id
+        get_tts_btn = discord.ui.Button(
+            label="Get TTS",
+            style=discord.ButtonStyle.primary,
+            custom_id="moltbook_draft_tts",
+        )
+        get_tts_btn.callback = self._tts_callback
+        self.add_item(get_tts_btn)
         submit_btn = discord.ui.Button(
             label="Submit",
             style=discord.ButtonStyle.primary,
@@ -344,6 +356,22 @@ class DraftReplySubmitView(discord.ui.View):
         dont_btn.callback = self._dont_callback
         self.add_item(dont_btn)
 
+    async def _tts_callback(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=False)
+        if not (self.draft and self.draft.strip()):
+            await interaction.followup.send(content="No draft text to speak.", ephemeral=True)
+            return
+        try:
+            await send_tts_audio(
+                interaction,
+                sanitize_moltbook_text_for_tts(self.draft),
+                base_filename="moltbook_draft",
+                bot_state=bot_state_instance,
+            )
+        except Exception as exc:
+            logger.warning("Moltbook draft TTS failed: %s", exc)
+            await interaction.followup.send(content=f"TTS failed: {exc}", ephemeral=True)
+
     async def _submit_callback(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer(ephemeral=True)
         from moltbook_client import moltbook_add_comment, MoltbookAPIError
@@ -355,6 +383,15 @@ class DraftReplySubmitView(discord.ui.View):
             return
         try:
             await moltbook_add_comment(post_id=self.post_id, content=self.draft)
+            # Store submitted reply in ChromaDB for RAG when drafting future replies (fire-and-forget)
+            start_post_processing_task(
+                store_moltbook_reply(
+                    self.post_id,
+                    self.draft,
+                    kind="submitted",
+                    post_content_snippet=None,
+                ),
+            )
             embed = discord.Embed(
                 title="Draft reply",
                 description="Comment posted to Moltbook.",
@@ -368,8 +405,9 @@ class DraftReplySubmitView(discord.ui.View):
             msg = f"Failed to post comment: {exc}"
             if getattr(exc, "status", None) == 401:
                 msg += (
-                    "\n\n**401 = auth rejected.** Check MOLTBOOK_API_KEY in .env and that your agent is "
-                    "claimed (see https://www.moltbook.com/skill.md)."
+                    "\n\n**401 = auth rejected.** If `/moltbook_status` works, your key and agent name are correct "
+                    "and the 401 on POST may be a Moltbook server restriction on write operations. Otherwise check "
+                    "MOLTBOOK_API_KEY and MOLTBOOK_AGENT_NAME in .env and that your agent is claimed (see https://www.moltbook.com/skill.md)."
                 )
             elif exc.hint:
                 msg += f"\n\nHint: {exc.hint}"
@@ -456,12 +494,14 @@ class MoltbookPostTTSView(discord.ui.View):
                 initial_status="🔍 Searching memories for relevant context...",
                 completion_status="✅ Memory search complete.",
             )
-            # Build prompt with same RAG context format as normal user flow
-            system = (
-                "You are Sam. The user said: yo, sam, draft a reply to this one. "
-                "Output only the draft reply text, no preamble. Keep it suitable as a comment (a few sentences)."
-            )
-            messages: List[Dict[str, str]] = [{"role": "system", "content": system}]
+            # Build prompt with same system instructions and dev context as regular Sam responses
+            sys_node = get_system_prompt()
+            messages: List[Dict[str, str]] = [{"role": sys_node.role, "content": sys_node.content}]
+            if (config.USER_PROVIDED_CONTEXT or "").strip():
+                messages.append({
+                    "role": "system",
+                    "content": f"User-Set Global Context:\n{config.USER_PROVIDED_CONTEXT.strip()}",
+                })
             if synthesized_rag_summary and synthesized_rag_summary.strip():
                 context_block = (
                     "The following is a synthesized summary of potentially relevant past conversations. "
@@ -492,13 +532,21 @@ class MoltbookPostTTSView(discord.ui.View):
                     total += len(part)
                 parts.append("\n--- End Raw Snippets ---")
                 messages.append({"role": "system", "content": "".join(parts)})
+            # Draft-only instruction (same as regular turn, but output is just the comment text)
+            messages.append({
+                "role": "system",
+                "content": (
+                    "For this turn only: The user said: yo, sam, draft a reply to this one. "
+                    "Output only the draft reply text, no preamble. Keep it suitable as a Moltbook comment (a few sentences)."
+                ),
+            })
             user_msg = f"Post to reply to:\n{self.text_to_speak[:3000]}"
             messages.append({"role": "user", "content": user_msg})
             response = await create_chat_completion(
                 fast_client,
                 messages,
                 model=fast_provider.model,
-                max_tokens=512,
+                max_tokens=config.MAX_COMPLETION_TOKENS,
                 temperature=fast_provider.temperature,
                 use_responses_api=getattr(fast_provider, "use_responses_api", False),
             )
@@ -509,6 +557,15 @@ class MoltbookPostTTSView(discord.ui.View):
                     ephemeral=True,
                 )
                 return
+            # Store draft in ChromaDB for RAG when drafting future replies (fire-and-forget)
+            start_post_processing_task(
+                store_moltbook_reply(
+                    self.post_id,
+                    draft.strip(),
+                    kind="draft",
+                    post_content_snippet=(self.text_to_speak[:3000] if self.text_to_speak else None),
+                ),
+            )
             draft_display = draft.strip()[:4000]
             if len(draft.strip()) > 4000:
                 draft_display += "\n…"
@@ -3057,7 +3114,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
     async def moltbook_feed_slash_command(
         interaction: discord.Interaction,
         sort: str = "new",
-        limit: int = 5,
+        limit: int = 10,
         submolt: Optional[str] = None,
         personalized: bool = False,
     ):
@@ -3086,6 +3143,20 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 return
 
             posts = posts[:bounded_limit]
+            # Store each feed post in ChromaDB for RAG when drafting replies (fire-and-forget)
+            for post in posts:
+                pid = post.get("id") or ""
+                if not pid:
+                    continue
+                start_post_processing_task(
+                    store_moltbook_feed_post(
+                        post_id=pid,
+                        title=(post.get("title") or "(untitled)").strip(),
+                        content_snippet=(post.get("content") or post.get("url") or ""),
+                        submolt=submolt,
+                        sort=sort,
+                    ),
+                )
             # Build chunks by post so we know which post IDs get a button in each message.
             chunk_texts: List[str] = []
             chunk_posts: List[List[Dict[str, Any]]] = []

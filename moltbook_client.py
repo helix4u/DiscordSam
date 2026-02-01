@@ -1,9 +1,9 @@
 """Moltbook API client. API spec: https://www.moltbook.com/skill.md
 
 CRITICAL: Only send requests to https://www.moltbook.com (with www).
-Redirects (e.g. moltbook.com -> www, or http -> https) can strip the Authorization
-header on some clients (especially on Windows). We use a canonical URL and disable
-redirects so auth is never lost."""
+When the server returns a redirect to moltbook.com (no www), we follow it by
+re-requesting to www.moltbook.com with the same Authorization header so the
+Bearer token survives."""
 import json
 import logging
 from typing import Any, Dict, Optional
@@ -40,8 +40,8 @@ class MoltbookAPIError(RuntimeError):
 
 
 def _build_auth_headers() -> Dict[str, str]:
-    # Key is sanitized in config; ensure no stray whitespace or control chars here
-    key = (config.MOLTBOOK_API_KEY or "").strip()
+    # Key is sanitized in config; double-strip quotes and control chars so creds are correct
+    key = (config.MOLTBOOK_API_KEY or "").strip().strip('"').strip("'")
     key = "".join(c for c in key if ord(c) >= 32 and ord(c) != 127)
     if not key:
         raise MoltbookAPIError("MOLTBOOK_API_KEY is not configured.")
@@ -76,42 +76,96 @@ async def _moltbook_request(
         req_kwargs["headers"] = {**headers, "Content-Type": "application/json"}
     timeout_sec = getattr(config, "MOLTBOOK_REQUEST_TIMEOUT_SECONDS", 30)
     timeout = aiohttp.ClientTimeout(total=timeout_sec)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        async with session.request(method, url, **req_kwargs) as response:
-            if response.status in (301, 302, 307, 308):
-                location = response.headers.get("Location", "")
-                raise MoltbookAPIError(
-                    f"Moltbook returned redirect to {location}. Requests use https://www.moltbook.com; if you see this, check proxy/DNS.",
-                    status=response.status,
-                    hint="Ensure no proxy or redirect is rewriting requests to moltbook.com.",
-                )
-            await _shared_rate_limiter.record_response(key, response.status, response.headers)
-            payload_text = await response.text()
-            payload: Dict[str, Any] = {}
-            if payload_text:
-                try:
-                    payload = json.loads(payload_text)
-                except (json.JSONDecodeError, TypeError):
-                    payload = {"raw": payload_text}
 
-            if response.status >= 400:
-                logger.warning(
-                    "Moltbook API error: %s %s -> %s",
-                    method,
-                    url,
-                    response.status,
+    async def _do_one_request(
+        session: aiohttp.ClientSession,
+        request_url: str,
+        request_headers: Dict[str, str],
+        request_params: Optional[Dict[str, Any]],
+        request_data: Optional[bytes],
+    ):
+        kwargs: Dict[str, Any] = {
+            "headers": request_headers,
+            "allow_redirects": False,
+        }
+        if request_params is not None:
+            kwargs["params"] = request_params
+        if request_data is not None:
+            kwargs["data"] = request_data
+        return await session.request(method, request_url, **kwargs)
+
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        current_url = url
+        current_headers = dict(req_kwargs["headers"])
+        current_params = req_kwargs.get("params")
+        current_data = req_kwargs.get("data")
+        max_redirects = 5
+        for _ in range(max_redirects):
+            async with (
+                await _do_one_request(
+                    session, current_url, current_headers, current_params, current_data
                 )
-                error_message = "Moltbook API request failed."
-                hint = None
-                if isinstance(payload, dict):
-                    error_message = payload.get("error") or payload.get("message") or error_message
-                    hint = payload.get("hint")
-                raise MoltbookAPIError(
-                    error_message,
-                    status=response.status,
-                    hint=hint,
-                )
-            return payload
+            ) as response:
+                if response.status in (301, 302, 307, 308):
+                    location = response.headers.get("Location", "").strip()
+                    if not location:
+                        raise MoltbookAPIError(
+                            "Moltbook returned redirect with no Location header.",
+                            status=response.status,
+                            hint="Check proxy/DNS.",
+                        )
+                    # Drain body so connection is clean for next request
+                    await response.read()
+                    # Rewrite to www so Authorization survives (server often redirects to non-www)
+                    if "://moltbook.com" in location and "://www.moltbook.com" not in location:
+                        location = location.replace("://moltbook.com", "://www.moltbook.com", 1)
+                        logger.debug("Moltbook redirect rewritten to www: %s", location)
+                    current_url = location
+                    current_params = None  # redirect URL has full path + query
+                    if response.status in (307, 308):
+                        current_data = req_kwargs.get("data")  # preserve body
+                    else:
+                        current_data = None
+                    continue
+                # Final response: process body and status
+                await _shared_rate_limiter.record_response(key, response.status, response.headers)
+                payload_text = await response.text()
+                payload: Dict[str, Any] = {}
+                if payload_text:
+                    try:
+                        payload = json.loads(payload_text)
+                    except (json.JSONDecodeError, TypeError):
+                        payload = {"raw": payload_text}
+
+                if response.status >= 400:
+                    auth_sent = "Authorization" in current_headers
+                    logger.warning(
+                        "Moltbook API error: %s %s -> %s (Authorization sent: %s)",
+                        method,
+                        current_url,
+                        response.status,
+                        auth_sent,
+                    )
+                    if response.status == 401 and method.upper() == "POST" and auth_sent:
+                        logger.info(
+                            "Moltbook 401 on POST; key was sent (length %s). If GET /status works, this may be a server-side restriction on write operations.",
+                            len(current_headers.get("Authorization", "")),
+                        )
+                    error_message = "Moltbook API request failed."
+                    hint = None
+                    if isinstance(payload, dict):
+                        error_message = payload.get("error") or payload.get("message") or error_message
+                        hint = payload.get("hint")
+                    raise MoltbookAPIError(
+                        error_message,
+                        status=response.status,
+                        hint=hint,
+                    )
+                return payload
+        raise MoltbookAPIError(
+            f"Moltbook redirect loop (max {max_redirects} followed).",
+            hint="Check proxy/DNS.",
+        )
 
 
 async def moltbook_get_status() -> Dict[str, Any]:
@@ -131,7 +185,11 @@ async def moltbook_get_feed(
 ) -> Dict[str, Any]:
     params = {"sort": sort, "limit": limit}
     if submolt:
-        return await _moltbook_request("GET", f"/submolts/{submolt}/feed", params=params)
+        # API expects lowercase submolt name in path (e.g. /submolts/general/feed);
+        # mixed case can trigger a 307 redirect to non-www and strip Authorization
+        submolt_normalized = (submolt or "").strip().lower()
+        if submolt_normalized:
+            return await _moltbook_request("GET", f"/submolts/{submolt_normalized}/feed", params=params)
     if personalized:
         return await _moltbook_request("GET", "/feed", params=params)
     return await _moltbook_request("GET", "/posts", params=params)

@@ -118,9 +118,9 @@ DiscordSam is a modular Python application designed for extensibility and mainta
 
 7.  **RAG and ChromaDB Management (`rag_chroma_manager.py`)**:
     *   Manages the Retrieval Augmented Generation pipeline and all interactions with the ChromaDB vector store.
-    *   `initialize_chromadb()`: Sets up connections to various data collections (raw history, distilled summaries, news, timeline summaries, entities, relations, observations).
+    *   `initialize_chromadb()`: Sets up connections to various data collections (raw history, distilled summaries, news, timeline summaries, Moltbook replies, entities, relations, observations).
     *   `ingest_conversation_to_chromadb()`: Stores new conversations, extracts structured data (entities, relations, observations), distills key sentences, and saves them for future retrieval. Distilled summaries now include a `Conversation recorded at:` header so timestamps persist when memories are merged.
-    *   `retrieve_and_prepare_rag_context()`: Given a query, searches relevant collections for pertinent information and synthesizes it into a context string for the LLM. The synthesis step now receives the current date so it can express how long ago memories occurred. When a relative date phrase (e.g. "yesterday" or "last week") is detected, the system searches stored tweets, chat history, timeline events, news, RSS summaries, entities, relations, and observations for that range and uses only those results in the RAG context.
+    *   `retrieve_and_prepare_rag_context()`: Given a query, searches relevant collections for pertinent information and synthesizes it into a context string for the LLM. Collections include chat history, distilled summaries, RSS, tweets, Moltbook drafts/replies, relations, and observations. When a relative date phrase (e.g. "yesterday" or "last week") is detected, the system searches stored tweets, chat history, timeline events, news, RSS summaries, entities, relations, and observations for that range and uses only those results in the RAG context.
     *   `update_retrieved_memories()`: Merges retrieved memory snippets with the latest conversation summary and stores updated memories for future use. The merge prompt now includes both the snippet's original date and the current date, giving the LLM clearer temporal context. This behavior can be disabled via the `ENABLE_MEMORY_MERGE` setting.
     *   Includes functions for importing data (e.g., ChatGPT exports) and storing specific data types (e.g., news summaries).
 
@@ -309,6 +309,7 @@ The bot now uses a provider-based architecture to manage different LLM roles (ma
 *   `CHROMA_RSS_SUMMARY_COLLECTION_NAME` (Default: `rss_summaries`): Collection for RSS feed item summaries.
 *   `CHROMA_TIMELINE_SUMMARY_COLLECTION_NAME` (Default: `timeline_summaries`): Collection for summaries of pruned, older chat history.
 *   `CHROMA_TWEETS_COLLECTION_NAME` (Default: `tweets_collection`): Collection for fetched tweets.
+*   `CHROMA_MOLTBOOK_COLLECTION_NAME` (Default: `moltbook_replies`): Collection for Moltbook drafts, submitted replies, feed fetches, and full post fetches; queried when drafting new Moltbook replies.
 *   `CHROMA_ENTITIES_COLLECTION_NAME` (Default: `entities_collection`): Collection for extracted entities.
 *   `CHROMA_RELATIONS_COLLECTION_NAME` (Default: `relations_collection`): Collection for extracted relationships.
 *   `CHROMA_OBSERVATIONS_COLLECTION_NAME` (Default: `observations_collection`): Collection for extracted observations/facts.
