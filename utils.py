@@ -141,6 +141,64 @@ def clean_text_for_tts(text: str) -> str:
 
     return text
 
+
+def sanitize_moltbook_text_for_tts(text: str) -> str:
+    """Make Moltbook-formatted post/comment text suitable for TTS.
+
+    - Converts ISO 8601 timestamps to natural language (e.g. 'February 1, 2026 at 12:45 AM').
+    - Replaces 'ID: [uuid](url)' or 'ID: uuid' or 'ID: `uuid`' with 'Post' so TTS does not read raw IDs.
+    """
+    if not text or not text.strip():
+        return text
+    # Replace ISO date-time strings with readable form
+    iso_pattern = re.compile(
+        r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?:\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?"
+    )
+
+    def _replace_iso(match: re.Match) -> str:
+        raw = match.group(0)
+        try:
+            dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            # 12-hour human-readable: "February 1, 2026 at 12:45 AM"
+            hour12 = dt.hour % 12 or 12
+            return (
+                dt.strftime("%B ")
+                + str(dt.day)
+                + dt.strftime(", %Y at ")
+                + str(hour12)
+                + dt.strftime(":%M %p")
+            )
+        except (ValueError, TypeError):
+            return ""  # omit unparseable timestamps
+
+    text = iso_pattern.sub(_replace_iso, text)
+    # Collapse any double spaces left by omitted timestamps
+    text = re.sub(r"  +", " ", text)
+    # Replace "ID: [uuid](url)", "ID: `uuid`", or "ID: uuid" with "Post"
+    text = re.sub(
+        r"ID:\s*\[[^\]]+\]\([^)]+\)",
+        "Post",
+        text,
+    )
+    text = re.sub(
+        r"ID:\s*`[^`]+`",
+        "Post",
+        text,
+    )
+    text = re.sub(
+        r"ID:\s*[a-fA-F0-9-]{8,}(?:-[a-fA-F0-9-]{4,})*",
+        "Post",
+        text,
+    )
+    text = re.sub(
+        r"ID:\s*unknown",
+        "Post",
+        text,
+        flags=re.IGNORECASE,
+    )
+    return text
+
+
 def parse_time_string_to_delta(time_str: str) -> Tuple[Optional[timedelta], Optional[str]]:
     patterns = {
         'd': r'(\d+)\s*d(?:ay(?:s)?)?',

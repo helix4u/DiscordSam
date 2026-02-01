@@ -270,7 +270,7 @@ The bot now uses a provider-based architecture to manage different LLM roles (ma
 *   `PODCAST_ENABLE_TTS_AFTER` (Default: `true`): If `true`, re-enables global TTS after the `/podcastthatshit` command.
 *   `TTS_DELIVERY_DEFAULT` (Default: `audio`): Default delivery mode for voice replies. Options: `audio`, `video`, `both`, `off`.
 *   `TTS_MAX_VIDEO_BYTES` (Default: `8388608` (8MB)): Maximum size of a generated MP4 video clip.
-*   **Video Styling:** Video appearance is controlled by `TTS_VIDEO_WIDTH`, `TTS_VIDEO_HEIGHT`, `TTS_VIDEO_FPS`, `TTS_VIDEO_BACKGROUND_COLOR`, `TTS_VIDEO_TEXT_COLOR`, `TTS_VIDEO_TEXT_BOX_COLOR`, `TTS_VIDEO_TEXT_BOX_PADDING`, `TTS_VIDEO_LINE_SPACING`, `TTS_VIDEO_MARGIN`, `TTS_VIDEO_WRAP_CHARS`, `TTS_VIDEO_BLUR_SIGMA`, `TTS_VIDEO_NOISE_OPACITY`, `TTS_VIDEO_FONT_PATH`, and `TTS_VIDEO_FONT_SIZE`.
+*   **Video Styling:** Video appearance is controlled by `TTS_VIDEO_WIDTH`, `TTS_VIDEO_HEIGHT`, `TTS_VIDEO_FPS`, `TTS_VIDEO_BACKGROUND_COLOR`, `TTS_VIDEO_TEXT_COLOR`, `TTS_VIDEO_TEXT_BOX_COLOR`, `TTS_VIDEO_TEXT_BOX_PADDING`, `TTS_VIDEO_LINE_SPACING`, `TTS_VIDEO_MARGIN`, `TTS_VIDEO_WRAP_CHARS`, `TTS_VIDEO_BLUR_SIGMA`, `TTS_VIDEO_NOISE_OPACITY`, `TTS_VIDEO_FONT_PATH`, and `TTS_VIDEO_FONT_SIZE`. Subtitle font size is controlled by `TTS_VIDEO_FONT_SIZE` (default `38`; smaller values fit more text, larger values make text bigger). Subtitle bubble margins are controlled by `TTS_VIDEO_MARGIN` (vertical) and `TTS_VIDEO_TEXT_BOX_PADDING` (horizontal).
 
 **Web Features & Scraping:**
 

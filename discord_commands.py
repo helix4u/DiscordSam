@@ -55,6 +55,7 @@ from utils import (
     safe_message_edit,
     start_post_processing_task,
     is_admin_user,
+    sanitize_moltbook_text_for_tts,
 )
 from rss_cache import load_seen_entries, save_seen_entries
 from twitter_cache import load_seen_tweet_ids, save_seen_tweet_ids # New import
@@ -263,6 +264,268 @@ def _format_moltbook_comment(comment: Dict[str, Any], *, max_content_length: Opt
         f"👍 {upvotes} | 👎 {downvotes} | ID: `{comment_id}`\n"
         f"{content}"
     )
+
+
+async def _do_show_moltbook_post(
+    interaction: discord.Interaction, post_id: str
+) -> None:
+    """Fetch a Moltbook post and send embeds + TTS view. Caller must have deferred the response."""
+    from moltbook_client import moltbook_get_post, MoltbookAPIError
+
+    try:
+        post_payload = await moltbook_get_post(post_id)
+        post = post_payload.get("post") or post_payload.get("data") or post_payload
+        description = _format_moltbook_post(post, max_content_length=None)
+        comments = (
+            post_payload.get("comments")
+            or (post_payload.get("data") or {}).get("comments")
+            or []
+        )
+        if comments:
+            snippets = [
+                _format_moltbook_comment(c, max_content_length=None)
+                for c in comments[:5]
+            ]
+            description = f"{description}\n\n**Comments**\n" + "\n\n".join(snippets)
+        chunks = chunk_text(description, config.EMBED_MAX_LENGTH)
+        total = 0
+        embeds_list = []
+        for i, ch in enumerate(chunks):
+            if total + len(ch) > 6000:
+                break
+            embeds_list.append(
+                discord.Embed(
+                    title="Moltbook Post" if i == 0 else f"Moltbook Post (cont. {i + 1})",
+                    description=ch,
+                    color=config.EMBED_COLOR["complete"],
+                )
+            )
+            total += len(ch)
+        if not embeds_list:
+            embeds_list = [
+                discord.Embed(
+                    title="Moltbook Post",
+                    description=description[: config.EMBED_MAX_LENGTH - 20].rstrip() + "...",
+                    color=config.EMBED_COLOR["complete"],
+                )
+            ]
+        tts_view = MoltbookPostTTSView(description, post_id=post_id)
+        await interaction.followup.send(embeds=embeds_list, view=tts_view)
+    except MoltbookAPIError as exc:
+        logger.warning("Moltbook get failed: %s", exc)
+        await interaction.followup.send(content=f"Failed to fetch post: {exc}", ephemeral=True)
+
+
+async def _handle_moltbook_get_button(interaction: discord.Interaction, post_id: str) -> None:
+    """Handle 'Get post' button click: defer then show post."""
+    await interaction.response.defer(ephemeral=False)
+    await _do_show_moltbook_post(interaction, post_id)
+
+
+class DraftReplySubmitView(discord.ui.View):
+    """Submit or Don't submit buttons for a drafted Moltbook reply."""
+
+    def __init__(self, draft: str, post_id: str, *, timeout: float = 300.0) -> None:
+        super().__init__(timeout=timeout)
+        self.draft = draft
+        self.post_id = post_id
+        submit_btn = discord.ui.Button(
+            label="Submit",
+            style=discord.ButtonStyle.primary,
+            custom_id="moltbook_draft_submit",
+        )
+        submit_btn.callback = self._submit_callback
+        self.add_item(submit_btn)
+        dont_btn = discord.ui.Button(
+            label="Don't submit",
+            style=discord.ButtonStyle.secondary,
+            custom_id="moltbook_draft_dont",
+        )
+        dont_btn.callback = self._dont_callback
+        self.add_item(dont_btn)
+
+    async def _submit_callback(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=True)
+        from moltbook_client import moltbook_add_comment, MoltbookAPIError
+        if not _moltbook_enabled():
+            await interaction.followup.send(
+                content="Moltbook is not configured. Set MOLTBOOK_AGENT_NAME and MOLTBOOK_API_KEY in .env.",
+                ephemeral=True,
+            )
+            return
+        try:
+            await moltbook_add_comment(post_id=self.post_id, content=self.draft)
+            embed = discord.Embed(
+                title="Draft reply",
+                description="Comment posted to Moltbook.",
+                color=config.EMBED_COLOR["complete"],
+            )
+            embed.set_footer(text=f"Post ID: {self.post_id}")
+            await interaction.message.edit(embed=embed, view=None)
+            await interaction.followup.send(content="Comment posted.", ephemeral=True)
+        except MoltbookAPIError as exc:
+            logger.warning("Moltbook draft submit failed: %s", exc)
+            msg = f"Failed to post comment: {exc}"
+            if getattr(exc, "status", None) == 401:
+                msg += (
+                    "\n\n**401 = auth rejected.** Check MOLTBOOK_API_KEY in .env and that your agent is "
+                    "claimed (see https://www.moltbook.com/skill.md)."
+                )
+            elif exc.hint:
+                msg += f"\n\nHint: {exc.hint}"
+            await interaction.followup.send(content=msg, ephemeral=True)
+
+    async def _dont_callback(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=True)
+        try:
+            await interaction.message.delete()
+        except (discord.HTTPException, discord.NotFound):
+            # Ephemeral messages may not be editable/deletable via API
+            pass
+        await interaction.followup.send(content="Dismissed.", ephemeral=True)
+
+
+class MoltbookPostTTSView(discord.ui.View):
+    """Get TTS and Draft reply for a fetched Moltbook post."""
+
+    def __init__(
+        self,
+        text_to_speak: str,
+        *,
+        post_id: Optional[str] = None,
+        timeout: float = 180.0,
+    ) -> None:
+        super().__init__(timeout=timeout)
+        self.text_to_speak = (text_to_speak or "").strip()
+        self.post_id = post_id or ""
+        get_tts_btn = discord.ui.Button(
+            label="Get TTS",
+            style=discord.ButtonStyle.primary,
+            custom_id="moltbook_tts_post",
+        )
+        get_tts_btn.callback = self._tts_callback
+        self.add_item(get_tts_btn)
+        draft_btn = discord.ui.Button(
+            label="Draft reply",
+            style=discord.ButtonStyle.secondary,
+            custom_id="moltbook_draft_reply",
+        )
+        draft_btn.callback = self._draft_callback
+        self.add_item(draft_btn)
+
+    async def _tts_callback(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=False)
+        if not self.text_to_speak:
+            await interaction.followup.send(content="No text to speak.", ephemeral=True)
+            return
+        try:
+            await send_tts_audio(
+                interaction,
+                sanitize_moltbook_text_for_tts(self.text_to_speak),
+                base_filename="moltbook_post",
+                bot_state=bot_state_instance,
+            )
+        except Exception as exc:
+            logger.warning("Moltbook TTS (button) failed: %s", exc)
+            await interaction.followup.send(content=f"TTS failed: {exc}", ephemeral=True)
+
+    async def _draft_callback(self, interaction: discord.Interaction) -> None:
+        """Act as if user said 'yo, sam, draft a reply to this one.' with current post as context."""
+        await interaction.response.defer(ephemeral=False)
+        try:
+            fast_runtime = get_llm_runtime("fast")
+            fast_client = fast_runtime.client if fast_runtime else None
+            fast_provider = fast_runtime.provider if fast_runtime else None
+            if not fast_client or not fast_provider:
+                await interaction.followup.send(
+                    content="LLM is not configured; cannot draft a reply.",
+                    ephemeral=True,
+                )
+                return
+            system = (
+                "You are Sam. The user said: yo, sam, draft a reply to this one. "
+                "Output only the draft reply text, no preamble. Keep it suitable as a comment (a few sentences)."
+            )
+            user_msg = f"Post to reply to:\n{self.text_to_speak[:3000]}"
+            response = await create_chat_completion(
+                fast_client,
+                [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user_msg},
+                ],
+                model=fast_provider.model,
+                max_tokens=512,
+                temperature=fast_provider.temperature,
+                use_responses_api=getattr(fast_provider, "use_responses_api", False),
+            )
+            draft = extract_text(response, getattr(fast_provider, "use_responses_api", False))
+            if not (draft and draft.strip()):
+                await interaction.followup.send(
+                    content="No draft was generated.",
+                    ephemeral=True,
+                )
+                return
+            draft_display = draft.strip()[:4000]
+            if len(draft.strip()) > 4000:
+                draft_display += "\n…"
+            embed = discord.Embed(
+                title="Draft reply",
+                description=draft_display,
+                color=config.EMBED_COLOR["complete"],
+            )
+            embed.set_footer(text=f"Post ID: {self.post_id} • Submit or Don't submit below.")
+            view = DraftReplySubmitView(draft=draft.strip(), post_id=self.post_id)
+            await interaction.followup.send(embed=embed, view=view)
+        except Exception as exc:
+            logger.warning("Moltbook draft reply failed: %s", exc, exc_info=True)
+            await interaction.followup.send(
+                content=f"Draft failed: {exc}",
+                ephemeral=True,
+            )
+
+
+# Max Discord select options per menu
+_MOLTBOOK_SELECT_MAX_OPTIONS = 25
+# Truncate post title in dropdown for consistent, readable labels
+_MOLTBOOK_SELECT_LABEL_MAX = 50
+
+
+class MoltbookFeedView(discord.ui.View):
+    """View with one dropdown: select a post to view (then Get TTS on the opened post)."""
+
+    def __init__(self, posts: List[Dict[str, Any]], *, timeout: float = 180.0):
+        super().__init__(timeout=timeout)
+        options: List[discord.SelectOption] = []
+        for post in posts[:_MOLTBOOK_SELECT_MAX_OPTIONS]:
+            post_id = post.get("id")
+            if not post_id:
+                continue
+            raw_title = (post.get("title") or "Untitled").strip()
+            if len(raw_title) > _MOLTBOOK_SELECT_LABEL_MAX:
+                label = raw_title[:_MOLTBOOK_SELECT_LABEL_MAX - 1].rstrip() + "…"
+            else:
+                label = raw_title or "Untitled"
+            options.append(discord.SelectOption(label=label, value=post_id))
+
+        if not options:
+            return
+        select = discord.ui.Select(
+            placeholder="Select a post to view…",
+            options=options,
+            min_values=1,
+            max_values=1,
+        )
+        select.callback = self._select_callback
+        self.add_item(select)
+
+    async def _select_callback(self, interaction: discord.Interaction) -> None:
+        if not interaction.data or "values" not in interaction.data or not interaction.data["values"]:
+            await interaction.response.defer(ephemeral=True)
+            await interaction.followup.send(content="No post selected.", ephemeral=True)
+            return
+        post_id = interaction.data["values"][0]
+        await interaction.response.defer(ephemeral=False)
+        await _do_show_moltbook_post(interaction, post_id)
 
 
 async def _collect_new_tweets(
@@ -2778,10 +3041,25 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 )
                 return
 
-            lines = [_format_moltbook_post(post) for post in posts[:bounded_limit]]
-            description = "\n\n".join(lines)
-            # Split by EMBED_MAX_LENGTH; first chunk in the reply, each extra chunk in a new message (one embed per message).
-            chunks = chunk_text(description, config.EMBED_MAX_LENGTH)
+            posts = posts[:bounded_limit]
+            # Build chunks by post so we know which post IDs get a button in each message.
+            chunk_texts: List[str] = []
+            chunk_posts: List[List[Dict[str, Any]]] = []
+            current_text: List[str] = []
+            current_posts: List[Dict[str, Any]] = []
+            for post in posts:
+                line = _format_moltbook_post(post)
+                if current_text and len("\n\n".join(current_text)) + len(line) + 2 > config.EMBED_MAX_LENGTH:
+                    chunk_texts.append("\n\n".join(current_text))
+                    chunk_posts.append(current_posts)
+                    current_text = []
+                    current_posts = []
+                current_text.append(line)
+                current_posts.append(post)
+            if current_text:
+                chunk_texts.append("\n\n".join(current_text))
+                chunk_posts.append(current_posts)
+
             footer_bits = []
             if submolt:
                 footer_bits.append(f"m/{submolt}")
@@ -2789,7 +3067,7 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 footer_bits.append("personalized")
             footer_bits.append(f"sort={sort}")
             footer_text = " • ".join(footer_bits)
-            for i, chunk in enumerate(chunks):
+            for i, (chunk, posts_in_chunk) in enumerate(zip(chunk_texts, chunk_posts)):
                 title = "Moltbook Feed" if i == 0 else f"Moltbook Feed (cont. {i + 1})"
                 embed = discord.Embed(
                     title=title,
@@ -2797,11 +3075,11 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                     color=config.EMBED_COLOR["complete"],
                 )
                 embed.set_footer(text=footer_text)
+                view = MoltbookFeedView(posts_in_chunk)
                 if i == 0:
-                    await interaction.edit_original_response(embed=embed)
+                    await interaction.edit_original_response(embed=embed, view=view)
                 else:
-                    # Run out of room in one message → new message with one embed.
-                    await safe_followup_send(interaction, embed=embed)
+                    await safe_followup_send(interaction, embed=embed, view=view)
         except MoltbookAPIError as exc:
             logger.error("Moltbook feed failed: %s", exc)
             message = f"Moltbook feed request failed: {exc}"

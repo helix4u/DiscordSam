@@ -1,5 +1,9 @@
 """Moltbook API client. API spec: https://www.moltbook.com/skill.md
-Always use https://www.moltbook.com (with www); redirect without www strips Authorization."""
+
+CRITICAL: Only send requests to https://www.moltbook.com (with www).
+Redirects (e.g. moltbook.com -> www, or http -> https) can strip the Authorization
+header on some clients (especially on Windows). We use a canonical URL and disable
+redirects so auth is never lost."""
 import json
 import logging
 from typing import Any, Dict, Optional
@@ -14,6 +18,10 @@ from rate_limiter import get_rate_limiter
 logger = logging.getLogger(__name__)
 
 _shared_rate_limiter = get_rate_limiter()
+
+# Canonical Moltbook API base. All requests use this so we never hit a redirect.
+# Using moltbook.com without www, or http, causes redirects that strip Authorization on some clients (e.g. Windows).
+_MOLTBOOK_CANONICAL_BASE = "https://www.moltbook.com/api/v1"
 
 
 class MoltbookAPIError(RuntimeError):
@@ -31,19 +39,14 @@ class MoltbookAPIError(RuntimeError):
         return msg
 
 
-def _normalize_base_url(base_url: str) -> str:
-    cleaned = base_url.strip().rstrip("/")
-    if "://moltbook.com" in cleaned:
-        cleaned = cleaned.replace("://moltbook.com", "://www.moltbook.com")
-        logger.warning("Moltbook base URL missing www; normalized to %s", cleaned)
-    return cleaned
-
-
 def _build_auth_headers() -> Dict[str, str]:
-    if not config.MOLTBOOK_API_KEY:
+    # Key is sanitized in config; ensure no stray whitespace or control chars here
+    key = (config.MOLTBOOK_API_KEY or "").strip()
+    key = "".join(c for c in key if ord(c) >= 32 and ord(c) != 127)
+    if not key:
         raise MoltbookAPIError("MOLTBOOK_API_KEY is not configured.")
     return {
-        "Authorization": f"Bearer {config.MOLTBOOK_API_KEY}",
+        "Authorization": f"Bearer {key}",
         "Content-Type": "application/json",
     }
 
@@ -55,17 +58,31 @@ async def _moltbook_request(
     params: Optional[Dict[str, Any]] = None,
     json_body: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    base_url = _normalize_base_url(config.MOLTBOOK_BASE_URL)
-    url = f"{base_url}/{path.lstrip('/')}"
+    path_part = path.lstrip("/")
+    url = f"{_MOLTBOOK_CANONICAL_BASE}/{path_part}" if path_part else _MOLTBOOK_CANONICAL_BASE.rstrip("/")
     parsed = urlparse(url)
     key = parsed.netloc.lower() if parsed.netloc else "default"
 
     await _shared_rate_limiter.await_slot(key)
-    req_kwargs: Dict[str, Any] = {"params": params, "headers": _build_auth_headers()}
+    headers = _build_auth_headers()
+    req_kwargs: Dict[str, Any] = {
+        "params": params,
+        "headers": headers,
+        "allow_redirects": False,
+    }
+    # Send POST/PATCH body as raw JSON + our headers (no aiohttp json=) so Authorization is never dropped
     if json_body is not None:
-        req_kwargs["json"] = json_body
+        req_kwargs["data"] = json.dumps(json_body).encode("utf-8")
+        req_kwargs["headers"] = {**headers, "Content-Type": "application/json"}
     async with aiohttp.ClientSession() as session:
         async with session.request(method, url, **req_kwargs) as response:
+            if response.status in (301, 302, 307, 308):
+                location = response.headers.get("Location", "")
+                raise MoltbookAPIError(
+                    f"Moltbook returned redirect to {location}. Requests use https://www.moltbook.com; if you see this, check proxy/DNS.",
+                    status=response.status,
+                    hint="Ensure no proxy or redirect is rewriting requests to moltbook.com.",
+                )
             await _shared_rate_limiter.record_response(key, response.status, response.headers)
             payload_text = await response.text()
             payload: Dict[str, Any] = {}

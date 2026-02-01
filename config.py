@@ -261,7 +261,7 @@ class Config:
         )
         self.TTS_VIDEO_TEXT_BOX_PADDING = _get_int(
             "TTS_VIDEO_TEXT_BOX_PADDING",
-            48,
+            56,
         )
         self.TTS_VIDEO_LINE_SPACING = _get_int(
             "TTS_VIDEO_LINE_SPACING",
@@ -275,7 +275,7 @@ class Config:
             "TTS_VIDEO_FONT_PATH",
             _default_font_path(),
         )
-        self.TTS_VIDEO_FONT_SIZE = _get_int("TTS_VIDEO_FONT_SIZE", 42)
+        self.TTS_VIDEO_FONT_SIZE = _get_int("TTS_VIDEO_FONT_SIZE", 38)
         self.TTS_MAX_VIDEO_BYTES = _get_int("TTS_MAX_VIDEO_BYTES", 8 * 1024 * 1024)  # Match Discord 8MB limit
 
         self.SEARX_URL = os.getenv("SEARX_URL", "http://192.168.1.3:9092/search")
@@ -288,8 +288,14 @@ class Config:
             "MOLTBOOK_BASE_URL",
             "https://www.moltbook.com/api/v1",
         )
-        self.MOLTBOOK_API_KEY = os.getenv("MOLTBOOK_API_KEY", "")
-        self.MOLTBOOK_AGENT_NAME = os.getenv("MOLTBOOK_AGENT_NAME", "")
+        # Sanitize key: strip, remove surrounding quotes, drop CR/LF and other control chars (Windows .env)
+        _raw_key = os.getenv("MOLTBOOK_API_KEY", "")
+        if _raw_key:
+            _raw_key = _raw_key.strip().strip('"').strip("'")
+            self.MOLTBOOK_API_KEY = "".join(c for c in _raw_key if ord(c) >= 32 and ord(c) != 127)
+        else:
+            self.MOLTBOOK_API_KEY = ""
+        self.MOLTBOOK_AGENT_NAME = (os.getenv("MOLTBOOK_AGENT_NAME", "") or "").strip().strip('"').strip("'")
 
         # Shared rate limiter configuration for outbound HTTP requests.
         # Proactive rate limiting: max requests per minute (default conservative for OpenRouter)

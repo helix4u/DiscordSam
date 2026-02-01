@@ -23,35 +23,51 @@ logger = logging.getLogger(__name__)
 # Global lock to ensure TTS requests are processed sequentially.
 TTS_LOCK = asyncio.Lock()
 _MISSING_FONT_WARNING_EMITTED = False
-def _create_rolling_subtitles(text: str, duration_seconds: float, width: int = 1280, height: int = 720, font_size: int = 42) -> str:
+def _create_rolling_subtitles(
+    text: str,
+    duration_seconds: float,
+    width: int = 1280,
+    height: int = 720,
+    font_size: int = 38,
+    *,
+    margin_v: Optional[int] = None,
+    margin_lr: Optional[int] = None,
+) -> str:
     """Create rolling subtitle ASS content with centered, faded effect.
-    
+
     Args:
         text: The full text to display
         duration_seconds: Total duration of the audio/video
         width: Video width in pixels
         height: Video height in pixels
         font_size: Font size being used
-        
+        margin_v: Vertical margin (default: 5% of height)
+        margin_lr: Left/right margin (default: 3% of width)
+
     Returns:
         ASS content with time-synced rolling subtitles with proper styling
     """
     normalized = text.replace("\r\n", " ").replace("\r", " ").replace("\n", " ").strip()
-    
+
+    if margin_lr is None:
+        margin_lr = int(width * 0.03)
+    if margin_v is None:
+        margin_v = int(height * 0.05)
+
     # Calculate approximate characters per line based on video width
-    usable_width = width - 96  # Account for margins
+    usable_width = width - 2 * margin_lr
     chars_per_line = int(usable_width / (font_size * 0.6))
-    chars_per_line = max(60, min(chars_per_line, 120))  # Double the words per segment
-    
+    chars_per_line = max(60, min(chars_per_line, 120))
+
     # Max lines visible at once for rolling effect (more for faded context)
     max_visible_lines = 8
-    
+
     # Split text into chunks that fit on one line
     words = normalized.split()
     line_chunks = []
     current_line = []
     current_length = 0
-    
+
     for word in words:
         word_length = len(word) + 1  # +1 for space
         if current_length + word_length > chars_per_line and current_line:
@@ -61,21 +77,16 @@ def _create_rolling_subtitles(text: str, duration_seconds: float, width: int = 1
         else:
             current_line.append(word)
             current_length += word_length
-    
+
     if current_line:
         line_chunks.append(" ".join(current_line))
-    
+
     if not line_chunks:
         return "1\n00:00:00,000 --> 00:00:01,000\n \n"
-    
+
     # Calculate timing for each chunk
     time_per_chunk = duration_seconds / len(line_chunks)
-    # Ensure each chunk shows for at least 0.8 seconds for smooth reading
-    time_per_chunk = max(2.0, time_per_chunk)  # Double time for double the words
-    
-    # Calculate margins for maximum screen usage (vision aid style)
-    margin_lr = int(width * 0.03)  # Minimal 3% horizontal margin
-    margin_v = int(height * 0.05)  # Minimal 5% vertical margin
+    time_per_chunk = max(2.0, time_per_chunk)
     
     # Create ASS header with maximum screen usage styling
     # ASS color format: &HAABBGGRR (alpha, blue, green, red in hex)
@@ -266,7 +277,7 @@ async def _generate_tts_video(
     width = max(320, int(getattr(config, "TTS_VIDEO_WIDTH", 1280)))
     height = max(320, int(getattr(config, "TTS_VIDEO_HEIGHT", 720)))
     fps = max(1, int(getattr(config, "TTS_VIDEO_FPS", 30)))
-    font_size = max(12, int(getattr(config, "TTS_VIDEO_FONT_SIZE", 120)))  # Much larger for vision aid
+    font_size = max(12, int(getattr(config, "TTS_VIDEO_FONT_SIZE", 38)))
     
     # Create rolling subtitles based on audio duration
     logger.info("Creating rolling subtitles for %.2f second video (%dx%d, font size %d)", 
@@ -277,7 +288,7 @@ async def _generate_tts_video(
     # Grey shadow color (semi-transparent grey)
     shadow_color_hex = "#808080CC"
     margin_v = max(20, int(getattr(config, "TTS_VIDEO_MARGIN", 96)))
-    margin_lr = max(20, int(getattr(config, "TTS_VIDEO_TEXT_BOX_PADDING", 48)))
+    margin_lr = max(20, int(getattr(config, "TTS_VIDEO_TEXT_BOX_PADDING", 56)))
     font_path = getattr(config, "TTS_VIDEO_FONT_PATH", "")
     font_name = Path(font_path).stem if font_path else "Arial"
     if not font_name:
@@ -376,8 +387,16 @@ async def _generate_tts_video(
             except Exception as test_exc:
                 logger.debug("Could not test audio file with ffprobe: %s", test_exc)
             
-            # Generate rolling subtitles in ASS format
-            ass_content = _create_rolling_subtitles(display_text, duration_seconds, width, height, font_size)
+            # Generate rolling subtitles in ASS format (use config margins for bubble size)
+            ass_content = _create_rolling_subtitles(
+                display_text,
+                duration_seconds,
+                width,
+                height,
+                font_size,
+                margin_v=margin_v,
+                margin_lr=margin_lr,
+            )
             subtitle_path.write_text(ass_content, encoding="utf-8")
             
             # Count subtitle entries for logging
