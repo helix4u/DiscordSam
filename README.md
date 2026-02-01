@@ -23,6 +23,7 @@ DiscordSam is an advanced, context-aware Discord bot designed to provide intelli
     *   Fetch and summarize recent tweets from X/Twitter users.
     *   Process RSS feeds, summarizing new articles.
     *   Validate user-supplied URLs before scraping to block localhost and private-network targets for safety.
+*   **Moltbook Integration:** Read, search, and post to Moltbook directly from Discord.
 *   **Adaptive Rate Limiting:** A shared async rate limiter reads API headers (including X/Twitter's `x-rate-limit-*`) and enforces jittered backoffs so scheduled tasks and interactive commands play nicely with platform limits.
 *   **Multimedia Interaction:**
     *   Analyze and describe attached images (with a creative "AP Photo" twist using a vision LLM).
@@ -275,6 +276,9 @@ The bot now uses a provider-based architecture to manage different LLM roles (ma
 
 *   `SEARX_URL` (Default: `http://192.168.1.3:9092/search`): The URL of your SearXNG instance.
 *   `SEARX_PREFERENCES` (Optional, Default: `""`): Optional preferences for SearXNG engine selection. Example: `{"engines" : ["google", "wikipedia"]}`.
+*   `MOLTBOOK_BASE_URL` (Default: `https://www.moltbook.com/api/v1`): Base URL for Moltbook API requests. Must include `www` to preserve Authorization headers.
+*   `MOLTBOOK_AGENT_NAME` (Required for Moltbook commands): Your Moltbook account/agent name.
+*   `MOLTBOOK_API_KEY` (Required for Moltbook commands): Moltbook API key for your agent.
 *   `RATE_LIMIT_REQUESTS_PER_MINUTE` (Default: `20.0`): Maximum number of requests per minute to send to LLM APIs. This proactively prevents hitting rate limits. Set higher if your API provider allows more requests.
 *   `RATE_LIMIT_JITTER_SECONDS` (Default: `1.5`): Random jitter applied to enforced cooldowns after rate limit responses.
 *   `RATE_LIMIT_FAILURE_BACKOFF_SECONDS` (Default: `45.0`): Base backoff window used when X/Twitter or other APIs return 429 without reset hints.
@@ -413,6 +417,49 @@ DiscordSam offers a variety of slash commands for diverse functionalities, group
     *   **Purpose:** Scrapes and summarizes new articles from a specified Ground News topic page.
     *   **Arguments:** `topic` (Required, from preset list), `limit` (Optional, Default: 50).
     *   **Behavior:** Scrapes the selected topic page for new articles and posts summaries.
+
+### Moltbook Commands
+
+*   **`/moltbook_status`**
+    *   **Purpose:** Verifies Moltbook connectivity, claim status, and profile basics.
+    *   **Examples:**
+        *   `/moltbook_status`
+
+*   **`/moltbook_feed [sort] [limit] [submolt] [personalized]`**
+    *   **Purpose:** Fetches posts from Moltbook (global feed, personalized feed, or a specific submolt).
+    *   **Arguments:** `sort` (Optional: `hot`, `new`, `top`, `rising`), `limit` (Optional, Default: 5), `submolt` (Optional), `personalized` (Optional).
+    *   **Examples:**
+        *   `/moltbook_feed sort:new limit:5`
+        *   `/moltbook_feed submolt:aithoughts sort:top`
+        *   `/moltbook_feed personalized:true sort:hot`
+
+*   **`/moltbook_search <query> [search_type] [limit]`**
+    *   **Purpose:** Semantic search across Moltbook posts and comments.
+    *   **Arguments:** `query` (Required), `search_type` (Optional: `all`, `posts`, `comments`), `limit` (Optional, Default: 10).
+    *   **Examples:**
+        *   `/moltbook_search query:"agent memory strategies"`
+        *   `/moltbook_search query:"rate limits" search_type:posts limit:5`
+
+*   **`/moltbook_get <post_id> [include_comments] [comment_sort]`**
+    *   **Purpose:** Retrieves a specific Moltbook post with optional top comments.
+    *   **Arguments:** `post_id` (Required), `include_comments` (Optional, Default: true), `comment_sort` (Optional: `top`, `new`, `controversial`).
+    *   **Examples:**
+        *   `/moltbook_get post_id:abc123`
+        *   `/moltbook_get post_id:abc123 include_comments:true comment_sort:new`
+
+*   **`/moltbook_post <submolt> <title> [content] [url]`**
+    *   **Purpose:** Creates a Moltbook post (discussion or link).
+    *   **Arguments:** `submolt` (Required), `title` (Required), `content` (Optional), `url` (Optional).
+    *   **Examples:**
+        *   `/moltbook_post submolt:general title:"Hello Moltbook" content:"Kicking off our new integration!"`
+        *   `/moltbook_post submolt:general title:"Interesting link" url:https://example.com`
+
+*   **`/moltbook_comment <post_id> <content> [parent_id]`**
+    *   **Purpose:** Adds a comment (or reply) to a Moltbook post.
+    *   **Arguments:** `post_id` (Required), `content` (Required), `parent_id` (Optional, for threaded replies).
+    *   **Examples:**
+        *   `/moltbook_comment post_id:abc123 content:"Great insight, thanks for sharing!"`
+        *   `/moltbook_comment post_id:abc123 content:"Replying to this point" parent_id:def456`
 
 ### Creative & Fun Commands
 

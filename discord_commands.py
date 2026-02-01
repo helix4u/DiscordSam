@@ -61,6 +61,17 @@ from twitter_cache import load_seen_tweet_ids, save_seen_tweet_ids # New import
 from timeline_pruner import prune_oldest_items
 from ground_news_cache import load_seen_links, save_seen_links
 from rate_limiter import get_rate_limiter
+from moltbook_client import (
+    MoltbookAPIError,
+    moltbook_add_comment,
+    moltbook_create_post,
+    moltbook_get_comments,
+    moltbook_get_feed,
+    moltbook_get_post,
+    moltbook_get_profile,
+    moltbook_get_status,
+    moltbook_search,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -198,6 +209,46 @@ def _format_pause_notice(state: Dict[str, Any]) -> str:
     paused_by = _format_user_reference(state.get("paused_by"))
     paused_at = _format_iso_timestamp(state.get("paused_at"))
     return f"⚠️ Gaming mode enabled by {paused_by} at {paused_at}. Reason: {reason}"
+
+
+def _moltbook_enabled() -> bool:
+    return bool(config.MOLTBOOK_API_KEY and config.MOLTBOOK_AGENT_NAME)
+
+
+def _format_moltbook_post(post: Dict[str, Any]) -> str:
+    post_id = post.get("id", "unknown")
+    title = post.get("title") or "(untitled)"
+    content = post.get("content") or post.get("url") or ""
+    author = (post.get("author") or {}).get("name", "unknown")
+    submolt = (post.get("submolt") or {}).get("name", "general")
+    created_at = post.get("created_at", "unknown time")
+    upvotes = post.get("upvotes", 0)
+    downvotes = post.get("downvotes", 0)
+    preview = content.strip().replace("\n", " ")
+    if len(preview) > 240:
+        preview = preview[:237].rstrip() + "..."
+    return (
+        f"**{title}**\n"
+        f"🦞 {author} • m/{submolt} • {created_at}\n"
+        f"👍 {upvotes} | 👎 {downvotes} | ID: `{post_id}`\n"
+        f"{preview}"
+    )
+
+
+def _format_moltbook_comment(comment: Dict[str, Any]) -> str:
+    comment_id = comment.get("id", "unknown")
+    content = (comment.get("content") or "").strip()
+    if len(content) > 240:
+        content = content[:237].rstrip() + "..."
+    author = (comment.get("author") or {}).get("name", "unknown")
+    created_at = comment.get("created_at", "unknown time")
+    upvotes = comment.get("upvotes", 0)
+    downvotes = comment.get("downvotes", 0)
+    return (
+        f"💬 {author} • {created_at}\n"
+        f"👍 {upvotes} | 👎 {downvotes} | ID: `{comment_id}`\n"
+        f"{content}"
+    )
 
 
 async def _collect_new_tweets(
@@ -2631,6 +2682,339 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 )
             else:
                 await interaction.edit_original_response(content=f"Yikes, my search circuits are fuzzy! Failed to search for '{query}'. Error: {str(e)[:1000]}", embed=None)
+
+    @bot_instance.tree.command(name="moltbook_status", description="Checks Moltbook claim status and account details.")
+    async def moltbook_status_slash_command(interaction: discord.Interaction):
+        if not _moltbook_enabled():
+            await interaction.response.send_message(
+                "Moltbook is not configured yet. Set MOLTBOOK_AGENT_NAME and MOLTBOOK_API_KEY in your .env file.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        try:
+            status_payload = await moltbook_get_status()
+            profile_payload = await moltbook_get_profile()
+            status = status_payload.get("status", "unknown")
+            agent = profile_payload.get("agent", {})
+            profile_name = agent.get("name") or config.MOLTBOOK_AGENT_NAME
+            karma = agent.get("karma", "unknown")
+            claimed = "yes" if agent.get("is_claimed") else "no"
+            description = agent.get("description", "")
+
+            embed = discord.Embed(
+                title="Moltbook Status",
+                description=f"Agent: **{profile_name}**\nClaimed: **{claimed}**\nStatus: **{status}**\nKarma: **{karma}**",
+                color=config.EMBED_COLOR["complete"],
+            )
+            if description:
+                embed.add_field(name="Profile", value=description[:512], inline=False)
+            await interaction.edit_original_response(embed=embed)
+        except MoltbookAPIError as exc:
+            logger.error("Moltbook status failed: %s", exc)
+            message = f"Moltbook status request failed: {exc}"
+            if exc.hint:
+                message = f"{message}\nHint: {exc.hint}"
+            await interaction.edit_original_response(content=message)
+
+    @bot_instance.tree.command(name="moltbook_feed", description="Fetches Moltbook posts from a feed or submolt.")
+    @app_commands.describe(
+        sort="Sort order for the feed.",
+        limit="Number of posts to fetch (max 25).",
+        submolt="Optional submolt name (without m/).",
+        personalized="Use your personalized feed (requires follows/subscriptions).",
+    )
+    @app_commands.choices(
+        sort=[
+            app_commands.Choice(name="hot", value="hot"),
+            app_commands.Choice(name="new", value="new"),
+            app_commands.Choice(name="top", value="top"),
+            app_commands.Choice(name="rising", value="rising"),
+        ]
+    )
+    async def moltbook_feed_slash_command(
+        interaction: discord.Interaction,
+        sort: str = "new",
+        limit: int = 5,
+        submolt: Optional[str] = None,
+        personalized: bool = False,
+    ):
+        if not _moltbook_enabled():
+            await interaction.response.send_message(
+                "Moltbook is not configured yet. Set MOLTBOOK_AGENT_NAME and MOLTBOOK_API_KEY in your .env file.",
+                ephemeral=True,
+            )
+            return
+
+        bounded_limit = max(1, min(limit, 25))
+        await interaction.response.defer(ephemeral=False)
+        try:
+            payload = await moltbook_get_feed(
+                sort=sort,
+                limit=bounded_limit,
+                submolt=submolt,
+                personalized=personalized and not submolt,
+            )
+            posts = payload.get("posts") or payload.get("data") or payload.get("results") or []
+            if not posts:
+                await interaction.edit_original_response(
+                    content="No Moltbook posts found for that request.",
+                    embed=None,
+                )
+                return
+
+            lines = [_format_moltbook_post(post) for post in posts[:bounded_limit]]
+            description = "\n\n".join(lines)
+            if len(description) > config.EMBED_MAX_LENGTH:
+                description = description[: config.EMBED_MAX_LENGTH - 3].rstrip() + "..."
+
+            embed = discord.Embed(
+                title="Moltbook Feed",
+                description=description,
+                color=config.EMBED_COLOR["complete"],
+            )
+            footer_bits = []
+            if submolt:
+                footer_bits.append(f"m/{submolt}")
+            if personalized and not submolt:
+                footer_bits.append("personalized")
+            footer_bits.append(f"sort={sort}")
+            embed.set_footer(text=" • ".join(footer_bits))
+            await interaction.edit_original_response(embed=embed)
+        except MoltbookAPIError as exc:
+            logger.error("Moltbook feed failed: %s", exc)
+            message = f"Moltbook feed request failed: {exc}"
+            if exc.hint:
+                message = f"{message}\nHint: {exc.hint}"
+            await interaction.edit_original_response(content=message)
+
+    @bot_instance.tree.command(name="moltbook_search", description="Semantic search across Moltbook posts and comments.")
+    @app_commands.describe(
+        query="Search query for Moltbook.",
+        search_type="What to search (posts, comments, or all).",
+        limit="Number of results to fetch (max 25).",
+    )
+    @app_commands.choices(
+        search_type=[
+            app_commands.Choice(name="all", value="all"),
+            app_commands.Choice(name="posts", value="posts"),
+            app_commands.Choice(name="comments", value="comments"),
+        ]
+    )
+    async def moltbook_search_slash_command(
+        interaction: discord.Interaction,
+        query: str,
+        search_type: str = "all",
+        limit: int = 10,
+    ):
+        if not _moltbook_enabled():
+            await interaction.response.send_message(
+                "Moltbook is not configured yet. Set MOLTBOOK_AGENT_NAME and MOLTBOOK_API_KEY in your .env file.",
+                ephemeral=True,
+            )
+            return
+
+        bounded_limit = max(1, min(limit, 25))
+        await interaction.response.defer(ephemeral=False)
+        try:
+            payload = await moltbook_search(
+                query=query,
+                search_type=search_type,
+                limit=bounded_limit,
+            )
+            results = payload.get("results", [])
+            if not results:
+                await interaction.edit_original_response(
+                    content="No Moltbook search results found.",
+                    embed=None,
+                )
+                return
+
+            lines: List[str] = []
+            for result in results[:bounded_limit]:
+                entry_type = result.get("type", "post")
+                if entry_type == "comment":
+                    post_ref = result.get("post", {})
+                    post_title = post_ref.get("title", "unknown post")
+                    line = (
+                        f"**Comment** on *{post_title}* (post `{result.get('post_id', 'unknown')}`)\n"
+                        f"{_format_moltbook_comment(result)}"
+                    )
+                else:
+                    line = _format_moltbook_post(result)
+                similarity = result.get("similarity")
+                if similarity is not None:
+                    line = f"{line}\nSimilarity: {similarity:.2f}"
+                lines.append(line)
+
+            description = "\n\n".join(lines)
+            if len(description) > config.EMBED_MAX_LENGTH:
+                description = description[: config.EMBED_MAX_LENGTH - 3].rstrip() + "..."
+
+            embed = discord.Embed(
+                title=f"Moltbook Search: {query}",
+                description=description,
+                color=config.EMBED_COLOR["complete"],
+            )
+            embed.set_footer(text=f"type={search_type} • limit={bounded_limit}")
+            await interaction.edit_original_response(embed=embed)
+        except MoltbookAPIError as exc:
+            logger.error("Moltbook search failed: %s", exc)
+            message = f"Moltbook search failed: {exc}"
+            if exc.hint:
+                message = f"{message}\nHint: {exc.hint}"
+            await interaction.edit_original_response(content=message)
+
+    @bot_instance.tree.command(name="moltbook_post", description="Create a Moltbook post.")
+    @app_commands.describe(
+        submolt="Submolt name (without m/).",
+        title="Post title.",
+        content="Text body for a discussion post.",
+        url="Optional URL for a link post.",
+    )
+    async def moltbook_post_slash_command(
+        interaction: discord.Interaction,
+        submolt: str,
+        title: str,
+        content: Optional[str] = None,
+        url: Optional[str] = None,
+    ):
+        if not _moltbook_enabled():
+            await interaction.response.send_message(
+                "Moltbook is not configured yet. Set MOLTBOOK_AGENT_NAME and MOLTBOOK_API_KEY in your .env file.",
+                ephemeral=True,
+            )
+            return
+
+        if not content and not url:
+            await interaction.response.send_message(
+                "Please provide either content or a URL for the post.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer(ephemeral=False)
+        try:
+            payload = await moltbook_create_post(
+                submolt=submolt,
+                title=title,
+                content=content,
+                url=url,
+            )
+            post = payload.get("post", payload)
+            post_id = post.get("id", "unknown")
+            embed = discord.Embed(
+                title="Moltbook Post Created",
+                description=_format_moltbook_post(post),
+                color=config.EMBED_COLOR["complete"],
+            )
+            embed.set_footer(text=f"Post ID: {post_id}")
+            await interaction.edit_original_response(embed=embed)
+        except MoltbookAPIError as exc:
+            logger.error("Moltbook post failed: %s", exc)
+            message = f"Failed to create Moltbook post: {exc}"
+            if exc.hint:
+                message = f"{message}\nHint: {exc.hint}"
+            await interaction.edit_original_response(content=message)
+
+    @bot_instance.tree.command(name="moltbook_comment", description="Comment on a Moltbook post.")
+    @app_commands.describe(
+        post_id="ID of the Moltbook post.",
+        content="Comment content.",
+        parent_id="Optional parent comment ID for threading.",
+    )
+    async def moltbook_comment_slash_command(
+        interaction: discord.Interaction,
+        post_id: str,
+        content: str,
+        parent_id: Optional[str] = None,
+    ):
+        if not _moltbook_enabled():
+            await interaction.response.send_message(
+                "Moltbook is not configured yet. Set MOLTBOOK_AGENT_NAME and MOLTBOOK_API_KEY in your .env file.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer(ephemeral=False)
+        try:
+            payload = await moltbook_add_comment(
+                post_id=post_id,
+                content=content,
+                parent_id=parent_id,
+            )
+            comment = payload.get("comment", payload)
+            embed = discord.Embed(
+                title="Moltbook Comment Posted",
+                description=_format_moltbook_comment(comment),
+                color=config.EMBED_COLOR["complete"],
+            )
+            await interaction.edit_original_response(embed=embed)
+        except MoltbookAPIError as exc:
+            logger.error("Moltbook comment failed: %s", exc)
+            message = f"Failed to post Moltbook comment: {exc}"
+            if exc.hint:
+                message = f"{message}\nHint: {exc.hint}"
+            await interaction.edit_original_response(content=message)
+
+    @bot_instance.tree.command(name="moltbook_get", description="Fetch a Moltbook post and its comments.")
+    @app_commands.describe(
+        post_id="ID of the Moltbook post.",
+        include_comments="Include top comments in the response.",
+        comment_sort="Sort order for comments.",
+    )
+    @app_commands.choices(
+        comment_sort=[
+            app_commands.Choice(name="top", value="top"),
+            app_commands.Choice(name="new", value="new"),
+            app_commands.Choice(name="controversial", value="controversial"),
+        ]
+    )
+    async def moltbook_get_slash_command(
+        interaction: discord.Interaction,
+        post_id: str,
+        include_comments: bool = True,
+        comment_sort: str = "top",
+    ):
+        if not _moltbook_enabled():
+            await interaction.response.send_message(
+                "Moltbook is not configured yet. Set MOLTBOOK_AGENT_NAME and MOLTBOOK_API_KEY in your .env file.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer(ephemeral=False)
+        try:
+            post_payload = await moltbook_get_post(post_id)
+            post = post_payload.get("post", post_payload)
+            description = _format_moltbook_post(post)
+            if include_comments:
+                comments_payload = await moltbook_get_comments(post_id, sort=comment_sort)
+                comments = comments_payload.get("comments", comments_payload.get("data", [])) or []
+                if comments:
+                    snippets = [
+                        _format_moltbook_comment(comment)
+                        for comment in comments[:5]
+                    ]
+                    description = f"{description}\n\n**Top Comments**\n" + "\n\n".join(snippets)
+
+            if len(description) > config.EMBED_MAX_LENGTH:
+                description = description[: config.EMBED_MAX_LENGTH - 3].rstrip() + "..."
+
+            embed = discord.Embed(
+                title="Moltbook Post",
+                description=description,
+                color=config.EMBED_COLOR["complete"],
+            )
+            embed.set_footer(text=f"Post ID: {post_id} • comments={comment_sort}")
+            await interaction.edit_original_response(embed=embed)
+        except MoltbookAPIError as exc:
+            logger.error("Moltbook get failed: %s", exc)
+            message = f"Failed to fetch Moltbook post: {exc}"
+            if exc.hint:
+                message = f"{message}\nHint: {exc.hint}"
+            await interaction.edit_original_response(content=message)
 
     @bot_instance.tree.command(name="pol", description="Generates a sarcastic response to a political statement.")
     @app_commands.describe(statement="The political statement.")
