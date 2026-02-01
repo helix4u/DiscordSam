@@ -74,7 +74,9 @@ async def _moltbook_request(
     if json_body is not None:
         req_kwargs["data"] = json.dumps(json_body).encode("utf-8")
         req_kwargs["headers"] = {**headers, "Content-Type": "application/json"}
-    async with aiohttp.ClientSession() as session:
+    timeout_sec = getattr(config, "MOLTBOOK_REQUEST_TIMEOUT_SECONDS", 30)
+    timeout = aiohttp.ClientTimeout(total=timeout_sec)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
         async with session.request(method, url, **req_kwargs) as response:
             if response.status in (301, 302, 307, 308):
                 location = response.headers.get("Location", "")

@@ -296,6 +296,7 @@ class Config:
         else:
             self.MOLTBOOK_API_KEY = ""
         self.MOLTBOOK_AGENT_NAME = (os.getenv("MOLTBOOK_AGENT_NAME", "") or "").strip().strip('"').strip("'")
+        self.MOLTBOOK_REQUEST_TIMEOUT_SECONDS = _get_int("MOLTBOOK_REQUEST_TIMEOUT_SECONDS", 30)
 
         # Shared rate limiter configuration for outbound HTTP requests.
         # Proactive rate limiting: max requests per minute (default conservative for OpenRouter)
