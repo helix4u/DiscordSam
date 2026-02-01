@@ -283,14 +283,6 @@ class Config:
         # Users should set complex preferences via the environment variable.
         self.SEARX_PREFERENCES = os.getenv("SEARX_PREFERENCES", "")
 
-        # Moltbook integration
-        self.MOLTBOOK_BASE_URL = os.getenv(
-            "MOLTBOOK_BASE_URL",
-            "https://www.moltbook.com/api/v1",
-        )
-        self.MOLTBOOK_API_KEY = os.getenv("MOLTBOOK_API_KEY", "")
-        self.MOLTBOOK_AGENT_NAME = os.getenv("MOLTBOOK_AGENT_NAME", "")
-
         # Shared rate limiter configuration for outbound HTTP requests.
         # Proactive rate limiting: max requests per minute (default conservative for OpenRouter)
         self.RATE_LIMIT_REQUESTS_PER_MINUTE = _get_float("RATE_LIMIT_REQUESTS_PER_MINUTE", 15.0)
