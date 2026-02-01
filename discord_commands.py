@@ -430,7 +430,8 @@ class MoltbookPostTTSView(discord.ui.View):
             await interaction.followup.send(content=f"TTS failed: {exc}", ephemeral=True)
 
     async def _draft_callback(self, interaction: discord.Interaction) -> None:
-        """Act as if user said 'yo, sam, draft a reply to this one.' with current post as context."""
+        """Act as if user said 'yo, sam, draft a reply to this one.' with current post as context.
+        Uses same RAG (ChromaDB) retrieval as normal user input to prep the agent with relevant memories."""
         await interaction.response.defer(ephemeral=False)
         try:
             fast_runtime = get_llm_runtime("fast")
@@ -442,17 +443,60 @@ class MoltbookPostTTSView(discord.ui.View):
                     ephemeral=True,
                 )
                 return
+            # Same process as user input: gather ChromaDB memories to prep the agent
+            rag_query = (
+                "Draft a reply to this Moltbook post:\n"
+                + (self.text_to_speak[:2500] if self.text_to_speak else "No post content.")
+            )
+            synthesized_rag_summary, raw_rag_snippets = await retrieve_rag_context_with_progress(
+                llm_client=fast_client,
+                query=rag_query,
+                interaction=interaction,
+                channel=interaction.channel,
+                initial_status="🔍 Searching memories for relevant context...",
+                completion_status="✅ Memory search complete.",
+            )
+            # Build prompt with same RAG context format as normal user flow
             system = (
                 "You are Sam. The user said: yo, sam, draft a reply to this one. "
                 "Output only the draft reply text, no preamble. Keep it suitable as a comment (a few sentences)."
             )
+            messages: List[Dict[str, str]] = [{"role": "system", "content": system}]
+            if synthesized_rag_summary and synthesized_rag_summary.strip():
+                context_block = (
+                    "The following is a synthesized summary of potentially relevant past conversations. "
+                    "Use it to provide a more informed reply.\n\n"
+                    "--- Synthesized Relevant Context ---\n"
+                    + synthesized_rag_summary.strip()
+                    + "\n--- End Synthesized Context ---"
+                )
+                messages.append({"role": "system", "content": context_block})
+            if raw_rag_snippets:
+                max_snippet_chars = getattr(config, "MAX_RAW_RAG_SNIPPET_CHARS_IN_PROMPT", 120000)
+                max_per_snippet = getattr(config, "MAX_RAW_SNIPPET_CHARS_FOR_DRAFT", 2000)
+                parts = [
+                    "Raw retrieved context snippets that might be relevant. Use them to inform your reply.\n"
+                ]
+                total = 0
+                for i, (snippet_text, source) in enumerate(raw_rag_snippets):
+                    if total >= max_snippet_chars:
+                        parts.append("\n[More snippets omitted due to length.]")
+                        break
+                    trunc = snippet_text[:max_per_snippet]
+                    if len(snippet_text) > max_per_snippet:
+                        trunc += " [truncated]"
+                    part = f"\n--- Snippet {i + 1} (Source: {source}) ---\n{trunc}\n"
+                    if total + len(part) > max_snippet_chars:
+                        break
+                    parts.append(part)
+                    total += len(part)
+                parts.append("\n--- End Raw Snippets ---")
+                messages.append({"role": "system", "content": "".join(parts)})
             user_msg = f"Post to reply to:\n{self.text_to_speak[:3000]}"
+            messages.append({"role": "user", "content": user_msg})
             response = await create_chat_completion(
                 fast_client,
-                [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user_msg},
-                ],
+                messages,
                 model=fast_provider.model,
                 max_tokens=512,
                 temperature=fast_provider.temperature,
