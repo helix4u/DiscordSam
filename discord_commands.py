@@ -54,6 +54,7 @@ from audio_utils import send_tts_audio
 from utils import (
     parse_time_string_to_delta,
     chunk_text,
+    format_article_time,
     safe_followup_send,
     safe_message_edit,
     start_post_processing_task,
@@ -1030,27 +1031,33 @@ async def process_rss_feed(
         summaries.append(f"**{title}**\n{pub_date}\n{link}\n{summary}\n")
         seen_ids.add(guid)
 
-    seen[feed_url] = list(seen_ids)
-    save_seen_entries(seen)
-
-    combined = "\n\n".join(summaries)
-    chunks = chunk_text(combined, config.EMBED_MAX_LENGTH)
-    for i, chunk in enumerate(chunks):
-        embed = discord.Embed(
-            title=f"RSS Summaries for {feed_url}" + ("" if i == 0 else f" (cont. {i+1})"),
-            description=chunk,
+        # Per-article: embed (title, time, summary) then link in content so Discord shows link preview
+        time_str = format_article_time(pub_date_dt)
+        desc = (time_str + "\n\n" + summary) if time_str else summary
+        if len(desc) > config.EMBED_MAX_LENGTH:
+            desc = desc[: config.EMBED_MAX_LENGTH - 3] + "..."
+        title_display = (title[: 253] + "...") if len(title) > 256 else title
+        article_embed = discord.Embed(
+            title=title_display,
+            description=desc,
             color=config.EMBED_COLOR["complete"],
         )
-        if i == 0:
+        if idx == 1:
             progress_message = await safe_message_edit(
                 progress_message,
                 interaction.channel,
                 content=None,
-                embed=embed,
+                embed=article_embed,
             )
+            await safe_followup_send(interaction, content=link)
         else:
-            await safe_followup_send(interaction, embed=embed)
+            await safe_followup_send(interaction, embed=article_embed)
+            await safe_followup_send(interaction, content=link)
 
+    seen[feed_url] = list(seen_ids)
+    save_seen_entries(seen)
+
+    combined = "\n\n".join(summaries)
     await send_tts_audio(
         interaction,
         combined,
@@ -1203,6 +1210,26 @@ async def process_ground_news(
         summaries.append(summary_line)
         seen_urls.add(art.url)
 
+        # Per-article: embed (title, summary) then link in content so Discord shows link preview
+        desc = summary if len(summary) <= config.EMBED_MAX_LENGTH else summary[: config.EMBED_MAX_LENGTH - 3] + "..."
+        title_display = (art.title[: 253] + "...") if len(art.title) > 256 else art.title
+        article_embed = discord.Embed(
+            title=title_display,
+            description=desc,
+            color=config.EMBED_COLOR["complete"],
+        )
+        if idx == 1:
+            progress_message = await safe_message_edit(
+                progress_message,
+                interaction.channel,
+                content=None,
+                embed=article_embed,
+            )
+            await safe_followup_send(interaction, content=art.url)
+        else:
+            await safe_followup_send(interaction, embed=article_embed)
+            await safe_followup_send(interaction, content=art.url)
+
         user_msg_article = MsgNode(
             "user",
             f"/groundnews article {idx} (limit {limit})",
@@ -1255,23 +1282,6 @@ async def process_ground_news(
     save_seen_links(seen_urls)
 
     combined = "\n\n".join(summaries)
-    chunks = chunk_text(combined, config.EMBED_MAX_LENGTH)
-    for i, chunk in enumerate(chunks):
-        embed = discord.Embed(
-            title="Ground News Summaries" + ("" if i == 0 else f" (cont. {i+1})"),
-            description=chunk,
-            color=config.EMBED_COLOR["complete"],
-        )
-        if i == 0:
-            progress_message = await safe_message_edit(
-                progress_message,
-                interaction.channel,
-                content=None,
-                embed=embed,
-            )
-        else:
-            await safe_followup_send(interaction, embed=embed)
-
     await send_tts_audio(
         interaction,
         combined,
@@ -1380,6 +1390,26 @@ async def process_ground_news_topic(
         summaries.append(summary_line)
         seen_urls.add(art.url)
 
+        # Per-article: embed (title, summary) then link in content so Discord shows link preview
+        desc = summary if len(summary) <= config.EMBED_MAX_LENGTH else summary[: config.EMBED_MAX_LENGTH - 3] + "..."
+        title_display = (art.title[: 253] + "...") if len(art.title) > 256 else art.title
+        article_embed = discord.Embed(
+            title=title_display,
+            description=desc,
+            color=config.EMBED_COLOR["complete"],
+        )
+        if idx == 1:
+            progress_message = await safe_message_edit(
+                progress_message,
+                interaction.channel,
+                content=None,
+                embed=article_embed,
+            )
+            await safe_followup_send(interaction, content=art.url)
+        else:
+            await safe_followup_send(interaction, embed=article_embed)
+            await safe_followup_send(interaction, content=art.url)
+
         user_msg_article = MsgNode(
             "user",
             f"/groundtopic {topic_slug} article {idx} (limit {limit})",
@@ -1432,23 +1462,6 @@ async def process_ground_news_topic(
     save_seen_links(seen_urls)
 
     combined = "\n\n".join(summaries)
-    chunks = chunk_text(combined, config.EMBED_MAX_LENGTH)
-    for i, chunk in enumerate(chunks):
-        embed = discord.Embed(
-            title="Ground News Summaries" + ("" if i == 0 else f" (cont. {i+1})"),
-            description=chunk,
-            color=config.EMBED_COLOR["complete"],
-        )
-        if i == 0:
-            progress_message = await safe_message_edit(
-                progress_message,
-                interaction.channel,
-                content=None,
-                embed=embed,
-            )
-        else:
-            await safe_followup_send(interaction, embed=embed)
-
     await send_tts_audio(
         interaction,
         combined,
@@ -3775,31 +3788,6 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             await interaction.response.send_message("Error: This command must be used in a channel.", ephemeral=True)
             return
 
-        normalized_list_name = list_name.strip().lower()
-        selected_accounts = DEFAULT_TWITTER_USERS
-        if normalized_list_name:
-            if interaction.guild_id is None:
-                await interaction.response.send_message(
-                    "Saved Twitter lists are only available within servers.",
-                    ephemeral=True,
-                )
-                return
-            handles = await bot_state_instance.get_twitter_list_handles(
-                interaction.guild_id,
-                normalized_list_name,
-            )
-            if not handles:
-                await interaction.response.send_message(
-                    (
-                        f"No saved list named `{normalized_list_name}` was found. "
-                        "Use `/twitter_list_add` first to create it."
-                    ),
-                    ephemeral=True,
-                )
-                return
-            selected_accounts = handles
-        list_descriptor = normalized_list_name or "default accounts"
-
         scrape_lock = bot_state_instance.get_scrape_lock()
         queue_notice = scrape_lock.locked()
         acquired_lock = False
@@ -3992,20 +3980,24 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                                 summaries.append(summary_line)
                                 processed_guids_this_chunk.append(guid)
 
+                                # Per-article: embed (title, time, summary) then link so Discord shows link preview
+                                time_str = format_article_time(pub_date_dt)
+                                desc = (time_str + "\n\n" + summary) if time_str else summary
+                                if len(desc) > config.EMBED_MAX_LENGTH:
+                                    desc = desc[: config.EMBED_MAX_LENGTH - 3] + "..."
+                                title_display = (title[: 253] + "...") if len(title) > 256 else title
+                                article_embed = discord.Embed(
+                                    title=title_display,
+                                    description=desc,
+                                    color=config.EMBED_COLOR["complete"],
+                                )
+                                await channel.send(embed=article_embed)
+                                await channel.send(content=link)
+
                             # After processing all entries for the current chunk
                             if summaries:
                                 total_new_articles_found += len(summaries)
                                 combined = "\n\n".join(summaries)
-
-                                # Send summary embeds
-                                chunks = chunk_text(combined, config.EMBED_MAX_LENGTH)
-                                for i, chunk_item in enumerate(chunks):
-                                    embed = discord.Embed(
-                                        title=f"New from {name}" + ("" if i == 0 else f" (cont. {i+1})"),
-                                        description=chunk_item,
-                                        color=config.EMBED_COLOR["complete"],
-                                    )
-                                    await channel.send(embed=embed)
 
                                 # TTS for the feed's summaries
                                 await send_tts_audio(

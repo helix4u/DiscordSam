@@ -19,6 +19,23 @@ logger = logging.getLogger(__name__)
 from config import config
 
 
+def format_article_time(dt: Optional[datetime]) -> str:
+    """Format datetime for article display: 12-hour human readable, no timezone, no decimals."""
+    if not dt:
+        return ""
+    try:
+        local = dt.astimezone()
+        month_abbr = local.strftime("%b")
+        day = str(local.day)
+        year = local.strftime("%Y")
+        hour_12 = local.hour % 12 or 12
+        minute = local.minute
+        am_pm = "AM" if local.hour < 12 else "PM"
+        return f"{month_abbr} {day}, {year} at {hour_12}:{minute:02d} {am_pm}"
+    except Exception:
+        return ""
+
+
 def chunk_text(text: str, max_length: int = config.EMBED_MAX_LENGTH) -> List[str]:
     if not text: return [""]
     chunks = []

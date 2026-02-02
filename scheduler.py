@@ -11,7 +11,7 @@ from rag_chroma_manager import store_rss_summary, ingest_conversation_to_chromad
 from common_models import MsgNode
 from rss_cache import load_seen_entries, save_seen_entries
 from ground_news_cache import load_seen_links, save_seen_links
-from utils import chunk_text
+from utils import chunk_text, format_article_time
 from web_utils import fetch_rss_entries, scrape_website, scrape_ground_news_my, scrape_ground_news_topic
 from openai_api import create_chat_completion, extract_text
 from logit_biases import LOGIT_BIAS_UNWANTED_TOKENS_STR
@@ -211,6 +211,21 @@ async def run_allrss_digest(
                     summary_entry = f"[{name}] **{title}**\n{pub_date}\n{link}\n{summary}\n"
                     chunk_summaries.append(summary_entry)
                     seen_ids.add(guid)
+
+                    # Per-article: embed (title, time, summary) then link so Discord shows link preview
+                    time_str = format_article_time(pub_date_dt)
+                    desc = (time_str + "\n\n" + summary) if time_str else summary
+                    if len(desc) > config.EMBED_MAX_LENGTH:
+                        desc = desc[: config.EMBED_MAX_LENGTH - 3] + "..."
+                    title_display = (title[: 253] + "...") if len(title) > 256 else title
+                    article_embed = discord.Embed(
+                        title=title_display,
+                        description=desc,
+                        color=config.EMBED_COLOR.get("complete"),
+                    )
+                    await ch.send(embed=article_embed)
+                    await ch.send(content=link)
+
                     await asyncio.sleep(0.2)
 
                 if not chunk_summaries:
@@ -219,19 +234,6 @@ async def run_allrss_digest(
                 posted_count += len(chunk_summaries)
                 total_summaries.extend(chunk_summaries)
                 combined_chunk = "\n\n".join(chunk_summaries)
-                embed_base_title = f"Scheduled RSS Digest ({name})"
-                if total_batches > 1:
-                    embed_base_title += f" Batch {chunk_start // chunk_size + 1}/{total_batches}"
-
-                chunks = chunk_text(combined_chunk, config.EMBED_MAX_LENGTH)
-                for i, chunk in enumerate(chunks):
-                    embed_title = embed_base_title + ("" if i == 0 else f" (cont. {i+1})")
-                    embed = discord.Embed(
-                        title=embed_title,
-                        description=chunk,
-                        color=config.EMBED_COLOR.get("complete"),
-                    )
-                    await ch.send(embed=embed)
                 try:
                     from audio_utils import send_tts_audio
 
