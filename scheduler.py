@@ -350,6 +350,10 @@ async def run_alltweets_digest(
     handle_list = DEFAULT_TWITTER_USERS
     list_descriptor = "default accounts"
     channel_guild_id = getattr(getattr(ch, "guild", None), "id", None)
+    # Scope for scheduled_alltweets display setting: guild id in servers, -recipient.id in DMs
+    tweets_display_scope_id = channel_guild_id
+    if tweets_display_scope_id is None and getattr(ch, "recipient", None) is not None:
+        tweets_display_scope_id = -ch.recipient.id
     effective_guild_id: Optional[int]
     effective_user_id: Optional[int]
 
@@ -471,14 +475,22 @@ async def run_alltweets_digest(
                 continue
 
             any_new = True
-            embed_title = f"Scheduled Tweets from @{clean_username}"
-            for idx, chunk in enumerate(result.embed_chunks or ["No tweet content available."]):
-                embed = discord.Embed(
-                    title=embed_title if idx == 0 else f"{embed_title} (cont.)",
-                    description=chunk,
-                    color=config.EMBED_COLOR["complete"],
-                )
-                await ch.send(embed=embed)
+            # Only post raw tweet embeds if scope (guild or DM) has "show tweets" enabled (default: summary only)
+            show_tweets = False
+            if bot_state and tweets_display_scope_id is not None:
+                try:
+                    show_tweets = await bot_state.get_scheduled_alltweets_show_tweets(tweets_display_scope_id)
+                except Exception:
+                    show_tweets = False
+            if show_tweets:
+                embed_title = f"Scheduled Tweets from @{clean_username}"
+                for idx, chunk in enumerate(result.embed_chunks or ["No tweet content available."]):
+                    embed = discord.Embed(
+                        title=embed_title if idx == 0 else f"{embed_title} (cont.)",
+                        description=chunk,
+                        color=config.EMBED_COLOR["complete"],
+                    )
+                    await ch.send(embed=embed)
 
             if bot_state and result.raw_display_str.strip():
                 user_node = MsgNode(

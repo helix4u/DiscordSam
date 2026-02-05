@@ -41,6 +41,11 @@ class BotState:
         # Custom Twitter lists per guild (or per-admin DM scope) for scheduled/alltweets commands
         self.twitter_lists_file = os.path.join(os.path.dirname(__file__), "twitter_lists.json")
         self._twitter_lists: Dict[str, Dict[str, List[str]]] = {}
+        # Per-guild: show raw tweet embeds in scheduled alltweets (default False = summary only)
+        self._scheduled_alltweets_show_tweets_file = os.path.join(
+            os.path.dirname(__file__), "scheduled_alltweets_show_tweets.json"
+        )
+        self._scheduled_alltweets_show_tweets_by_guild: Dict[int, bool] = {}
         try:
             self._load_schedules()
         except Exception:
@@ -61,6 +66,10 @@ class BotState:
             self._load_twitter_lists()
         except Exception:
             self._twitter_lists = {}
+        try:
+            self._load_scheduled_alltweets_show_tweets()
+        except Exception:
+            self._scheduled_alltweets_show_tweets_by_guild = {}
 
     async def update_last_playwright_usage_time(self):
         """Updates the timestamp for the last Playwright usage."""
@@ -282,6 +291,43 @@ class BotState:
         with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(serializable, f, ensure_ascii=False, indent=2)
         os.replace(tmp_path, self.tts_delivery_file)
+
+    # --- Scheduled alltweets: show raw tweet data (per guild) ---
+    def _load_scheduled_alltweets_show_tweets(self) -> None:
+        if os.path.exists(self._scheduled_alltweets_show_tweets_file):
+            with open(self._scheduled_alltweets_show_tweets_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    loaded: Dict[int, bool] = {}
+                    for key, value in data.items():
+                        try:
+                            loaded[int(key)] = bool(value)
+                        except (ValueError, TypeError):
+                            continue
+                    self._scheduled_alltweets_show_tweets_by_guild = loaded
+
+    def _save_scheduled_alltweets_show_tweets(self) -> None:
+        tmp_path = self._scheduled_alltweets_show_tweets_file + ".tmp"
+        serializable = {
+            str(gid): enabled
+            for gid, enabled in self._scheduled_alltweets_show_tweets_by_guild.items()
+        }
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(serializable, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, self._scheduled_alltweets_show_tweets_file)
+
+    async def get_scheduled_alltweets_show_tweets(self, guild_id: Optional[int]) -> bool:
+        """Whether to post raw tweet embeds in scheduled alltweets for this scope. Default False.
+        Scope: guild_id in servers; negative user id (-user_id) in DMs."""
+        if guild_id is None:
+            return False
+        async with self._lock:
+            return self._scheduled_alltweets_show_tweets_by_guild.get(int(guild_id), False)
+
+    async def set_scheduled_alltweets_show_tweets(self, guild_id: int, enabled: bool) -> None:
+        async with self._lock:
+            self._scheduled_alltweets_show_tweets_by_guild[int(guild_id)] = bool(enabled)
+            self._save_scheduled_alltweets_show_tweets()
 
     # --- Twitter list persistence ---
     def _load_twitter_lists(self) -> None:

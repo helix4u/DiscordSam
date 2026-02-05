@@ -548,6 +548,10 @@ DiscordSam offers a variety of slash commands for diverse functionalities, group
     *   **Arguments:** `interval_minutes` (Required), `limit` (Optional, Default: 100), `list_name` (Optional, defaults to built-in roster).
     *   **Access:** Admin-only.
 
+*   **`/scheduled_tweets_display <enabled>`**
+    *   **Purpose:** Toggles whether scheduled alltweets posts raw tweet text embeds (per server or per DM). When disabled (default), only the summary is posted; when enabled, tweet text is shown before each summary. Works in both server channels and DMs.
+    *   **Arguments:** `enabled` (Required: `true` or `false`).
+
 *   **`/schedule_groundrss <interval_minutes> [limit]`**
     *   **Purpose:** Schedules periodic Ground News "My Feed" digests.
     *   **Arguments:** `interval_minutes` (Required), `limit` (Optional, Default: 100).

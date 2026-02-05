@@ -5427,3 +5427,38 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 )
             except discord.HTTPException:
                 pass
+
+    # Toggle raw tweet output in scheduled alltweets (per server or per DM; default off = summary only)
+    @bot_instance.tree.command(
+        name="scheduled_tweets_display",
+        description="Show or hide raw tweet text in scheduled alltweets (summary is always posted).",
+    )
+    @app_commands.describe(
+        enabled="True to post tweet text embeds; False for summary only (default)."
+    )
+    async def scheduled_tweets_display(interaction: discord.Interaction, enabled: bool):
+        if not bot_state_instance:
+            await interaction.response.send_message(
+                "Bot state not available.",
+                ephemeral=True,
+            )
+            return
+        # In servers use guild id; in DMs use negative user id so the setting is per-DM thread
+        scope_id = interaction.guild_id if interaction.guild_id is not None else -interaction.user.id
+        try:
+            prev = await bot_state_instance.get_scheduled_alltweets_show_tweets(scope_id)
+            await bot_state_instance.set_scheduled_alltweets_show_tweets(scope_id, enabled)
+            where = "this server" if interaction.guild_id is not None else "DMs"
+            await interaction.response.send_message(
+                f"Scheduled alltweets in {where} will {'show' if enabled else 'hide'} raw tweet text (was {'show' if prev else 'hide'}). Summary is always posted.",
+                ephemeral=True,
+            )
+        except Exception as e:
+            logger.error("/scheduled_tweets_display failed: %s", e, exc_info=True)
+            try:
+                await interaction.response.send_message(
+                    f"Failed to update setting: {str(e)[:500]}",
+                    ephemeral=True,
+                )
+            except discord.HTTPException:
+                pass

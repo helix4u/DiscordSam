@@ -161,6 +161,7 @@ create_dataset.py
 # Scheduler data
 schedules.json
 scheduler_status.json
+scheduled_alltweets_show_tweets.json
 
 # Playwright profile (symlink)
 .pw-profile
