@@ -424,6 +424,125 @@ class DraftReplySubmitView(discord.ui.View):
         await interaction.followup.send(content="Dismissed.", ephemeral=True)
 
 
+def _strip_trailing_url_label(content: Optional[str]) -> Optional[str]:
+    """Remove a trailing 'URL:' or 'URL: ...' line from content so it doesn't appear in the post body."""
+    if not content or not content.strip():
+        return content
+    import re
+    return re.sub(r"\n\s*URL:\s*(.*)$", "", content.strip(), flags=re.IGNORECASE).strip() or None
+
+
+def _parse_moltbook_draft_post(text: str) -> Dict[str, Optional[str]]:
+    """Parse LLM draft output for SUBMOLT:, TITLE:, CONTENT:, optional URL:. Returns dict with submolt, title, content, url (all optional str)."""
+    result: Dict[str, Optional[str]] = {"submolt": None, "title": None, "content": None, "url": None}
+    if not (text and text.strip()):
+        return result
+    import re
+    raw = text.strip()
+    # SUBMOLT: and TITLE: and URL: single line each
+    submolt_m = re.search(r"(?i)^SUBMOLT:\s*(.+?)$", raw, re.MULTILINE)
+    if submolt_m:
+        result["submolt"] = submolt_m.group(1).strip() or None
+    title_m = re.search(r"(?i)^TITLE:\s*(.+?)$", raw, re.MULTILINE)
+    if title_m:
+        result["title"] = title_m.group(1).strip() or None
+    url_m = re.search(r"(?i)^URL:\s*(.+?)$", raw, re.MULTILINE)
+    if url_m:
+        result["url"] = url_m.group(1).strip() or None
+    # CONTENT: from first CONTENT: to end of text (multiline); strip trailing "URL:" line so it doesn't appear in post body
+    content_m = re.search(r"(?i)^CONTENT:\s*(.+)", raw, re.MULTILINE | re.DOTALL)
+    if content_m:
+        result["content"] = _strip_trailing_url_label(content_m.group(1).strip() or None)
+    return result
+
+
+class MoltbookDraftPostView(discord.ui.View):
+    """Accept (post to Moltbook) or Decline (delete) a drafted post."""
+
+    def __init__(
+        self,
+        submolt: str,
+        title: str,
+        content: Optional[str] = None,
+        url: Optional[str] = None,
+        *,
+        timeout: float = 300.0,
+    ) -> None:
+        super().__init__(timeout=timeout)
+        self.submolt = (submolt or "general").strip()
+        self.title = (title or "").strip()
+        self.content = (content or "").strip() or None
+        self.url = (url or "").strip() or None
+        accept_btn = discord.ui.Button(
+            label="Post to Moltbook",
+            style=discord.ButtonStyle.primary,
+            custom_id="moltbook_draft_post_accept",
+        )
+        accept_btn.callback = self._accept_callback
+        self.add_item(accept_btn)
+        decline_btn = discord.ui.Button(
+            label="Decline",
+            style=discord.ButtonStyle.secondary,
+            custom_id="moltbook_draft_post_decline",
+        )
+        decline_btn.callback = self._decline_callback
+        self.add_item(decline_btn)
+
+    async def _accept_callback(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=False)
+        if not _moltbook_enabled():
+            await interaction.followup.send(
+                content="Moltbook is not configured. Set MOLTBOOK_AGENT_NAME and MOLTBOOK_API_KEY in .env.",
+                ephemeral=True,
+            )
+            return
+        if not self.title:
+            await interaction.followup.send(content="Draft has no title; cannot post.", ephemeral=True)
+            return
+        if not self.content and not self.url:
+            await interaction.followup.send(
+                content="Draft needs either content or a URL to post.",
+                ephemeral=True,
+            )
+            return
+        # Sanitize content so a trailing "URL:" line from the LLM never gets into the post body
+        content_to_send = _strip_trailing_url_label(self.content) if self.content else None
+        try:
+            payload = await moltbook_create_post(
+                submolt=self.submolt,
+                title=self.title,
+                content=content_to_send,
+                url=self.url,
+            )
+            post = payload.get("post") or payload.get("data") or payload
+            post_id = post.get("id", "unknown")
+            embed = discord.Embed(
+                title="Moltbook Post Created",
+                description=_format_moltbook_post(post),
+                color=config.EMBED_COLOR["complete"],
+            )
+            embed.set_footer(text=f"Post ID: {post_id}")
+            try:
+                await interaction.message.edit(embed=embed, view=None)
+            except (discord.HTTPException, discord.NotFound):
+                pass
+            # No followup message: the edited message above is the only reply (avoids 3rd post / attaching to dismissed message)
+        except MoltbookAPIError as exc:
+            logger.warning("Moltbook draft post (accept) failed: %s", exc)
+            msg = str(exc)
+            if getattr(exc, "hint", None):
+                msg += f"\nHint: {exc.hint}"
+            await interaction.followup.send(content=msg, ephemeral=True)
+
+    async def _decline_callback(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=True)
+        try:
+            await interaction.message.delete()
+        except (discord.HTTPException, discord.NotFound):
+            pass
+        await interaction.followup.send(content="Draft discarded.", ephemeral=True)
+
+
 class MoltbookPostTTSView(discord.ui.View):
     """Get TTS and Draft reply for a fetched Moltbook post."""
 
@@ -3298,20 +3417,11 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 )
             await interaction.edit_original_response(content=message)
 
-    @bot_instance.tree.command(name="moltbook_post", description="Create a Moltbook post.")
-    @app_commands.describe(
-        submolt="Submolt name (without m/).",
-        title="Post title.",
-        content="Text body for a discussion post.",
-        url="Optional URL for a link post.",
+    @bot_instance.tree.command(
+        name="moltbook_post",
+        description="Ask Sam to draft a Moltbook post from today's context; then accept or decline.",
     )
-    async def moltbook_post_slash_command(
-        interaction: discord.Interaction,
-        submolt: str,
-        title: str,
-        content: Optional[str] = None,
-        url: Optional[str] = None,
-    ):
+    async def moltbook_post_slash_command(interaction: discord.Interaction):
         if not _moltbook_enabled():
             await interaction.response.send_message(
                 "Moltbook is not configured yet. Set MOLTBOOK_AGENT_NAME and MOLTBOOK_API_KEY in your .env file.",
@@ -3319,36 +3429,131 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
             )
             return
 
-        if not content and not url:
-            await interaction.response.send_message(
-                "Please provide either content or a URL for the post.",
-                ephemeral=True,
-            )
-            return
-
         await interaction.response.defer(ephemeral=False)
         try:
-            payload = await moltbook_create_post(
-                submolt=submolt,
-                title=title,
-                content=content,
-                url=url,
+            fast_runtime = get_llm_runtime("fast")
+            fast_client = fast_runtime.client if fast_runtime else None
+            fast_provider = fast_runtime.provider if fast_runtime else None
+            if not fast_client or not fast_provider:
+                await interaction.edit_original_response(
+                    content="LLM is not configured; cannot draft a post.",
+                )
+                return
+
+            rag_query = (
+                "What has happened today? Recent conversations, timeline summaries, and today's activity. "
+                "Use this to draft a short Moltbook post."
             )
-            post = payload.get("post") or payload.get("data") or payload
-            post_id = post.get("id", "unknown")
+            synthesized_rag_summary, raw_rag_snippets = await retrieve_rag_context_with_progress(
+                llm_client=fast_client,
+                query=rag_query,
+                interaction=interaction,
+                channel=interaction.channel,
+                initial_status="🔍 Gathering today's context...",
+                completion_status="✅ Context ready.",
+            )
+            sys_node = get_system_prompt()
+            messages: List[Dict[str, str]] = [{"role": sys_node.role, "content": sys_node.content}]
+            if (config.USER_PROVIDED_CONTEXT or "").strip():
+                messages.append({
+                    "role": "system",
+                    "content": f"User-Set Global Context:\n{config.USER_PROVIDED_CONTEXT.strip()}",
+                })
+            if synthesized_rag_summary and synthesized_rag_summary.strip():
+                messages.append({
+                    "role": "system",
+                    "content": (
+                        "Relevant context from today:\n---\n"
+                        + synthesized_rag_summary.strip()
+                        + "\n---"
+                    ),
+                })
+            if raw_rag_snippets:
+                parts = ["Additional snippets that may be relevant:\n"]
+                for i, (snippet_text, source) in enumerate(raw_rag_snippets[:15]):
+                    trunc = (snippet_text or "")[:1500]
+                    if len(snippet_text or "") > 1500:
+                        trunc += " [truncated]"
+                    parts.append(f"\n--- Snippet {i + 1} ({source}) ---\n{trunc}\n")
+                messages.append({"role": "system", "content": "".join(parts)})
+            messages.append({
+                "role": "system",
+                "content": (
+                    "For this turn only: Draft a single Moltbook post based on the context above. "
+                    "Output exactly in this format, one field per line (CONTENT can be multiple lines):\n"
+                    "SUBMOLT: <submolt name, e.g. general>\n"
+                    "TITLE: <one-line title>\n"
+                    "CONTENT: <body text, or leave blank if only sharing a link>\n"
+                    "URL: <optional link if it's a link post>\n"
+                    "Do not add any preamble or explanation; only these lines."
+                ),
+            })
+            messages.append({"role": "user", "content": "Draft the Moltbook post now."})
+            response = await create_chat_completion(
+                fast_client,
+                messages,
+                model=fast_provider.model,
+                max_tokens=config.MAX_COMPLETION_TOKENS,
+                temperature=fast_provider.temperature,
+                use_responses_api=getattr(fast_provider, "use_responses_api", False),
+            )
+            raw_draft = extract_text(response, getattr(fast_provider, "use_responses_api", False))
+            if not (raw_draft and raw_draft.strip()):
+                try:
+                    await interaction.edit_original_response(
+                        content="Sam did not produce a draft. Try again or add more context.",
+                    )
+                except (discord.NotFound, discord.HTTPException):
+                    await interaction.followup.send(
+                        content="Sam did not produce a draft. Try again or add more context.",
+                        ephemeral=True,
+                    )
+                return
+
+            parsed = _parse_moltbook_draft_post(raw_draft)
+            submolt = (parsed.get("submolt") or "general").strip()
+            title = (parsed.get("title") or "").strip()
+            content = (parsed.get("content") or "").strip() or None
+            url = (parsed.get("url") or "").strip() or None
+
+            display_lines = [
+                f"**Submolt:** {submolt}",
+                f"**Title:** {title}",
+            ]
+            if content:
+                display_lines.append(f"**Content:**\n{content[:2000]}" + ("…" if len(content) > 2000 else ""))
+            if url:
+                display_lines.append(f"**URL:** {url}")
+            if not title and not content and not url:
+                display_lines.append("*(Raw draft)*\n" + raw_draft[:1500])
+
             embed = discord.Embed(
-                title="Moltbook Post Created",
-                description=_format_moltbook_post(post),
+                title="Draft Moltbook Post",
+                description="\n\n".join(display_lines),
                 color=config.EMBED_COLOR["complete"],
             )
-            embed.set_footer(text=f"Post ID: {post_id}")
-            await interaction.edit_original_response(embed=embed)
-        except MoltbookAPIError as exc:
-            logger.error("Moltbook post failed: %s", exc)
-            message = f"Failed to create Moltbook post: {exc}"
-            if exc.hint:
-                message = f"{message}\nHint: {exc.hint}"
-            await interaction.edit_original_response(content=message)
+            embed.set_footer(text="Post to Moltbook or Decline below.")
+            view = MoltbookDraftPostView(submolt=submolt, title=title, content=content, url=url)
+            # Use followup so we don't depend on the deferred original response (can 404 after RAG progress)
+            await interaction.followup.send(embed=embed, view=view)
+            try:
+                await interaction.edit_original_response(content="Draft ready below.")
+            except (discord.NotFound, discord.HTTPException):
+                pass
+        except Exception as exc:
+            logger.exception("Moltbook draft post failed: %s", exc)
+            try:
+                await interaction.edit_original_response(
+                    content=f"Draft failed: {str(exc)[:500]}",
+                )
+            except (discord.NotFound, discord.HTTPException):
+                try:
+                    await interaction.followup.send(
+                        content=f"Draft failed: {str(exc)[:500]}",
+                        ephemeral=True,
+                    )
+                except discord.HTTPException:
+                    pass
 
     @bot_instance.tree.command(name="moltbook_comment", description="Comment on a Moltbook post.")
     @app_commands.describe(

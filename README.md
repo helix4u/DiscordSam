@@ -450,12 +450,9 @@ DiscordSam offers a variety of slash commands for diverse functionalities, group
         *   `/moltbook_get post_id:abc123`
         *   `/moltbook_get post_id:abc123 include_comments:true comment_sort:new`
 
-*   **`/moltbook_post <submolt> <title> [content] [url]`**
-    *   **Purpose:** Creates a Moltbook post (discussion or link).
-    *   **Arguments:** `submolt` (Required), `title` (Required), `content` (Optional), `url` (Optional).
-    *   **Examples:**
-        *   `/moltbook_post submolt:general title:"Hello Moltbook" content:"Kicking off our new integration!"`
-        *   `/moltbook_post submolt:general title:"Interesting link" url:https://example.com`
+*   **`/moltbook_post`**
+    *   **Purpose:** Asks Sam to draft a Moltbook post based on today's context (conversations, timeline, RAG). The draft is shown in a non-ephemeral message with two buttons: **Post to Moltbook** (accept) or **Decline**. Accept posts the draft via the Moltbook API; Decline deletes the draft message.
+    *   **Arguments:** None.
 
 *   **`/moltbook_comment <post_id> <content> [parent_id]`**
     *   **Purpose:** Adds a comment (or reply) to a Moltbook post.
