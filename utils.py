@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 # For this refactor, we'll assume config can be imported if placed correctly.
 # If main_bot.py initializes config, then other modules import it from there or config.py
 from config import config
+from rate_limiter import get_discord_edit_limiter
 
 
 def format_article_time(dt: Optional[datetime]) -> str:
@@ -317,6 +318,23 @@ async def safe_followup_send(
         raise
 
 
+def _retry_after_from_discord_exception(e: BaseException) -> float:
+    """Extract retry_after in seconds from a Discord 429/RateLimited exception."""
+    if hasattr(e, "retry_after") and e.retry_after is not None:
+        return float(e.retry_after)
+    if hasattr(e, "response") and e.response is not None:
+        resp = e.response
+        ra = getattr(resp, "headers", None)
+        if ra is not None:
+            retry_after = ra.get("Retry-After") or ra.get("retry-after")
+            if retry_after is not None:
+                try:
+                    return float(retry_after)
+                except (TypeError, ValueError):
+                    pass
+    return 5.0
+
+
 async def safe_message_edit(
     message: discord.Message,
     channel: discord.abc.Messageable,
@@ -326,9 +344,10 @@ async def safe_message_edit(
 ) -> discord.Message:
     """Edit a message safely.
 
-    Attempts to edit ``message`` with ``kwargs``. If the underlying webhook
-    has expired (HTTP 401 with code 50027), a new message is sent to
-    ``channel`` and, optionally, the old message is removed.
+    Throttles edits per channel to avoid Discord 429s. On 429, respects
+    Retry-After and retries once. If the underlying webhook has expired
+    (HTTP 401 with code 50027), a new message is sent to ``channel`` and,
+    optionally, the old message is removed.
 
     Parameters
     ----------
@@ -345,22 +364,50 @@ async def safe_message_edit(
     :class:`discord.Message`
         The edited message, or the newly-sent replacement.
     """
-    try:
-        await message.edit(**kwargs)
-        return message
-    except discord.HTTPException as e:
-        if e.status == 401 and getattr(e, "code", None) == 50027:
-            logger.warning(
-                "Webhook token expired during edit; sending new message"
+    limiter = get_discord_edit_limiter()
+    channel_id = getattr(message.channel, "id", None) or "unknown"
+    key = f"discord_edit:{channel_id}"
+    last_exc: BaseException | None = None
+    for attempt in range(2):
+        await limiter.await_slot(key)
+        try:
+            await message.edit(**kwargs)
+            return message
+        except discord.HTTPException as e:
+            last_exc = e
+            if e.status == 401 and getattr(e, "code", None) == 50027:
+                logger.warning(
+                    "Webhook token expired during edit; sending new message"
+                )
+                new_msg = await channel.send(**kwargs)
+                if cleanup_old:
+                    try:
+                        await message.delete()
+                    except discord.HTTPException:
+                        pass
+                return new_msg
+            if e.status == 429:
+                retry_after = _retry_after_from_discord_exception(e)
+                headers = {"retry-after": str(retry_after)}
+                await limiter.record_response(key, 429, headers)
+                logger.info(
+                    "Discord 429 on message edit; respecting retry_after=%.2fs, retrying once.",
+                    retry_after,
+                )
+                continue
+            raise
+        except discord.errors.RateLimited as e:
+            last_exc = e
+            retry_after = _retry_after_from_discord_exception(e)
+            await limiter.record_response(key, 429, {"retry-after": str(retry_after)})
+            logger.info(
+                "Discord RateLimited on message edit; respecting retry_after=%.2fs, retrying once.",
+                retry_after,
             )
-            new_msg = await channel.send(**kwargs)
-            if cleanup_old:
-                try:
-                    await message.delete()
-                except discord.HTTPException:
-                    pass
-            return new_msg
-        raise
+            continue
+    if last_exc is not None:
+        raise last_exc
+    return message
 
 
 def start_post_processing_task(

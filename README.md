@@ -279,10 +279,12 @@ The bot now uses a provider-based architecture to manage different LLM roles (ma
 *   `MOLTBOOK_BASE_URL` (Default: `https://www.moltbook.com/api/v1`): Base URL for Moltbook API requests. Must include `www` to preserve Authorization headers.
 *   `MOLTBOOK_AGENT_NAME` (Required for Moltbook commands): Your Moltbook account/agent name.
 *   `MOLTBOOK_API_KEY` (Required for Moltbook commands): Moltbook API key for your agent.
+*   `MOLTBOOK_POST_MAX_TOKENS` (Default: `4096`): Max completion tokens for `/moltbook_post` drafts. Increase for longer, in-depth posts (default is higher than general `MAX_COMPLETION_TOKENS`).
 *   `RATE_LIMIT_REQUESTS_PER_MINUTE` (Default: `20.0`): Maximum number of requests per minute to send to LLM APIs. This proactively prevents hitting rate limits. Set higher if your API provider allows more requests.
 *   `RATE_LIMIT_JITTER_SECONDS` (Default: `1.5`): Random jitter applied to enforced cooldowns after rate limit responses.
 *   `RATE_LIMIT_FAILURE_BACKOFF_SECONDS` (Default: `45.0`): Base backoff window used when X/Twitter or other APIs return 429 without reset hints.
 *   `RATE_LIMIT_FALLBACK_WINDOW_SECONDS` (Default: `90.0`): Conservative cooldown applied for transient server-side failures lacking explicit rate limit headers.
+*   `DISCORD_EDIT_REQUESTS_PER_MINUTE` (Default: `24.0`): Maximum message edits per channel per minute. Keeps the bot under Discord's per-channel rate limit and avoids 429s; when a 429 does occur, the bot respects the `Retry-After` header and retries once.
 *   `MAX_SCRAPED_TEXT_LENGTH_FOR_PROMPT` (Default: `8000`): Maximum characters from a scraped webpage to include in the LLM prompt.
 *   `MAX_IMAGE_BYTES_FOR_PROMPT` (Default: `4194304` (4MB)): Maximum size for an image to be sent to the vision LLM.
 *   `NEWS_MAX_LINKS_TO_PROCESS` (Default: `15`): Maximum number of links to process for commands like `/news` or `/search`.
@@ -327,6 +329,8 @@ The bot now uses a provider-based architecture to manage different LLM roles (ma
 *   `EMBED_COLOR_ERROR` (Default: `0xFF0000` - Red): Hex color code for embeds indicating an error.
 *   `EMBED_MAX_LENGTH` (Default: `4096`): Maximum character length for a single Discord embed.
 *   `STREAM_EDIT_THROTTLE_SECONDS` (Default: `0.1`): Minimum time between edits when streaming LLM responses. This directly controls the `sleep` duration and is related to the hardcoded `EDITS_PER_SECOND` of 1.3.
+*   `CATCH_UP_WAIT_THRESHOLD_SECONDS` (Default: `1.5`): If a single message edit waited longer than this (e.g. in the Discord rate limiter), the rest of the current edit batch is skipped so the next update shows newly accumulated content (one-shot catch-up). Reduces wasted rate-limit slots on stale embeds.
+*   `STREAM_EMBED_MAX_LENGTH` (Default: `4000`): Chunk size for streaming embeds (one embed per ~this many characters). Kept under Discord's 4096 limit so messages stay complete and you don't get more embeds than needed; the final flush when the stream ends sends all content with no leftover characters.
 *   `MAX_CHARS_PER_EDIT` (Default: `infinite`): Maximum number of characters that can accumulate before triggering a message edit during streaming. Set to infinite by default to stay current with generation speed without hitting rate limits, relying solely on the time-based throttle from `EDITS_PER_SECOND`.
 
 **Image Processing (Attachments & Vision):**
@@ -450,9 +454,9 @@ DiscordSam offers a variety of slash commands for diverse functionalities, group
         *   `/moltbook_get post_id:abc123`
         *   `/moltbook_get post_id:abc123 include_comments:true comment_sort:new`
 
-*   **`/moltbook_post`**
-    *   **Purpose:** Asks Sam to draft a Moltbook post based on today's context (conversations, timeline, RAG). The draft is shown in a non-ephemeral message with two buttons: **Post to Moltbook** (accept) or **Decline**. Accept posts the draft via the Moltbook API; Decline deletes the draft message.
-    *   **Arguments:** None.
+*   **`/moltbook_post [topic_guidance]`**
+    *   **Purpose:** Asks Sam to draft a Moltbook post based on today's context (conversations, timeline, RAG). The draft is shown in a non-ephemeral message with two buttons: **Post to Moltbook** (accept) or **Decline**. Accept posts the draft via the Moltbook API; Decline deletes the draft message. Use **topic_guidance** to steer RAG and the post toward a specific topic for more in-depth, substantive posts instead of generic short ones.
+    *   **Arguments:** `topic_guidance` (Optional): A question or topic to steer RAG retrieval and the post (e.g. "recent deep dives on AI safety", "what we discussed about project X"). When provided, the bot uses a higher token limit and instructs the model to write a longer, in-depth post.
 
 *   **`/moltbook_comment <post_id> <content> [parent_id]`**
     *   **Purpose:** Adds a comment (or reply) to a Moltbook post.

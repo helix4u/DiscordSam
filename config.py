@@ -297,6 +297,8 @@ class Config:
             self.MOLTBOOK_API_KEY = ""
         self.MOLTBOOK_AGENT_NAME = (os.getenv("MOLTBOOK_AGENT_NAME", "") or "").strip().strip('"').strip("'")
         self.MOLTBOOK_REQUEST_TIMEOUT_SECONDS = _get_int("MOLTBOOK_REQUEST_TIMEOUT_SECONDS", 30)
+        # Max completion tokens for /moltbook_post draft (default 4096 for longer, in-depth posts)
+        self.MOLTBOOK_POST_MAX_TOKENS = _get_int("MOLTBOOK_POST_MAX_TOKENS", 4096)
 
         # Shared rate limiter configuration for outbound HTTP requests.
         # Proactive rate limiting: max requests per minute (default conservative for OpenRouter)
@@ -307,6 +309,11 @@ class Config:
         )
         self.RATE_LIMIT_FALLBACK_WINDOW_SECONDS = _get_float(
             "RATE_LIMIT_FALLBACK_WINDOW_SECONDS", 90.0
+        )
+        # Discord API: throttle message edits per channel to avoid 429.
+        # Discord allows ~5 edits per 5s per channel; default 24/min keeps us under that.
+        self.DISCORD_EDIT_REQUESTS_PER_MINUTE = _get_float(
+            "DISCORD_EDIT_REQUESTS_PER_MINUTE", 24.0
         )
 
         def _parse_color(env_var: str, default: int) -> int:
@@ -333,8 +340,15 @@ class Config:
             "error": _parse_color("EMBED_COLOR_ERROR", discord.Color.red().value),
         }
         self.EMBED_MAX_LENGTH = _get_int("EMBED_MAX_LENGTH", 4096)
+        # Chunk size for streaming embeds: one embed per ~this many chars. Kept under 4096 to be safe.
+        self.STREAM_EMBED_MAX_LENGTH = _get_int("STREAM_EMBED_MAX_LENGTH", 4000)
         self.EDITS_PER_SECOND = 1.3
         self.STREAM_EDIT_THROTTLE_SECONDS = _get_float("STREAM_EDIT_THROTTLE_SECONDS", 0.1)
+        # If we waited longer than this in the Discord edit limiter, abort the rest of the batch
+        # so the next update shows newly accumulated content (one-shot catch-up).
+        self.CATCH_UP_WAIT_THRESHOLD_SECONDS = _get_float(
+            "CATCH_UP_WAIT_THRESHOLD_SECONDS", 1.5
+        )
         self.MAX_CHARS_PER_EDIT = _get_float("MAX_CHARS_PER_EDIT", float('inf'))  # Infinite by default to stay current with generation speed
 
         self.CHROMA_DB_PATH = os.getenv("CHROMA_DB_PATH", "./chroma_data")

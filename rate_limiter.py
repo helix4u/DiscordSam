@@ -168,8 +168,22 @@ _global_rate_limiter = RateLimiter(
     fallback_window_seconds=config.RATE_LIMIT_FALLBACK_WINDOW_SECONDS,
 )
 
+# Discord message edits: per-channel throttle so we stay under Discord's limit
+# and respect 429 retry_after instead of hammering the API.
+_discord_edit_limiter = RateLimiter(
+    requests_per_minute=config.DISCORD_EDIT_REQUESTS_PER_MINUTE,
+    jitter_seconds=0.5,
+    failure_backoff_seconds=5.0,
+    fallback_window_seconds=60.0,
+)
+
 
 def get_rate_limiter() -> RateLimiter:
     """Return the shared rate limiter instance."""
     return _global_rate_limiter
+
+
+def get_discord_edit_limiter() -> RateLimiter:
+    """Return the rate limiter for Discord message edits (per channel)."""
+    return _discord_edit_limiter
 

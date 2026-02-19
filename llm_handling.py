@@ -420,7 +420,7 @@ async def _stream_llm_handler(
                     len(accumulated_delta_for_update) > config.MAX_CHARS_PER_EDIT):
 
                     display_text = response_prefix + full_response_content
-                    text_chunks = chunk_text(display_text, config.EMBED_MAX_LENGTH)
+                    text_chunks = chunk_text(display_text, config.STREAM_EMBED_MAX_LENGTH)
                     accumulated_delta_for_update = ""
 
                     for i, chunk_content_part in enumerate(text_chunks):
@@ -430,11 +430,17 @@ async def _stream_llm_handler(
                             color=config.EMBED_COLOR["incomplete"],
                         )
                         if i < len(sent_messages):
+                            t_before = asyncio.get_event_loop().time()
                             sent_messages[i] = await safe_message_edit(
                                 sent_messages[i],
                                 channel,
                                 embed=embed,
                             )
+                            if (asyncio.get_event_loop().time() - t_before
+                                    >= config.CATCH_UP_WAIT_THRESHOLD_SECONDS):
+                                # Long wait in rate limiter: abort rest of batch so next update
+                                # shows newly accumulated content (one-shot catch-up).
+                                break
                         else:
                             if channel:
                                 new_msg = await channel.send(embed=embed)
@@ -442,12 +448,13 @@ async def _stream_llm_handler(
                             else:
                                 logger.error(f"Cannot send overflow chunk {i+1} for '{title}': channel is None.")
                                 break
-                    last_edit_time = current_time
-                    await asyncio.sleep(config.STREAM_EDIT_THROTTLE_SECONDS)
+                    else:
+                        last_edit_time = current_time
+                        await asyncio.sleep(config.STREAM_EDIT_THROTTLE_SECONDS)
 
             if accumulated_delta_for_update:
                 display_text = response_prefix + full_response_content
-                text_chunks = chunk_text(display_text, config.EMBED_MAX_LENGTH)
+                text_chunks = chunk_text(display_text, config.STREAM_EMBED_MAX_LENGTH)
                 for i, chunk_content_part in enumerate(text_chunks):
                     embed = discord.Embed(
                         title=title if i == 0 else f"{title} (cont.)",
@@ -469,8 +476,9 @@ async def _stream_llm_handler(
             )
 
 
+        # Authoritative flush: stream has ended, so send full content. No leftover chars; one embed per ~STREAM_EMBED_MAX_LENGTH.
         final_display_text = response_prefix + full_response_content
-        final_chunks = chunk_text(final_display_text, config.EMBED_MAX_LENGTH)
+        final_chunks = chunk_text(final_display_text, config.STREAM_EMBED_MAX_LENGTH)
 
         if len(final_chunks) < len(sent_messages):
             for k in range(len(final_chunks), len(sent_messages)):

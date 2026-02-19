@@ -3421,7 +3421,16 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
         name="moltbook_post",
         description="Ask Sam to draft a Moltbook post from today's context; then accept or decline.",
     )
-    async def moltbook_post_slash_command(interaction: discord.Interaction):
+    @app_commands.describe(
+        topic_guidance=(
+            "Optional: a question or topic to steer RAG and the post (e.g. 'recent deep dives on AI safety', "
+            "'what we discussed about project X'). Use this to get in-depth posts instead of generic short ones."
+        ),
+    )
+    async def moltbook_post_slash_command(
+        interaction: discord.Interaction,
+        topic_guidance: Optional[str] = None,
+    ):
         if not _moltbook_enabled():
             await interaction.response.send_message(
                 "Moltbook is not configured yet. Set MOLTBOOK_AGENT_NAME and MOLTBOOK_API_KEY in your .env file.",
@@ -3440,10 +3449,18 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 )
                 return
 
-            rag_query = (
-                "What has happened today? Recent conversations, timeline summaries, and today's activity. "
-                "Use this to draft a short Moltbook post."
-            )
+            topic_str = (topic_guidance or "").strip()
+            if topic_str:
+                rag_query = (
+                    f"Topic to focus on for the post: {topic_str}. "
+                    "Also include: what has happened recently, relevant conversations, timeline summaries, and activity. "
+                    "Use this to draft a substantive, in-depth Moltbook post on that topic."
+                )
+            else:
+                rag_query = (
+                    "What has happened today? Recent conversations, timeline summaries, and today's activity. "
+                    "Use this to draft a short Moltbook post."
+                )
             synthesized_rag_summary, raw_rag_snippets = await retrieve_rag_context_with_progress(
                 llm_client=fast_client,
                 query=rag_query,
@@ -3476,24 +3493,31 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                         trunc += " [truncated]"
                     parts.append(f"\n--- Snippet {i + 1} ({source}) ---\n{trunc}\n")
                 messages.append({"role": "system", "content": "".join(parts)})
-            messages.append({
-                "role": "system",
-                "content": (
-                    "For this turn only: Draft a single Moltbook post based on the context above. "
-                    "Output exactly in this format, one field per line (CONTENT can be multiple lines):\n"
-                    "SUBMOLT: <submolt name, e.g. general>\n"
-                    "TITLE: <one-line title>\n"
-                    "CONTENT: <body text, or leave blank if only sharing a link>\n"
-                    "URL: <optional link if it's a link post>\n"
-                    "Do not add any preamble or explanation; only these lines."
-                ),
-            })
+            draft_instruction = (
+                "For this turn only: Draft a single Moltbook post based on the context above. "
+                "Output exactly in this format, one field per line (CONTENT can be multiple lines):\n"
+                "SUBMOLT: <submolt name, e.g. general>\n"
+                "TITLE: <one-line title>\n"
+                "CONTENT: <body text, or leave blank if only sharing a link>\n"
+                "URL: <optional link if it's a link post>\n"
+                "Do not add any preamble or explanation; only these lines."
+            )
+            if topic_str:
+                draft_instruction = (
+                    "The user asked to focus this post on a specific topic. Focus the post on that topic and go in-depth; "
+                    "avoid generic short takes. You may write a longer, substantive post (several paragraphs if the context supports it).\n\n"
+                    + draft_instruction
+                )
+            messages.append({"role": "system", "content": draft_instruction})
             messages.append({"role": "user", "content": "Draft the Moltbook post now."})
+            max_tokens_moltbook = getattr(
+                config, "MOLTBOOK_POST_MAX_TOKENS", config.MAX_COMPLETION_TOKENS
+            )
             response = await create_chat_completion(
                 fast_client,
                 messages,
                 model=fast_provider.model,
-                max_tokens=config.MAX_COMPLETION_TOKENS,
+                max_tokens=max_tokens_moltbook,
                 temperature=fast_provider.temperature,
                 use_responses_api=getattr(fast_provider, "use_responses_api", False),
             )
@@ -4447,7 +4471,12 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                         embed=None,
                     )
                 else:
-                    await progress_message.edit(content=final_content_message, embed=None)
+                    progress_message = await safe_message_edit(
+                        progress_message,
+                        interaction.channel or progress_message.channel,
+                        content=final_content_message,
+                        embed=None,
+                    )
                 return
 
             new_tweets_to_process = []
@@ -4618,7 +4647,12 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                             embed=embed,
                         )
                     else:
-                        await progress_message.edit(content=None, embed=embed)
+                        progress_message = await safe_message_edit(
+                            progress_message,
+                            interaction.channel or progress_message.channel,
+                            content=None,
+                            embed=embed,
+                        )
                 else:
                     await safe_followup_send(interaction, embed=embed)
 
@@ -4691,7 +4725,12 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                             embed=None,
                         )
                     else:
-                        await progress_message.edit(content=error_content, embed=None)
+                        progress_message = await safe_message_edit(
+                            progress_message,
+                            interaction.channel or progress_message.channel,
+                            content=error_content,
+                            embed=None,
+                        )
             except discord.HTTPException:
                 logger.warning(
                     f"Could not send final error message for gettweets @{user_to_fetch} to user (HTTPException)."
@@ -4796,7 +4835,12 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                         embed=None,
                     )
                 else:
-                    await progress_message.edit(content=final_content_message, embed=None)
+                    progress_message = await safe_message_edit(
+                        progress_message,
+                        interaction.channel or progress_message.channel,
+                        content=final_content_message,
+                        embed=None,
+                    )
                 return
 
             new_tweets_to_process = []
@@ -4949,7 +4993,12 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                             embed=embed,
                         )
                     else:
-                        await progress_message.edit(content=None, embed=embed)
+                        progress_message = await safe_message_edit(
+                            progress_message,
+                            interaction.channel or progress_message.channel,
+                            content=None,
+                            embed=embed,
+                        )
                 else:
                     await safe_followup_send(interaction, embed=embed)
 
@@ -5022,7 +5071,12 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                             embed=None,
                         )
                     else:
-                        await progress_message.edit(content=error_content, embed=None)
+                        progress_message = await safe_message_edit(
+                            progress_message,
+                            interaction.channel or progress_message.channel,
+                            content=error_content,
+                            embed=None,
+                        )
             except discord.HTTPException:
                 logger.warning("Could not send final error message for homefeed to user (HTTPException).")
         finally:
