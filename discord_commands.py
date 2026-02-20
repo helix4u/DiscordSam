@@ -2754,6 +2754,221 @@ def setup_commands(bot: commands.Bot, llm_client_in: Any, bot_state_in: BotState
                 break
         return matches
 
+    @bot_instance.tree.command(
+        name="schedule_run_now",
+        description="Force-run a scheduled job in this channel immediately (admin only).",
+    )
+    @app_commands.describe(
+        schedule_id="Select a saved schedule ID from this channel.",
+    )
+    async def schedule_run_now_command(
+        interaction: discord.Interaction,
+        schedule_id: str,
+    ) -> None:
+        if not config.ADMIN_USER_IDS or not is_admin_user(interaction.user.id):
+            await interaction.response.send_message(
+                "This command is restricted to bot administrators.",
+                ephemeral=True,
+            )
+            return
+        if not bot_state_instance:
+            await interaction.response.send_message(
+                "Bot state not ready. Try again later.",
+                ephemeral=True,
+            )
+            return
+        if not bot_instance:
+            await interaction.response.send_message(
+                "Bot is not fully initialized yet.",
+                ephemeral=True,
+            )
+            return
+        if interaction.channel_id is None:
+            await interaction.response.send_message(
+                "No channel available.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        schedules = await bot_state_instance.list_schedules(interaction.channel_id)
+        selected = next((s for s in schedules if str(s.get("id", "")) == schedule_id), None)
+        if not selected:
+            await interaction.edit_original_response(
+                content=(
+                    f"Could not find schedule `{schedule_id}` in this channel. "
+                    "Run `/schedules` and pick an ID from there."
+                )
+            )
+            return
+
+        pause_state = await bot_state_instance.get_schedules_pause_state()
+        pause_note = ""
+        if pause_state.get("paused"):
+            pause_note = (
+                "\nNote: global schedules are currently paused, but this manual run will still execute."
+            )
+
+        sched_id = str(selected.get("id", "unknown"))
+        kind = str(selected.get("type", "unknown"))
+        params = selected.get("params", {}) or {}
+        channel_id = int(selected.get("channel_id", interaction.channel_id))
+        supported_types = {"allrss", "alltweets", "groundrss", "groundtopic"}
+        if kind not in supported_types:
+            await interaction.edit_original_response(
+                content=(
+                    f"Schedule `{sched_id}` has unsupported type `{kind}` for manual run."
+                )
+            )
+            return
+        if kind == "groundtopic" and not params.get("topic"):
+            await interaction.edit_original_response(
+                content=(
+                    f"Schedule `{sched_id}` is missing a Ground News topic slug. "
+                    "Update or recreate the schedule first."
+                )
+            )
+            return
+
+        async def _manual_run() -> None:
+            from scheduler import (
+                run_allrss_digest,
+                run_alltweets_digest,
+                run_groundrss_digest,
+                run_groundtopic_digest,
+            )
+
+            now = datetime.now()
+            try:
+                if kind == "allrss":
+                    lim = int(params.get("limit", 10))
+                    async with bot_state_instance.get_scrape_lock():
+                        await run_allrss_digest(
+                            bot_instance,
+                            llm_client_instance,
+                            channel_id,
+                            limit=lim,
+                            bot_state=bot_state_instance,
+                        )
+                elif kind == "alltweets":
+                    lim = int(params.get("limit", 100))
+                    list_name = str(params.get("list_name") or "")
+                    scope_guild_raw = params.get("scope_guild_id")
+                    scope_user_raw = params.get("scope_user_id")
+                    scope_guild_id: Optional[int] = None
+                    scope_user_id: Optional[int] = None
+                    if scope_guild_raw is not None:
+                        try:
+                            scope_guild_id = int(scope_guild_raw)
+                        except (TypeError, ValueError):
+                            scope_guild_id = None
+                    if scope_user_raw is not None:
+                        try:
+                            scope_user_id = int(scope_user_raw)
+                        except (TypeError, ValueError):
+                            scope_user_id = None
+                    if scope_user_id is None and scope_guild_id is None:
+                        created_by = selected.get("created_by")
+                        if created_by is not None:
+                            try:
+                                scope_user_id = int(created_by)
+                            except (TypeError, ValueError):
+                                scope_user_id = None
+                    async with bot_state_instance.get_scrape_lock():
+                        await run_alltweets_digest(
+                            bot_instance,
+                            llm_client_instance,
+                            channel_id,
+                            limit=lim,
+                            list_name=list_name,
+                            scope_guild_id=scope_guild_id,
+                            scope_user_id=scope_user_id,
+                            bot_state=bot_state_instance,
+                        )
+                elif kind == "groundrss":
+                    lim = int(params.get("limit", 100))
+                    async with bot_state_instance.get_scrape_lock():
+                        await run_groundrss_digest(
+                            bot_instance,
+                            llm_client_instance,
+                            channel_id,
+                            limit=lim,
+                            bot_state=bot_state_instance,
+                        )
+                elif kind == "groundtopic":
+                    lim = int(params.get("limit", 100))
+                    topic_slug = params.get("topic")
+                    async with bot_state_instance.get_scrape_lock():
+                        await run_groundtopic_digest(
+                            bot_instance,
+                            llm_client_instance,
+                            channel_id,
+                            topic_slug=topic_slug,
+                            limit=lim,
+                            bot_state=bot_state_instance,
+                        )
+                else:
+                    logger.warning(
+                        "Manual schedule run requested for unsupported type '%s' (id=%s).",
+                        kind,
+                        sched_id,
+                    )
+                    return
+                await bot_state_instance.update_schedule_last_run(sched_id, now)
+                logger.info(
+                    "Manual schedule run completed for %s (type=%s) by user %s.",
+                    sched_id,
+                    kind,
+                    interaction.user.id,
+                )
+            except asyncio.CancelledError:
+                logger.info("Manual schedule run cancelled for %s.", sched_id)
+                raise
+            except Exception as exc:
+                logger.error(
+                    "Manual schedule run failed for %s (type=%s): %s",
+                    sched_id,
+                    kind,
+                    exc,
+                    exc_info=True,
+                )
+
+        asyncio.create_task(_manual_run(), name=f"manual_schedule_run_{sched_id}")
+        await interaction.edit_original_response(
+            content=(
+                f"Queued manual run for schedule `{sched_id}` (`{kind}`) in this channel."
+                f"{pause_note}"
+            )
+        )
+
+    @schedule_run_now_command.autocomplete("schedule_id")
+    async def schedule_run_now_schedule_id_autocomplete(
+        interaction: discord.Interaction,
+        current: str,
+    ) -> List[app_commands.Choice[str]]:
+        if not bot_state_instance or interaction.channel_id is None:
+            return []
+        try:
+            schedules = await bot_state_instance.list_schedules(interaction.channel_id)
+        except Exception:
+            return []
+
+        current_lower = (current or "").lower()
+        matches: List[app_commands.Choice[str]] = []
+        for sched in schedules:
+            sched_id = str(sched.get("id", ""))
+            if not sched_id:
+                continue
+            if current_lower and current_lower not in sched_id.lower():
+                continue
+            sched_type = str(sched.get("type", "unknown"))
+            last_run = str(sched.get("last_run") or "never")
+            label = f"{sched_type} | {sched_id} | last: {last_run}"
+            matches.append(app_commands.Choice(name=label[:100], value=sched_id))
+            if len(matches) >= 25:
+                break
+        return matches
+
     @bot_instance.tree.command(name="cancel", description="Cancel the current long-running task in this channel (admin only).")
     async def cancel_command(interaction: discord.Interaction):
         if not config.ADMIN_USER_IDS or not is_admin_user(interaction.user.id):

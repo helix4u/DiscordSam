@@ -11,7 +11,7 @@ from rag_chroma_manager import store_rss_summary, ingest_conversation_to_chromad
 from common_models import MsgNode
 from rss_cache import load_seen_entries, save_seen_entries
 from ground_news_cache import load_seen_links, save_seen_links
-from utils import chunk_text, format_article_time
+from utils import chunk_text, format_article_time, safe_message_edit
 from web_utils import fetch_rss_entries, scrape_website, scrape_ground_news_my, scrape_ground_news_topic
 from openai_api import create_chat_completion, extract_text
 from logit_biases import LOGIT_BIAS_UNWANTED_TOKENS_STR
@@ -297,18 +297,33 @@ async def run_allrss_digest(
         if header:
             if not total_summaries:
                 try:
-                    await header.edit(content="Scheduled RSS digest found nothing new.")
+                    header = await safe_message_edit(
+                        header,
+                        ch,
+                        content="Scheduled RSS digest found nothing new.",
+                        cleanup_old=False,
+                    )
                 except Exception:
                     pass
             else:
                 try:
-                    await header.edit(content=f"Scheduled RSS digest completed. Posted {len(total_summaries)} article summaries.")
+                    header = await safe_message_edit(
+                        header,
+                        ch,
+                        content=f"Scheduled RSS digest completed. Posted {len(total_summaries)} article summaries.",
+                        cleanup_old=False,
+                    )
                 except Exception:
                     pass
     except asyncio.CancelledError:
         if header:
             try:
-                await header.edit(content="Scheduled RSS digest cancelled.")
+                header = await safe_message_edit(
+                    header,
+                    ch,
+                    content="Scheduled RSS digest cancelled.",
+                    cleanup_old=False,
+                )
             except Exception:
                 pass
         await ch.send("Scheduled RSS digest cancelled.")
@@ -439,12 +454,73 @@ async def run_alltweets_digest(
     except Exception:
         header = None
 
-    async def update_status(text: str) -> None:
-        if header:
+    status_min_interval = 5.0
+    status_lock = asyncio.Lock()
+    pending_status_text: Optional[str] = None
+    last_status_text = ""
+    last_status_sent_at = 0.0
+    status_attempt_count = 0
+    status_sent_count = 0
+    status_dedup_count = 0
+    status_queued_count = 0
+
+    async def update_status(text: str, *, force: bool = False) -> None:
+        nonlocal header, pending_status_text, last_status_text, last_status_sent_at
+        nonlocal status_attempt_count, status_sent_count, status_dedup_count, status_queued_count
+        if not header:
+            return
+        message_text = (text or "")[:2000]
+        if not message_text:
+            return
+
+        async with status_lock:
+            status_attempt_count += 1
+            if not force and message_text == last_status_text:
+                status_dedup_count += 1
+                return
+
+            now = asyncio.get_running_loop().time()
+            if not force and now - last_status_sent_at < status_min_interval:
+                status_queued_count += 1
+                pending_status_text = message_text
+                return
+
             try:
-                await header.edit(content=text[:2000])
+                previous_sent_at = last_status_sent_at
+                header = await safe_message_edit(
+                    header,
+                    ch,
+                    content=message_text,
+                    cleanup_old=False,
+                )
+                last_status_text = message_text
+                last_status_sent_at = asyncio.get_running_loop().time()
+                status_sent_count += 1
+                pending_status_text = None
+                delta = (
+                    last_status_sent_at - previous_sent_at
+                    if previous_sent_at > 0.0
+                    else 0.0
+                )
+                logger.info(
+                    "Scheduled alltweets status cadence: channel=%s sent=%s attempts=%s delta=%.2fs queued=%s deduped=%s force=%s",
+                    channel_id,
+                    status_sent_count,
+                    status_attempt_count,
+                    delta,
+                    status_queued_count,
+                    status_dedup_count,
+                    force,
+                )
             except Exception:
                 pass
+
+    async def flush_pending_status(*, force: bool = False) -> None:
+        nonlocal pending_status_text
+        async with status_lock:
+            queued = pending_status_text
+        if queued:
+            await update_status(queued, force=force)
 
     if bot_state:
         await bot_state.set_active_task(channel_id, asyncio.current_task())
@@ -467,6 +543,7 @@ async def run_alltweets_digest(
                 progress_callback=update_status,
                 source_command="/schedule_alltweets",
             )
+            await flush_pending_status(force=True)
             if result.status_message and not result.new_tweets:
                 logger.info(
                     "Scheduled alltweets: %s",
@@ -593,7 +670,7 @@ async def run_alltweets_digest(
     except asyncio.CancelledError:
         if header:
             try:
-                await header.edit(content="Scheduled all-tweets digest cancelled.")
+                await update_status("Scheduled all-tweets digest cancelled.", force=True)
             except Exception:
                 pass
         await ch.send("Scheduled all-tweets digest cancelled.")
@@ -602,18 +679,29 @@ async def run_alltweets_digest(
         if header:
             try:
                 if any_new:
-                    await header.edit(
-                        content=(
+                    await update_status(
+                        (
                             f"Scheduled all-tweets digest complete for {list_descriptor}. "
                             "New tweets have been posted above."
-                        )
+                        ),
+                        force=True,
                     )
                 else:
-                    await header.edit(
-                        content=f"Scheduled all-tweets digest finished with no new tweets for {list_descriptor}."
+                    await update_status(
+                        f"Scheduled all-tweets digest finished with no new tweets for {list_descriptor}.",
+                        force=True,
                     )
             except Exception:
                 pass
+        logger.info(
+            "Scheduled alltweets status summary: channel=%s attempts=%s sent=%s queued=%s deduped=%s min_interval=%.2fs",
+            channel_id,
+            status_attempt_count,
+            status_sent_count,
+            status_queued_count,
+            status_dedup_count,
+            status_min_interval,
+        )
         if bot_state:
             await bot_state.clear_active_task(channel_id)
 
@@ -648,9 +736,26 @@ async def run_groundrss_digest(
         header = None
 
     async def update_status(text: str) -> None:
+        nonlocal header
         if header:
             try:
-                await header.edit(content=text[:2000])
+                now = asyncio.get_running_loop().time()
+                previous = update_status_last_sent_at[0]
+                header = await safe_message_edit(
+                    header,
+                    ch,
+                    content=text[:2000],
+                    cleanup_old=False,
+                )
+                update_status_sent_count[0] += 1
+                update_status_last_sent_at[0] = now
+                delta = now - previous if previous > 0.0 else 0.0
+                logger.info(
+                    "Scheduled groundrss status cadence: channel=%s sent=%s delta=%.2fs",
+                    channel_id,
+                    update_status_sent_count[0],
+                    delta,
+                )
             except Exception:
                 pass
 
@@ -658,6 +763,8 @@ async def run_groundrss_digest(
         await bot_state.set_active_task(channel_id, asyncio.current_task())
 
     seen_urls = load_seen_links()
+    update_status_sent_count = [0]
+    update_status_last_sent_at = [0.0]
     try:
         articles = await scrape_ground_news_my(limit)
     except Exception as exc:
@@ -668,7 +775,12 @@ async def run_groundrss_digest(
     if not new_articles:
         if header:
             try:
-                await header.edit(content="Scheduled Ground News digest found nothing new.")
+                header = await safe_message_edit(
+                    header,
+                    ch,
+                    content="Scheduled Ground News digest found nothing new.",
+                    cleanup_old=False,
+                )
             except Exception:
                 pass
         if not articles:
@@ -815,7 +927,12 @@ async def run_groundrss_digest(
     except asyncio.CancelledError:
         if header:
             try:
-                await header.edit(content="Scheduled Ground News digest cancelled.")
+                header = await safe_message_edit(
+                    header,
+                    ch,
+                    content="Scheduled Ground News digest cancelled.",
+                    cleanup_old=False,
+                )
             except Exception:
                 pass
         await ch.send("Scheduled Ground News digest cancelled.")
@@ -823,9 +940,19 @@ async def run_groundrss_digest(
     finally:
         if header:
             try:
-                await header.edit(content="Scheduled Ground News digest completed.")
+                header = await safe_message_edit(
+                    header,
+                    ch,
+                    content="Scheduled Ground News digest completed.",
+                    cleanup_old=False,
+                )
             except Exception:
                 pass
+        logger.info(
+            "Scheduled groundrss status summary: channel=%s sent=%s",
+            channel_id,
+            update_status_sent_count[0],
+        )
         if bot_state:
             await bot_state.clear_active_task(channel_id)
 
@@ -867,9 +994,27 @@ async def run_groundtopic_digest(
         header = None
 
     async def update_status(text: str) -> None:
+        nonlocal header
         if header:
             try:
-                await header.edit(content=text[:2000])
+                now = asyncio.get_running_loop().time()
+                previous = update_status_last_sent_at[0]
+                header = await safe_message_edit(
+                    header,
+                    ch,
+                    content=text[:2000],
+                    cleanup_old=False,
+                )
+                update_status_sent_count[0] += 1
+                update_status_last_sent_at[0] = now
+                delta = now - previous if previous > 0.0 else 0.0
+                logger.info(
+                    "Scheduled groundtopic status cadence: channel=%s topic=%s sent=%s delta=%.2fs",
+                    channel_id,
+                    topic_slug,
+                    update_status_sent_count[0],
+                    delta,
+                )
             except Exception:
                 pass
 
@@ -877,6 +1022,8 @@ async def run_groundtopic_digest(
         await bot_state.set_active_task(channel_id, asyncio.current_task())
 
     seen_urls = load_seen_links()
+    update_status_sent_count = [0]
+    update_status_last_sent_at = [0.0]
     try:
         articles = await scrape_ground_news_topic(topic_url, limit)
     except Exception as exc:
@@ -887,7 +1034,12 @@ async def run_groundtopic_digest(
     if not new_articles:
         if header:
             try:
-                await header.edit(content=f"Scheduled Ground News topic `{topic_name}` found nothing new.")
+                header = await safe_message_edit(
+                    header,
+                    ch,
+                    content=f"Scheduled Ground News topic `{topic_name}` found nothing new.",
+                    cleanup_old=False,
+                )
             except Exception:
                 pass
         await ch.send(f"Scheduled Ground News topic `{topic_name}` is already up to date.")
@@ -1040,7 +1192,12 @@ async def run_groundtopic_digest(
     except asyncio.CancelledError:
         if header:
             try:
-                await header.edit(content=f"Scheduled Ground News topic `{topic_name}` digest cancelled.")
+                header = await safe_message_edit(
+                    header,
+                    ch,
+                    content=f"Scheduled Ground News topic `{topic_name}` digest cancelled.",
+                    cleanup_old=False,
+                )
             except Exception:
                 pass
         await ch.send(f"Scheduled Ground News topic `{topic_name}` digest cancelled.")
@@ -1048,8 +1205,19 @@ async def run_groundtopic_digest(
     finally:
         if header:
             try:
-                await header.edit(content=f"Scheduled Ground News topic `{topic_name}` digest completed.")
+                header = await safe_message_edit(
+                    header,
+                    ch,
+                    content=f"Scheduled Ground News topic `{topic_name}` digest completed.",
+                    cleanup_old=False,
+                )
             except Exception:
                 pass
+        logger.info(
+            "Scheduled groundtopic status summary: channel=%s topic=%s sent=%s",
+            channel_id,
+            topic_slug,
+            update_status_sent_count[0],
+        )
         if bot_state:
             await bot_state.clear_active_task(channel_id)

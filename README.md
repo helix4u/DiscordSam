@@ -563,6 +563,11 @@ DiscordSam offers a variety of slash commands for diverse functionalities, group
     *   **Arguments:** `interval_minutes` (Required), `topic` (Required from preset list), `limit` (Optional, Default: 100).
     *   **Access:** Admin-only.
 
+*   **`/schedule_run_now <schedule_id>`**
+    *   **Purpose:** Manually force-runs one saved schedule immediately for testing.
+    *   **Arguments:** `schedule_id` (Required, selected via autocomplete dropdown from schedules in the current channel).
+    *   **Access:** Admin-only.
+
 *   **`/pruneitems <limit>`**
     *   **Purpose:** Manually triggers the summarization and pruning of the oldest chat history entries.
     *   **Arguments:** `limit` (Required, 1-10).
@@ -590,6 +595,10 @@ DiscordSam offers a variety of slash commands for diverse functionalities, group
 
 *   **`/unschedule <schedule_id>`**
     *   **Purpose:** Removes a scheduled job by its ID.
+
+*   **`/schedule_run_now <schedule_id>`**
+    *   **Purpose:** Force-runs a selected scheduled job immediately (useful for testing and troubleshooting rate limits).
+    *   **Arguments:** `schedule_id` (Required, selectable from channel schedules via autocomplete).
 
 *   **`/cancel`**
     *   **Purpose:** Cancels the current long-running task (like `/allrss`) in the channel.
